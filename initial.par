@@ -1,0 +1,13 @@
+# stimulus setup
+num_stim = 1 
+stim[0].name = "S1"
+stim[0].crct.type =  0 			# stimulate using transmembrane current 
+stim[0].pulse.strength = 250.0	# uA/cm^2
+stim[0].ptcl.start = 0.			# apply stimulus at t=0ms
+stim[0].ptcl.duration = 2.		# stimulate for 2ms
+
+# simulation setup
+bidomain    =   0 	# run monodomain
+spacedt     =   1.	# output every ms
+timedt      =   1.	# update progess on commandline every ms
+parab_solve =   1	# use Crank-Nicolson to solve the parabolic problem
