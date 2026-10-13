@@ -3,14 +3,22 @@
 import os
 from datetime import date
 
+import numpy as np
+
 from carputils import settings, tools, mesh
 
 ACTIVE_TAG = 1
-SCAR_TAG   = 100
+SCAR_TAG   = 100   # ablation lesion: necrotic, non-conducting band (post only)
+ISO_TAG    = 101   # isolated wall beyond the lesion: viable, decoupled, never activated (post only)
 IMP_MODEL  = 'Courtemanche'
-PASSIVE_IMP = 'PASSIVE'
+
+CORNER_LEG = 5.0   # mm, leg of the corner stimulus triangle for 45 deg (x + y <= -L + CORNER_LEG)
 
 EXAMPLE_DIR = os.path.dirname(__file__)
+
+# Region layout (ionic + conductivity) lives in these files
+PAR_FILES = {'pre':  'slab2d_pre.par',
+             'post': 'slab2d_post.par'}
 
 # define parameters exposed to the user on the commandline
 def parser():
@@ -22,7 +30,8 @@ def parser():
     group.add_argument('--size', type=float, default=20.0,
                        help='Sheet edge length (mm); scar occupies x >= 0 half')
     group.add_argument('--angle', type=int, default=0, choices=[0, 45, 90],
-                       help='Wavefront direction relative to scar-boundary normal (deg)')
+                       help='Wavefront direction relative to scar-boundary normal (deg): '
+                            '0 = into the boundary, 90 = parallel to it, 45 = oblique')
     group.add_argument('--gi', type=float, required=True,
                        help='Tuned intracellular conductivity from tuneCV (S/m), for this dx')
     group.add_argument('--ge', type=float, required=True,
@@ -35,6 +44,14 @@ def parser():
                        help='Tissue simulation duration (ms)')
     group.add_argument('--stim-width', type=float, default=0.5,
                        help='Thickness of the planar stimulus band (mm)')
+    group.add_argument('--state', default='post', choices=['pre', 'post'],
+                       help='pre: whole sheet active (no scar). '
+                            'post: lesion band from x = 0, isolated wall beyond it')
+    group.add_argument('--lesion-width', type=float, default=6.0,
+                       help='Lesion band width (mm), starting at x = 0 (post only). '
+                            'Default 6 mm = 2 x the 3 mm half-width in Wang\'s boundary rule')
+    group.add_argument('--lesion-g', type=float, default=1e-3,
+                       help='Lesion intracellular conductivity as a fraction of --gi (post only)')
     return parser
 
 def runSingleCell(args, job):
@@ -66,11 +83,49 @@ def jobID(args):
     Generate name of top level output directory.
     """
     today = date.today()
-    return f'{today.isoformat()}_simple_{args.tend}_{args.flv}_np{args.np}'
+    state = 'pre' if args.state == 'pre' else f'post_lw{args.lesion_width:g}_lg{args.lesion_g:g}'
+    return (f'{today.isoformat()}_simple_{state}_a{args.angle}_dx{args.dx:g}'
+            f'_{args.tend}_{args.flv}_np{args.np}')
+
+
+def stimVertices(meshname, args, half, post, job):
+    """
+    Write a .vtx file of the stimulated nodes for the requested angle. Coordinates in mm.
+      0 deg : strip x <= -half + w           (wave travels +x, into the boundary)
+     90 deg : strip y <= -half + w           (wave travels +y, parallel to the boundary)
+     45 deg : corner triangle x + y <= -2*half + CORNER_LEG
+    In post, stimulated nodes are restricted to active tissue (x < 0), so the
+    lesion and isolated wall are never stimulated directly.
+    """
+    pts = np.loadtxt(meshname + '.pts', skiprows=1) / 1000.0   # um -> mm
+    x, y = pts[:, 0], pts[:, 1]
+    w, eps = args.stim_width, 1e-6
+
+    if args.angle == 0:
+        mask = x <= -half + w + eps
+    elif args.angle == 90:
+        mask = y <= -half + w + eps
+    else:
+        mask = x + y <= -2*half + CORNER_LEG + eps
+    if post:
+        mask &= x < -eps
+
+    idx = np.flatnonzero(mask)
+    if idx.size == 0:
+        raise ValueError('Stimulus electrode is empty - check --stim-width and --dx')
+
+    os.makedirs(job.ID, exist_ok=True)
+    vtx = os.path.join(job.ID, 'stim_a{}.vtx'.format(args.angle))
+    with open(vtx, 'w') as f:
+        f.write('{}\nintra\n'.format(idx.size))
+        f.write('\n'.join(map(str, idx)) + '\n')
+    return vtx
 
 
 @tools.carpexample(parser, jobID)
 def run(args, job):
+
+    post = args.state == 'post'
 
     # --------------- Setting up the mesh ---------------------
 
@@ -78,7 +133,7 @@ def run(args, job):
     wedge_x = 60
     wedge_y = 60
     wedge_z = 0
-    
+
     # Generate mesh, units in mm, centered around origin
     # By default, elements are tagged as "1". Can be changed by adding box or sphere regions
     # See carputils doxygen documentation for details
@@ -86,11 +141,18 @@ def run(args, job):
 
     # Set fibre angle to 0° for the 2D monolayer (no sheet angle in 2D)
     geom.set_fibres(0, 0)
-    
+
     # Add regions ------> (0,0,0) is the center of the mesh, not the left lower corner!
-    tag  = 100
-    scar = mesh.BoxRegion((0, -wedge_y/2.0, -1), (wedge_x/2.0, wedge_y/2.0, 1), SCAR_TAG)
-    geom.add_region(scar)
+    # post: x = 0 is the lesion edge (Wang's scar boundary). Non-overlapping boxes.
+    if post:
+        lw = args.lesion_width
+        if not 0 < lw < wedge_x/2.0:
+            raise ValueError('--lesion-width must be between 0 and half the sheet width')
+        lesion = mesh.BoxRegion((0, -wedge_y/2.0, -1), (lw, wedge_y/2.0, 1), SCAR_TAG)
+        iso    = mesh.BoxRegion((lw, -wedge_y/2.0, -1), (wedge_x/2.0, wedge_y/2.0, 1), ISO_TAG)
+        geom.add_region(lesion)
+        geom.add_region(iso)
+    tags = [ACTIVE_TAG, SCAR_TAG, ISO_TAG] if post else [ACTIVE_TAG]
 
     # Generate and return base name
     meshname = mesh.generate(geom)
@@ -101,31 +163,26 @@ def run(args, job):
     sv = runSingleCell(args,job)
 
 
-    # ---------------- Fixed settings from slab2d.par ------------------------
+    # ---------------- Fixed settings from the state's .par ------------------
     # (ionic/conductivity regions, stimulus timing, numerics, LATs)
-    cmd  = tools.carp_cmd(os.path.join(EXAMPLE_DIR, 'slab2d.par'))
-    cmd += tools.gen_physics_opts(IntraTags=[ACTIVE_TAG, SCAR_TAG])
+    cmd  = tools.carp_cmd(os.path.join(EXAMPLE_DIR, PAR_FILES[args.state]))
+    cmd += tools.gen_physics_opts(IntraTags=tags)
 
     # ---------------- Run-dependent settings (override the .par) -----------
-    # Prepaced cell state
+    # Prepaced cell state (active tissue, and isolated wall in post)
     cmd += ['-imp_region[0].im_sv_init', sv]
 
-    # Tuned isotropic conductivities for this dx
+    # Tuned isotropic conductivities for this dx; lesion g_i scaled down
     for ax in ('l', 't', 'n'):
         cmd += ['-gregion[0].g_i' + ax, args.gi,
                 '-gregion[0].g_e' + ax, args.ge]
+        if post:
+            cmd += ['-gregion[1].g_i' + ax, args.gi * args.lesion_g,
+                    '-gregion[1].g_e' + ax, args.ge]
 
-    # Stimulus box (um): stim-width strip along the left edge, full height.
-    # Wave travels in +x, straight into the scar boundary at x = 0.
-    half = wedge_x / 2.0 * 1000.0              # mm -> um
-    w    = args.stim_width * 1000.0
-    tol  = 10.0                                # um, so edge nodes are included
-    cmd += ['-stim[0].elec.p0[0]', -half - tol,
-            '-stim[0].elec.p1[0]', -half + w,
-            '-stim[0].elec.p0[1]', -half - tol,
-            '-stim[0].elec.p1[1]',  half + tol,
-            '-stim[0].elec.p0[2]', -1000.0,
-            '-stim[0].elec.p1[2]',  1000.0]
+    # Stimulus electrode: node list for the requested angle (see stimVertices)
+    vtx  = stimVertices(meshname, args, wedge_x / 2.0, post, job)
+    cmd += ['-stim[0].elec.vtx_file', vtx]
 
     cmd += ['-tend', args.tend, '-simID', job.ID, '-meshname', meshname]
 

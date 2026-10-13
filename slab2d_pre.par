@@ -1,4 +1,5 @@
-# 2D slab - fixed settings (openCARP .par file)
+# 2D slab - PRE-ablation fixed settings (openCARP .par file)
+# Whole sheet is active CRN tissue (tag 1). No lesion, no isolated wall.
 # Anything also passed on the command line from run.py overrides these.
 
 # ---------------- Physics / numerics ----------------
@@ -9,20 +10,16 @@ spacedt      = 0.25       # ms -> 4 kHz Vm output
 timedt       = 10         # ms, console progress only
 
 # ---------------- Ionic regions ----------------
-num_imp_regions        = 2
+num_imp_regions        = 1
 imp_region[0].im       = Courtemanche
 imp_region[0].num_IDs  = 1
 imp_region[0].ID[0]    = 1          # active tissue
-imp_region[1].im       = PASSIVE    # confirm name with: bench --list-imps
-imp_region[1].num_IDs  = 1
-imp_region[1].ID[0]    = 100        # scar
 # imp_region[0].im_sv_init is set from run.py (path to the bench state file)
 
-# ---------------- Conductivity region ----------------
+# ---------------- Conductivity regions ----------------
 num_gregions        = 1
-gregion[0].num_IDs  = 2
-gregion[0].ID[0]    = 1
-gregion[0].ID[1]    = 100
+gregion[0].num_IDs  = 1
+gregion[0].ID[0]    = 1             # active tissue
 # g_il/g_it/g_in and g_el/g_et/g_en are set from run.py (--gi/--ge, per dx)
 
 # ---------------- Stimulus (timing / strength) ----------------
