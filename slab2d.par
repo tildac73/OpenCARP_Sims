@@ -1,0 +1,43 @@
+# 2D slab - fixed settings (openCARP .par file)
+# Anything also passed on the command line from run.py overrides these.
+
+# ---------------- Physics / numerics ----------------
+bidomain     = 0          # monodomain
+parab_solve  = 1          # Crank-Nicolson - must match tuneCV --ts
+dt           = 25         # us
+spacedt      = 0.25       # ms -> 4 kHz Vm output
+timedt       = 10         # ms, console progress only
+
+# ---------------- Ionic regions ----------------
+num_imp_regions        = 2
+imp_region[0].im       = Courtemanche
+imp_region[0].num_IDs  = 1
+imp_region[0].ID[0]    = 1          # active tissue
+imp_region[1].im       = PASSIVE    # confirm name with: bench --list-imps
+imp_region[1].num_IDs  = 1
+imp_region[1].ID[0]    = 100        # scar
+# imp_region[0].im_sv_init is set from run.py (path to the bench state file)
+
+# ---------------- Conductivity region ----------------
+num_gregions        = 1
+gregion[0].num_IDs  = 2
+gregion[0].ID[0]    = 1
+gregion[0].ID[1]    = 100
+# g_il/g_it/g_in and g_el/g_et/g_en are set from run.py (--gi/--ge, per dx)
+
+# ---------------- Stimulus (timing / strength) ----------------
+num_stim                = 1
+stim[0].crct.type       = 0         # transmembrane current
+stim[0].pulse.strength  = 150.0     # uA/cm^2 - check capture
+stim[0].ptcl.start      = 0.0
+stim[0].ptcl.duration   = 2.0       # ms
+stim[0].ptcl.npls       = 1
+# stim[0].elec.p0/p1 box is set from run.py (depends on sheet size)
+
+# ---------------- Activation times ----------------
+num_LATs            = 1
+lats[0].ID          = activation
+lats[0].all         = 0             # first activation only
+lats[0].measurand   = 0             # from Vm
+lats[0].mode        = 0
+lats[0].threshold   = -10           # mV
