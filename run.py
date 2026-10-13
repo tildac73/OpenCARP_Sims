@@ -6,6 +6,7 @@ from datetime import date
 import numpy as np
 
 from carputils import settings, tools, mesh
+from carputils.carpio import txt
 
 ACTIVE_TAG = 1
 SCAR_TAG   = 100   # ablation lesion: necrotic, non-conducting band (post only)
@@ -14,7 +15,11 @@ IMP_MODEL  = 'Courtemanche'
 
 CORNER_LEG = 5.0   # mm, leg of the corner stimulus triangle for 45 deg (x + y <= -L + CORNER_LEG)
 
-EXAMPLE_DIR = os.path.dirname(__file__)
+DT_US = 25         # tissue time step (us) - must match dt in the .par files
+TS    = 1          # Crank-Nicolson - must match parab_solve in the .par files
+
+EXAMPLE_DIR = os.path.dirname(os.path.abspath(__file__))
+TUNED_FILE  = os.path.join(EXAMPLE_DIR, 'tuned_cv.csv')   # cache of tuned gi/ge
 
 # Region layout (ionic + conductivity) lives in these files
 PAR_FILES = {'pre':  'slab2d_pre.par',
@@ -32,10 +37,13 @@ def parser():
     group.add_argument('--angle', type=int, default=0, choices=[0, 45, 90],
                        help='Wavefront direction relative to scar-boundary normal (deg): '
                             '0 = into the boundary, 90 = parallel to it, 45 = oblique')
-    group.add_argument('--gi', type=float, required=True,
-                       help='Tuned intracellular conductivity from tuneCV (S/m), for this dx')
-    group.add_argument('--ge', type=float, required=True,
-                       help='Tuned extracellular conductivity from tuneCV (S/m), for this dx')
+    group.add_argument('--tune-cv', type=float, default=None,
+                       help='Target CV (m/s). Runs tuneCV (CRN, this dx, dt, ts) once, caches '
+                            'gi/ge in tuned_cv.csv, and uses them. Replaces --gi/--ge')
+    group.add_argument('--gi', type=float, default=None,
+                       help='Intracellular conductivity (S/m), if not using --tune-cv')
+    group.add_argument('--ge', type=float, default=None,
+                       help='Extracellular conductivity (S/m), if not using --tune-cv')
     group.add_argument('--bcl', type=float, default=1000.0,
                        help='Single-cell prepacing cycle length (ms)')
     group.add_argument('--npls', type=int, default=20,
@@ -54,6 +62,57 @@ def parser():
                        help='Lesion intracellular conductivity as a fraction of --gi (post only)')
     return parser
 
+def tuneCV(args, job):
+    """
+    Return (gi, ge) in S/m giving --tune-cv on this setup, following the openCARP
+    03A_study_prep_tuneCV tutorial. Reads tuned_cv.csv first; runs tuneCV only if
+    this (cv, dx, dt, ts, model) has not been tuned before.
+    """
+    key = '{:g},{:g},{},{},{}'.format(args.tune_cv, args.dx, DT_US, TS, IMP_MODEL)
+    if os.path.exists(TUNED_FILE):
+        with open(TUNED_FILE) as f:
+            for line in f:
+                if line.startswith(key + ','):
+                    gi, ge = map(float, line.strip().split(',')[-2:])
+                    print('Using cached tuning for CV={}: gi={} ge={}'.format(args.tune_cv, gi, ge))
+                    return gi, ge
+
+    # Run tuneCV in its own folder (it writes results.dat, logs and a mesh)
+    tdir = os.path.join(EXAMPLE_DIR, 'tunecv_cv{:g}_dx{:g}'.format(args.tune_cv, args.dx))
+    os.makedirs(tdir, exist_ok=True)
+    cwd = os.getcwd()
+    os.chdir(tdir)
+    try:
+        if os.path.isfile('results.dat'):
+            os.remove('results.dat')
+        cmd = [settings.execs.TUNECV,
+               '--np',         args.np,
+               '--resolution', args.dx * 1000.0,     # mm -> um
+               '--gi',         0.174,                # tutorial starting guess
+               '--ge',         0.625,
+               '--ts',         TS,
+               '--dt',         DT_US,
+               '--tol',        0.0001,
+               '--length',     0.25,                 # as in the tutorial
+               '--lumping',    False,
+               '--model',      IMP_MODEL,
+               '--velocity',   args.tune_cv,
+               '--converge',   True]
+        job.bash(cmd)
+        res = txt.read('results.dat')                # [CV, gi, ge, ...]
+    finally:
+        os.chdir(cwd)
+
+    cv, gi, ge = float(res[0]), float(res[1]), float(res[2])
+    print('Tuned CV={:.4f} m/s: gi={:.6f} ge={:.6f}'.format(cv, gi, ge))
+    new = not os.path.exists(TUNED_FILE)
+    with open(TUNED_FILE, 'a') as f:
+        if new:
+            f.write('target_cv,dx_mm,dt_us,ts,model,measured_cv,gi,ge\n')
+        f.write('{},{:.5f},{:.6f},{:.6f}\n'.format(key, cv, gi, ge))
+    return gi, ge
+
+
 def runSingleCell(args, job):
     # Single-cell state file (reused if it already exists)
     sv = os.path.join(EXAMPLE_DIR, 'CRN_bcl{:g}_{}beats.sv'.format(args.bcl, args.npls))
@@ -68,7 +127,7 @@ def runSingleCell(args, job):
            '--bcl',           args.bcl,
            '--numstim',       args.npls,
            '--duration',      duration,
-           '--dt',            0.025,       # ms, matches tissue dt
+           '--dt',            DT_US / 1000.0,  # ms, matches tissue dt
            '--save-ini-file', sv,
            '--save-ini-time', duration,
            '--dt-out',        duration,
@@ -84,7 +143,8 @@ def jobID(args):
     """
     today = date.today()
     state = 'pre' if args.state == 'pre' else f'post_lw{args.lesion_width:g}_lg{args.lesion_g:g}'
-    return (f'{today.isoformat()}_simple_{state}_a{args.angle}_dx{args.dx:g}'
+    cv = f'_cv{args.tune_cv:g}' if args.tune_cv else ''
+    return (f'{today.isoformat()}_simple_{state}_a{args.angle}_dx{args.dx:g}{cv}'
             f'_{args.tend}_{args.flv}_np{args.np}')
 
 
@@ -126,6 +186,12 @@ def stimVertices(meshname, args, half, post, job):
 def run(args, job):
 
     post = args.state == 'post'
+
+    # --------------- Conductivities: tune (or reuse cached) or take from CLI --
+    if args.tune_cv is not None:
+        args.gi, args.ge = tuneCV(args, job)
+    elif args.gi is None or args.ge is None:
+        raise ValueError('Give either --tune-cv, or both --gi and --ge')
 
     # --------------- Setting up the mesh ---------------------
 
@@ -183,6 +249,10 @@ def run(args, job):
     # Stimulus electrode: node list for the requested angle (see stimVertices)
     vtx  = stimVertices(meshname, args, wedge_x / 2.0, post, job)
     cmd += ['-stim[0].elec.vtx_file', vtx]
+
+    # Record where the mesh lives (needed for CV checks and the electrogram code)
+    with open(os.path.join(job.ID, 'meshname.txt'), 'w') as f:
+        f.write(os.path.abspath(meshname) + '\n')
 
     cmd += ['-tend', args.tend, '-simID', job.ID, '-meshname', meshname]
 
