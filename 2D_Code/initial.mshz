@@ -1,0 +1,114 @@
+TRACKBALL ======
+0.821554
+0 0 0
+-0 -0 -0
+0.999996 9.73868e-06 -0.00264569 -1.44731e-05
+0.926052 0.109424 0.359009 0.0395488
+CLIPPING ======
+1 0 0 0 0
+0 1 0 0 0
+0 0 1 0 0
+-1 0 0 0 0
+0 -1 0 0 0
+0 0 -1 0 0
+1 0 0 0 0
+0 1 0 0 0
+0 0 1 0 0
+-1 0 0 0 0
+0 -1 0 0 0
+0 0 -1 0 0
+DATA_OPACITY ======
+0 0 0 1 0
+0 0 0 1 0
+0 0 0 1 0
+0 0 0 1 0
+0 0 0 1 0
+0 0 0 1 0
+0 0 0 1 0
+read_recalibrate = 4
+revdraworder = 0
+vertdisp = 0
+cabledisp = 0
+cnnxdisp = 0
+surfedgedisp = 0
+surfdisp = 4
+voldisp = 0
+draw_axes = 0
+vertbut = 0
+cabbut = 0
+cnnxbut = 0
+hilighton = 0
+hitettype = 0
+tethi = 0
+elehi = 0
+verthi = 0
+cnnxhi = 0
+verthi = 0
+cabhi = 0
+attachtype = 0
+veconbut = 1
+veccstype = 1
+veclength = 1
+vecautocal = 0
+vecstride = 1
+vecstoch = 0
+lightx = 0
+lighty = 0
+lightz = 1
+ambientslide = 0.2
+specularslide = 0.65
+diffuseslide = 0.65
+backintensityslide = 0.5
+showLightDir = 0
+facetshadBut = 0
+illBut = 1
+surfvisbut = 1
+surfoutlinebut = 0
+surffillbut = 1
+auxgriddispbut = 1
+auxcstype = 1
+auxmincolval = 0
+auxmaxcolval = 0
+auxnumcolev = 64
+auxautocalibratebut = 0
+auxptdat = 0
+auxptsize = 50
+auxptstyle = 2
+auxlinedat = 0
+auxlinewidth = 100
+auxlinestyle = 2
+auxsurfdat = 0
+auxsurfline = 10
+auxsurfstyle = 2
+auxvoldat = 0
+auxvolline = 10
+auxvolstyle = 2
+autocalibratebut = 0
+mincolval = -90
+maxcolval = 30
+numcolev = 64
+cstype = 1
+tmslider = 0
+frameskip = 1
+animdelay = 10
+SURFACE_COLOURS = 1
+1 0.5 0.1 1 0.125 0.8 0.7 1 1 1 0
+REGION_SIZE = 1
+1 1 1
+stride = 1 1 1
+REGION_3D = 1
+0 0 0
+REGION_COLOURS = 1
+0 1 0 1 0 0 0 1 1 0 1 0 1 1 0 1
+BGD_COLOUR = 1
+ISOLINE_COLOUR = 0 0 0 1
+mwtb->isosurfwin->isolineVal0 = 0
+mwtb->isosurfwin->isolineVal1 = 0
+mwtb->isosurfwin->isoNumLines = 1
+mwtb->isosurfwin->isolineThick = 1
+mwtb->isosurfwin->islDatify = 0
+mwtb->isosurfwin->isolineOn = 0
+mwtb->isosurfwin->isoOn0 = 0
+mwtb->isosurfwin->isoval0 = 0
+mwtb->isosurfwin->opacity0 = 1
+ISOSURF_COLOUR 0 = 1 0 0 1
