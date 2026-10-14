@@ -6,7 +6,7 @@ from datetime import date
 import numpy as np
 
 from carputils import settings, tools, mesh
-from carputils.carpio import txt
+from carputils.carpio import txt, igb
 
 ACTIVE_TAG = 1
 SCAR_TAG   = 100   # ablation lesion: necrotic, non-conducting band (post only)
@@ -14,6 +14,14 @@ ISO_TAG    = 101   # isolated wall beyond the lesion: viable, decoupled, never a
 IMP_MODEL  = 'Courtemanche'
 
 CORNER_LEG = 5.0   # mm, leg of the corner stimulus triangle for 45 deg (x + y <= -L + CORNER_LEG)
+
+# HD Grid electrograms (openCARP phie recovery at a lattice of points above the sheet)
+STANDOFF_MM = 0.5                 # Electrode height above tissue (point electrodes)
+PITCH_MM    = 4.0                 # HD Grid centre-to-centre spacing (4 x 4 electrodes)
+LATTICE_MM  = 0.5                 # catheter step; recording lattice spacing in x
+LAT_X_MM    = np.arange(-26.0, 26.0 + 1e-9, LATTICE_MM)          # 105 columns
+LAT_Y_MM    = (np.arange(4) - 1.5) * PITCH_MM                    # 4 rows: -6, -2, 2, 6
+XC_MM       = np.arange(-20.0, 20.0 + 1e-9, LATTICE_MM)          # 81 catheter centres (y = 0)
 
 DT_US = 25         # tissue time step (us) - must match dt in the .par files
 TS    = 1          # Crank-Nicolson - must match parab_solve in the .par files
@@ -177,9 +185,81 @@ def stimVertices(meshname, args, half, post, job):
     os.makedirs(job.ID, exist_ok=True)
     vtx = os.path.join(job.ID, 'stim_a{}.vtx'.format(args.angle))
     with open(vtx, 'w') as f:
-        f.write('{}\nintra\n'.format(idx.size))
+        f.write('{}\nextra\n'.format(idx.size))
         f.write('\n'.join(map(str, idx)) + '\n')
     return vtx
+
+
+def writeRecoveryPoints(job):
+    """
+    Write the phie-recovery lattice (um) to <job>/egm_points.pts and return the path
+    without extension (as -phie_rec_ptf expects). Point p = iy*len(LAT_X_MM) + ix,
+    at height STANDOFF_MM above the sheet.
+    """
+    X, Y = np.meshgrid(LAT_X_MM, LAT_Y_MM)
+    pts = np.c_[X.ravel(), Y.ravel(), np.full(X.size, STANDOFF_MM)] * 1000.0
+    os.makedirs(job.ID, exist_ok=True)
+    base = os.path.abspath(os.path.join(job.ID, 'egm_points'))
+    txt.write(base + '.pts', pts)
+    return base
+
+
+def buildEGMs(simdir, spacedt_ms=0.25):
+    """
+    Raw (unfiltered) HD Grid electrograms from phie_recovery.igb, for a 4x4 grid
+    (axis-aligned, centre y = 0) stepped across the boundary at x = XC_MM.
+    Electrode e = row*4 + col; col runs along x (spline), row along y.
+    Saves <simdir>/egm.npz:
+      uni (P,16,T), bi_along (P,12,T), bi_across (P,12,T), omni (P,36,T) in mV,
+      omni_angle_deg (P,36), *_xy (P,K,2) recording positions in mm (d = x),
+      xc_mm (P,), t_ms (T,)
+    """
+    data, _, _ = igb.read(os.path.join(simdir, 'phie_recovery.igb'))  # (npts, T)
+    phi = np.asarray(data, dtype=np.float32).T                         # (T, npts)
+    nx = len(LAT_X_MM)
+    T, P = phi.shape[0], len(XC_MM)
+    ic = np.rint((XC_MM - LAT_X_MM[0]) / LATTICE_MM).astype(int)    # lattice column of each centre
+    step = int(round(PITCH_MM / LATTICE_MM))                         # 8 lattice steps per pitch
+    cols = (np.arange(4) - 1.5) * step                               # -12, -4, 4, 12
+
+    # unipolar: (P, 16, T)
+    eidx = np.array([[r * nx + ic[p] + int(cols[c]) for r in range(4) for c in range(4)]
+                     for p in range(P)])
+    uni = phi.T[eidx]                                                # (P, 16, T)
+    exy = np.stack([np.c_[LAT_X_MM[eidx[p] % nx], LAT_Y_MM[eidx[p] // nx]] for p in range(P)])
+
+    # bipolar along spline (col c -> c+1) and across splines (row r -> r+1)
+    along  = [(r * 4 + c, r * 4 + c + 1) for r in range(4) for c in range(3)]
+    across = [(r * 4 + c, (r + 1) * 4 + c) for r in range(3) for c in range(4)]
+    bi_a = np.stack([uni[:, b] - uni[:, a] for a, b in along], axis=1)
+    bi_c = np.stack([uni[:, b] - uni[:, a] for a, b in across], axis=1)
+    bi_a_xy = np.stack([(exy[:, a] + exy[:, b]) / 2 for a, b in along], axis=1)
+    bi_c_xy = np.stack([(exy[:, a] + exy[:, b]) / 2 for a, b in across], axis=1)
+
+    # omnipolar: 4 right-angle cliques per square; trace = bipole projected on the
+    # direction that maximises peak-to-peak (0-178 deg in 2 deg steps)
+    ang = np.deg2rad(np.arange(0, 180, 2))
+    omni, omni_ang, omni_xy = [], [], []
+    for r in range(3):
+        for c in range(3):
+            sq = {(0, 0): r*4 + c, (1, 0): r*4 + c + 1, (0, 1): (r+1)*4 + c, (1, 1): (r+1)*4 + c + 1}
+            for (vx, vy), v in sq.items():
+                hx, hy = sq[(1 - vx, vy)], sq[(vx, 1 - vy)]
+                bx = (uni[:, hx] - uni[:, v]) * (1 if vx == 0 else -1)     # +x bipole
+                by = (uni[:, hy] - uni[:, v]) * (1 if vy == 0 else -1)     # +y bipole
+                proj = (np.cos(ang)[None, :, None] * bx[:, None, :] +
+                        np.sin(ang)[None, :, None] * by[:, None, :])       # (P, angles, T)
+                k = np.argmax(np.ptp(proj, axis=2), axis=1)
+                omni.append(proj[np.arange(P), k])
+                omni_ang.append(np.rad2deg(ang[k]))
+                omni_xy.append((exy[:, v] + exy[:, hx] + exy[:, hy]) / 3)
+    np.savez_compressed(os.path.join(simdir, 'egm.npz'),
+                        uni=uni, bi_along=bi_a, bi_across=bi_c,
+                        omni=np.stack(omni, 1), omni_angle_deg=np.stack(omni_ang, 1),
+                        uni_xy=exy, bi_along_xy=bi_a_xy, bi_across_xy=bi_c_xy,
+                        omni_xy=np.stack(omni_xy, 1), xc_mm=XC_MM,
+                        t_ms=np.arange(T) * spacedt_ms, standoff_mm=STANDOFF_MM)
+    print('Electrograms saved: ' + os.path.join(simdir, 'egm.npz'))
 
 
 @tools.carpexample(parser, jobID)
@@ -254,6 +334,9 @@ def run(args, job):
     with open(os.path.join(job.ID, 'meshname.txt'), 'w') as f:
         f.write(os.path.abspath(meshname) + '\n')
 
+    # Electrograms: openCARP recovers phie at the HD Grid lattice points
+    cmd += ['-phie_rec_ptf', writeRecoveryPoints(job)]
+
     cmd += ['-tend', args.tend, '-simID', job.ID, '-meshname', meshname]
 
     if args.visualize:
@@ -261,6 +344,12 @@ def run(args, job):
 
     # Run simulation
     job.carp(cmd)
+
+    # Build unipolar / bipolar / omnipolar electrograms from the recovered potentials
+    if os.path.exists(os.path.join(job.ID, 'phie_recovery.igb')):
+        buildEGMs(job.ID)
+    else:
+        print('No phie_recovery.igb - electrograms not built')
 
     # Do visualization
     if args.visualize and not settings.platform.BATCH:
