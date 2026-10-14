@@ -1,0 +1,19 @@
+
+{
+    "name": "noise_sweep",
+    "runs": "cv*/20*_simple_*",
+    "gain": {
+      "mode": "auto",
+      "target_bipolar_healthy_mV": 1.44
+    },
+    "noise": {
+      "mode": "floor"
+    },
+    "sweep": {
+      "noise.floor_bipolar_mV": [
+        0.02,
+        0.04,
+        0.08
+      ]
+    }
+  }
