@@ -16,7 +16,7 @@ IMP_MODEL  = 'Courtemanche'
 CORNER_LEG = 5.0   # mm, leg of the corner stimulus triangle for 45 deg (x + y <= -L + CORNER_LEG)
 
 # HD Grid electrograms (openCARP phie recovery at a lattice of points above the sheet)
-STANDOFF_MM = 0.5                 # Electrode height above tissue (point electrodes)
+STANDOFF_MM = 0.5                 # [ASSUMED] electrode height above tissue (point electrodes)
 PITCH_MM    = 4.0                 # HD Grid centre-to-centre spacing (4 x 4 electrodes)
 LATTICE_MM  = 0.5                 # catheter step; recording lattice spacing in x
 LAT_X_MM    = np.arange(-26.0, 26.0 + 1e-9, LATTICE_MM)          # 105 columns
@@ -200,7 +200,7 @@ def writeRecoveryPoints(job):
     pts = np.c_[X.ravel(), Y.ravel(), np.full(X.size, STANDOFF_MM)] * 1000.0
     os.makedirs(job.ID, exist_ok=True)
     base = os.path.abspath(os.path.join(job.ID, 'egm_points'))
-    txt.write(base + '.pts', pts)
+    txt.write(base + '.pts', pts)            # as in the openCARP 07_extracellular example
     return base
 
 
@@ -264,6 +264,8 @@ def buildEGMs(simdir, spacedt_ms=0.25):
 
 @tools.carpexample(parser, jobID)
 def run(args, job):
+
+    job.overwrite_behaviour = 'overwrite'
 
     post = args.state == 'post'
 
