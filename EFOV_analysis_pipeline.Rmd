@@ -1,0 +1,917 @@
+---
+title: "Effective Field of View of HD Grid Electrodes: Analysis Pipeline"
+subtitle: "Unipolar, bipolar and omnipolar signal attenuation after single-ring isolation"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    df_print: kable
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      fig.width = 10, fig.height = 7)
+```
+
+# Setup
+
+```{r packages}
+pkgs <- c("readxl", "dplyr", "tidyr", "purrr", "tibble", "ggplot2", "patchwork",
+          "cowplot", "lme4", "lmerTest", "performance", "mcp", "ggdist",
+          "FSA", "pROC", "irr", "BlandAltmanLeh", "knitr")
+missing_pkgs <- setdiff(pkgs, rownames(installed.packages()))
+if (length(missing_pkgs) > 0) {
+  stop("Please install: ", paste(missing_pkgs, collapse = ", "),
+       "\n(mcp also requires JAGS: https://mcmc-jags.sourceforge.io)")
+}
+invisible(lapply(pkgs, library, character.only = TRUE))
+```
+
+```{r config}
+# ---- Input files (edit to match your local copy) ------------------------------
+DATA_DIR    <- "results/clin_default"
+FILE_POST   <- file.path(DATA_DIR, "merged_rectangle_summary_euclidean.xlsx")     # post-SRI, Euclidean (primary)
+FILE_PRE    <- file.path(DATA_DIR, "merged_rectangle_summary_euclidean_pre.xlsx") # pre-ablation (Figure 3)
+FILE_GEO    <- file.path(DATA_DIR, "merged_rectangle_summary_geodesic.xlsx")      # post-SRI, geodesic (sensitivity)
+FILE_AUTO   <- file.path(DATA_DIR, "auto_y.txt")    # automated geodesic distances (validation subset)
+FILE_MANUAL <- file.path(DATA_DIR, "manual_y.txt")  # manual distances, same points in the same order
+
+# ---- Outputs -------------------------------------------------------------------
+OUT_DIR   <- "output"
+FIG_DIR   <- file.path(OUT_DIR, "figures")
+TAB_DIR   <- file.path(OUT_DIR, "tables")
+CACHE_DIR <- file.path(OUT_DIR, "cache")
+for (d in c(FIG_DIR, TAB_DIR, CACHE_DIR)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+
+SAVE_FIGURES    <- TRUE
+FIG_DPI         <- 1200
+RUN_SENSITIVITY <- TRUE   # untruncated data + geodesic distance (re-runs all models)
+USE_CACHE       <- TRUE   # re-use saved Bayesian fits when data and settings are unchanged
+
+# ---- Analysis constants (Methods) ----------------------------------------------
+BOUNDARY_OFFSET   <- 3      # mm, scar boundary relative to the lesion-centre line
+ROI_HEALTHY       <- 10     # mm analysed on the healthy side of the boundary
+ROI_SCAR          <- 15     # mm analysed into the scar
+DETECTION_LIMIT   <- 0.01   # mV, system limit of detection (points <= this are excluded)
+TRIM_Q            <- 0.999  # upper-percentile truncation of voltage and peak frequency
+SCAR_THRESHOLD_MV <- 0.05   # conventional electrical-scar threshold
+ROC_HALF_WIDTH    <- 5      # mm either side of the scar boundary for ROC analysis
+
+# Bayesian piecewise regression (mcp). These equal the mcp defaults:
+# 3 chains x 3000 iterations = 9000 posterior draws, weakly informative default priors
+# (see Supplemental Methods 3). cores = 3 runs the chains in parallel and, unlike the
+# sequential default, makes results reproducible with set.seed().
+MCP_CHAINS <- 3
+MCP_ITER   <- 3000
+MCP_ADAPT  <- 1500
+MCP_SEED   <- 3
+
+# ---- Labels and colours ----------------------------------------------------------
+ELECTRODES <- c("Unipolar", "Bipolar", "Omnipolar")
+LOCATIONS  <- c("Inferior", "Roof")
+COLORS     <- c(Unipolar = "#0072B2", Bipolar = "#D55E00", Omnipolar = "#009E73")
+```
+
+## Helper functions
+
+```{r helpers}
+# ---- Data preparation -----------------------------------------------------------
+read_map <- function(path) {
+  read_excel(path) %>%
+    mutate(
+      patientID = factor(patientID),
+      Location  = factor(if_else(inf0_roof1 == 0, "Inferior", "Roof"), levels = LOCATIONS),
+      Electrode = factor(ELECTRODES[uni1_bi2_omni3], levels = ELECTRODES),
+      Dist      = DistAcrossPath + BOUNDARY_OFFSET,          # 0 = scar boundary, > 0 = scar
+      PP_log    = log(PP),
+      PFreq_log = if_else(!is.na(PFreq) & PFreq > 0, log(PFreq), NA_real_)
+    )
+}
+
+in_roi  <- function(d) filter(d, Dist > -ROI_HEALTHY, Dist < ROI_SCAR)
+freq_ok <- function(d) filter(d, Electrode != "Unipolar", !is.na(PFreq), PFreq > 0,
+                              PP > DETECTION_LIMIT)
+
+# Remove values above the 99.9th percentile. Percentiles are computed on the data
+# passed in; NA values (unipolar peak frequency) are kept.
+trim_upper <- function(d, vars, trim = TRUE) {
+  if (!trim) return(d)
+  keep <- rep(TRUE, nrow(d))
+  for (v in vars) {
+    q <- quantile(d[[v]], TRIM_Q, na.rm = TRUE)
+    keep <- keep & (is.na(d[[v]]) | d[[v]] <= q)
+  }
+  d[keep, ]
+}
+
+# Analysis datasets. trim = FALSE gives the untruncated sensitivity datasets.
+make_datasets <- function(raw, trim = TRUE) {
+  list(
+    # Full region of interest (-10 to 15 mm): sample flow, Table 2, ROC, Figure 3
+    all      = raw %>% in_roi() %>% filter(PP > DETECTION_LIMIT) %>%
+                 trim_upper(c("PP", "PFreq"), trim),
+    # Scar region (0 to 15 mm): voltage decay models
+    volt     = raw %>% filter(Dist > 0, Dist < ROI_SCAR, PP > DETECTION_LIMIT) %>%
+                 trim_upper("PP", trim),
+    # Scar region (0 to 15 mm): peak frequency decay models (bipolar/omnipolar only)
+    freq     = raw %>% freq_ok() %>% filter(Dist >= 0, Dist <= ROI_SCAR) %>%
+                 trim_upper(c("PFreq", "PP"), trim),
+    # Full region of interest: peak frequency distributions, PPV, Figure 3
+    freq_roi = raw %>% freq_ok() %>% in_roi() %>% trim_upper(c("PFreq", "PP"), trim)
+  )
+}
+
+tissue_of <- function(dist) factor(if_else(dist <= 0, "Healthy", "Scar"),
+                                   levels = c("Healthy", "Scar"))
+
+# ---- Formatting / saving --------------------------------------------------------
+fmt_p   <- function(p) ifelse(p < 1e-4, "<0.0001", sprintf("%.4f", p))
+med_iqr <- function(x, digits = 2) {
+  if (length(x) == 0) return("-")
+  q <- quantile(x, c(0.5, 0.25, 0.75), names = FALSE)
+  sprintf(paste0("%.", digits, "f (%.", digits, "f to %.", digits, "f)"), q[1], q[2], q[3])
+}
+show <- function(x, digits = 3, ...) knitr::kable(x, digits = digits, ...)
+save_table <- function(x, name) {
+  write.csv(x, file.path(TAB_DIR, paste0(name, ".csv")), row.names = FALSE)
+  invisible(x)
+}
+save_figure <- function(plot, name, width, height) {
+  if (!SAVE_FIGURES) return(invisible(NULL))
+  ggsave(file.path(FIG_DIR, paste0(name, ".pdf")), plot,
+         width = width, height = height, units = "in", bg = "white")
+  ggsave(file.path(FIG_DIR, paste0(name, ".tiff")), plot,
+         width = width, height = height, units = "in", dpi = FIG_DPI,
+         compression = "lzw", bg = "white")
+}
+
+# Cache expensive results; the key includes the inputs, so stale fits are never reused.
+cached <- function(key_obj, prefix, expr) {
+  f <- file.path(CACHE_DIR, paste0(prefix, "_", rlang::hash(key_obj), ".rds"))
+  if (USE_CACHE && file.exists(f)) return(readRDS(f))
+  value <- expr
+  if (USE_CACHE) saveRDS(value, f)
+  value
+}
+```
+
+```{r model-functions}
+# ---- Mixed-effects decay models ---------------------------------------------------
+# Exponential: ln(Y) = b0 + b1 * d      + u_i + e
+# Power-law:   ln(Y) = b0 + b1 * ln(d)  + u_i + e
+DECAY_MODELS <- c("Exponential", "Power-law")
+decay_term    <- function(model) if (model == "Exponential") "Dist" else "log(Dist)"
+decay_formula <- function(outcome, model, random = "(1 | patientID)") {
+  as.formula(paste(outcome, "~", decay_term(model), "+", random))
+}
+
+# Model selection: both forms fitted by ML on identical data (d > 0), compared by AIC.
+select_decay_model <- function(d, outcome) {
+  d <- filter(d, Dist > 0)
+  map_dfr(DECAY_MODELS, function(m) {
+    fit <- lmer(decay_formula(outcome, m), data = d, REML = FALSE)
+    tibble(model = m, n = nobs(fit), AIC = AIC(fit), BIC = BIC(fit))
+  }) %>%
+    mutate(dAIC = AIC - min(AIC), best = dAIC == 0)
+}
+
+# Final model: REML estimates of the selected form.
+fit_decay_reml <- function(d, outcome, model) {
+  if (model == "Power-law") d <- filter(d, Dist > 0)
+  lmer(decay_formula(outcome, model), data = d, REML = TRUE)
+}
+
+tidy_decay <- function(fit, model) {
+  term <- decay_term(model)
+  ci   <- confint(fit, parm = c("(Intercept)", term), method = "Wald")
+  r2   <- performance::r2(fit)
+  b    <- lme4::fixef(fit)
+  tibble(
+    model = model, n = nobs(fit),
+    b0 = b[[1]], b0_lower = ci[1, 1], b0_upper = ci[1, 2],
+    b1 = b[[term]], b1_lower = ci[2, 1], b1_upper = ci[2, 2],
+    p_b1 = summary(fit)$coefficients[term, "Pr(>|t|)"],
+    A    = exp(b[[1]]),   # boundary value (exponential) or value at d = 1 mm (power-law)
+    R2m  = r2$R2_marginal, R2c = r2$R2_conditional,
+    RMSE = performance::rmse(fit)
+  )
+}
+
+equation_label <- function(metric, model, A, b1) {
+  y <- if (metric == "Voltage") "V" else "f"
+  if (model == "Exponential") sprintf("%s = %.2f e^(%.2f d)", y, A, b1)
+  else sprintf("%s = %.2f d^(%.2f)", y, A, b1)
+}
+
+# Population-level prediction with a 95% CI from the fixed-effect covariance matrix.
+predict_decay <- function(fit, model, dist) {
+  X   <- cbind(1, if (model == "Power-law") log(dist) else dist)
+  eta <- drop(X %*% lme4::fixef(fit))
+  se  <- sqrt(rowSums((X %*% as.matrix(vcov(fit))) * X))
+  tibble(Dist = dist, value = exp(eta), lo = exp(eta - 1.96 * se), hi = exp(eta + 1.96 * se))
+}
+
+# Random-slope structure check (Supplemental Methods 2).
+check_random_slope <- function(d, outcome, model) {
+  if (model == "Power-law") d <- filter(d, Dist > 0)
+  term <- decay_term(model)
+  f    <- decay_formula(outcome, model, random = paste0("(1 + ", term, " | patientID)"))
+  msgs <- character()
+  fit  <- withCallingHandlers(
+    tryCatch(lmer(f, data = d, REML = FALSE),
+             error = function(e) { msgs <<- c(msgs, conditionMessage(e)); NULL }),
+    warning = function(w) { msgs <<- c(msgs, conditionMessage(w)); invokeRestart("muffleWarning") }
+  )
+  status <- if (is.null(fit)) "Error"
+            else if (length(msgs) > 0) "Convergence warning"
+            else if (isSingular(fit)) "Singular fit"
+            else "Converged"
+  tibble(model = model, status = status, message = paste(unique(msgs), collapse = " | "))
+}
+
+# ---- Bayesian piecewise regression (linear decay + zero-slope plateau) --------------
+fit_piecewise <- function(d, outcome, model, label) {
+  d <- d %>%
+    mutate(x = if (model == "Power-law") log(Dist) else Dist) %>%
+    filter(is.finite(x), is.finite(.data[[outcome]]))
+  d <- as.data.frame(d[, c(outcome, "x")])
+  cached(list(d, outcome, MCP_CHAINS, MCP_ITER, MCP_ADAPT, MCP_SEED), paste0("mcp_", label), {
+    set.seed(MCP_SEED)
+    mcp(list(as.formula(paste(outcome, "~ 1 + x")), ~ 0), data = d, par_x = "x",
+        chains = MCP_CHAINS, iter = MCP_ITER, adapt = MCP_ADAPT, cores = MCP_CHAINS)
+  })
+}
+
+# Posterior summaries (mean and 95% highest-density interval, as in mcp::summary),
+# plus derived quantities computed draw-by-draw.
+summarise_piecewise <- function(fit, model, metric) {
+  s <- NULL
+  invisible(capture.output(s <- summary(fit)))
+  labels <- c(int_1 = "beta0", x_1 = "beta1", cp_1 = "cp", sigma_1 = "sigma")
+  params <- tibble(term = unname(labels[s$name]), mean = s$mean, lower = s$lower,
+                   upper = s$upper, Rhat = s$Rhat, n_eff = s$n.eff)
+
+  draws <- do.call(rbind, lapply(fit$mcmc_post, as.matrix))
+  b0 <- draws[, "int_1"]; b1 <- draws[, "x_1"]; cp <- draws[, "cp_1"]
+  to_mm <- if (model == "Power-law") exp else identity
+  hdi <- function(x, term) {
+    h <- ggdist::mean_hdci(x, .width = 0.95)
+    tibble(term = term, mean = h$y, lower = h$ymin, upper = h$ymax)
+  }
+  derived <- bind_rows(
+    hdi(to_mm(cp), "cp_mm"),               # change point on the mm scale (cp' for power-law)
+    hdi(exp(b0 + b1 * cp), "value_at_cp")  # signal level at the change point (mV or Hz)
+  )
+  if (metric == "Voltage") {
+    d05 <- to_mm((log(SCAR_THRESHOLD_MV) - b0) / b1)  # distance where the decay segment hits 0.05 mV
+    derived <- bind_rows(derived, hdi(d05, "dist_to_0.05mV"),
+                         tibble(term = "P(0.05mV reached before cp)", mean = mean(d05 <= to_mm(cp))))
+  }
+  bind_rows(params, derived)
+}
+
+# ---- Full core analysis (used for the primary and all sensitivity analyses) ---------
+build_specs <- function(ds) {
+  bind_rows(
+    ds$volt %>% distinct(Location, Electrode) %>%
+      mutate(Metric = "Voltage", outcome = "PP_log", source = "volt"),
+    ds$freq %>% distinct(Location, Electrode) %>%
+      mutate(Metric = "Peak frequency", outcome = "PFreq_log", source = "freq")
+  ) %>%
+    mutate(Metric = factor(Metric, levels = c("Voltage", "Peak frequency"))) %>%
+    arrange(Location, Metric, Electrode) %>%
+    mutate(data = pmap(list(source, Location, Electrode),
+                       function(s, l, e) filter(ds[[s]], Location == l, Electrode == e)))
+}
+
+run_core <- function(ds, label) {
+  keys  <- c("Location", "Metric", "Electrode")
+  specs <- build_specs(ds)
+
+  selection <- specs %>%
+    mutate(sel = map2(data, outcome, select_decay_model)) %>%
+    select(all_of(keys), sel) %>% unnest(sel)
+
+  specs <- specs %>%
+    left_join(selection %>% filter(best) %>% select(all_of(keys), model), by = keys) %>%
+    mutate(
+      fit_reml = pmap(list(data, outcome, model), fit_decay_reml),
+      fit_mcp  = pmap(list(data, outcome, model), fit_piecewise, label = label)
+    )
+
+  reml <- specs %>%
+    mutate(t = map2(fit_reml, model, tidy_decay)) %>%
+    select(all_of(keys), t) %>% unnest(t) %>%
+    mutate(equation = pmap_chr(list(as.character(Metric), model, A, b1), equation_label))
+
+  bayes <- specs %>%
+    mutate(t = pmap(list(fit_mcp, model, as.character(Metric)), summarise_piecewise)) %>%
+    select(all_of(keys), model, t) %>% unnest(t)
+
+  list(label = label, specs = specs, selection = selection, reml = reml, bayes = bayes)
+}
+
+# Compare a sensitivity run with the primary run.
+compare_to_primary <- function(prim, sens) {
+  keys <- c("Location", "Metric", "Electrode")
+  models <- prim$reml %>% select(all_of(keys), model_primary = model) %>%
+    left_join(sens$reml %>% select(all_of(keys), model_sens = model), by = keys)
+  sens_dAIC <- sens$selection %>% filter(!best) %>% select(all_of(keys), dAIC_sens = dAIC)
+
+  slopes <- prim$reml %>% select(all_of(keys), b1, b1_lower, b1_upper) %>%
+    left_join(sens$reml %>% select(all_of(keys), b1_sens = b1, b1_sens_lower = b1_lower,
+                                   b1_sens_upper = b1_upper), by = keys)
+  cps <- prim$bayes %>% filter(term == "cp_mm") %>%
+    select(all_of(keys), cp = mean, cp_lower = lower, cp_upper = upper) %>%
+    left_join(sens$bayes %>% filter(term == "cp_mm") %>%
+                select(all_of(keys), cp_sens = mean, cp_sens_lower = lower,
+                       cp_sens_upper = upper), by = keys)
+
+  models %>% left_join(sens_dAIC, by = keys) %>%
+    left_join(slopes, by = keys) %>% left_join(cps, by = keys) %>%
+    mutate(
+      same_model        = model_primary == model_sens,
+      b1_within_prim_CI = same_model & b1_sens >= b1_lower & b1_sens <= b1_upper,
+      cp_within_prim_CrI = cp_sens >= cp_lower & cp_sens <= cp_upper
+    )
+}
+```
+
+# Data and sample flow
+
+```{r data}
+raw_post <- read_map(FILE_POST)
+raw_pre  <- read_map(FILE_PRE)
+ds       <- make_datasets(raw_post)
+```
+
+Methods / Results "Electroanatomical Mapping Data": points in the region of interest, exclusions, and points per patient.
+
+```{r sample-flow}
+roi      <- in_roi(raw_post)
+above_dl <- filter(roi, PP > DETECTION_LIMIT)
+bo_all   <- filter(ds$all, Electrode != "Unipolar")
+n_undet  <- sum(is.na(bo_all$PFreq) | bo_all$PFreq == 0)
+
+sample_flow <- tribble(
+  ~Step,                                                   ~n,
+  "Mapping points in region of interest (-10 to 15 mm)",   nrow(roi),
+  "Excluded: below limit of detection (<= 0.01 mV)",       sum(roi$PP <= DETECTION_LIMIT),
+  "Excluded: above 99.9th percentile (voltage or PF)",     nrow(above_dl) - nrow(ds$all),
+  "Voltage analysis",                                      nrow(ds$all),
+  "Bipolar + omnipolar points (PF available)",             nrow(bo_all),
+  "Excluded: undetectable peak frequency",                 n_undet,
+  "Peak frequency analysis",                               nrow(bo_all) - n_undet
+)
+show(sample_flow)
+
+cat("99.9th percentile thresholds (region of interest): PP =",
+    round(quantile(above_dl$PP, TRIM_Q), 3), "mV; PFreq =",
+    round(quantile(above_dl$PFreq, TRIM_Q, na.rm = TRUE), 1), "Hz\n")
+
+per_patient <- count(roi, patientID, name = "n_points")
+cat(sprintf("Points per patient: median %.0f (IQR %.0f to %.0f)\n",
+            median(per_patient$n_points), quantile(per_patient$n_points, 0.25),
+            quantile(per_patient$n_points, 0.75)))
+
+# Size of each analysis dataset
+bind_rows(lapply(ds, function(d) count(d, Location, Electrode)), .id = "dataset") %>%
+  pivot_wider(names_from = dataset, values_from = n) %>% show()
+```
+
+# Voltage and peak frequency in healthy and scar tissue
+
+## Table 2
+
+Healthy = distance <= 0 mm (outside the scar boundary), scar = distance > 0 mm. Peak frequency summaries exclude undetectable values (PF = 0).
+
+```{r table2}
+table2 <- ds$all %>%
+  mutate(Tissue = tissue_of(Dist)) %>%
+  group_by(Location, Electrode, Tissue) %>%
+  summarise(
+    n_voltage = n(),
+    Voltage   = med_iqr(PP),
+    n_PF      = sum(PFreq > 0, na.rm = TRUE),
+    PeakFreq  = med_iqr(PFreq[!is.na(PFreq) & PFreq > 0]),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(names_from = Tissue, values_from = c(n_voltage, Voltage, n_PF, PeakFreq))
+
+show(table2)
+save_table(table2, "Table2_voltage_PF_by_tissue")
+```
+
+## Normality and group comparisons (Supplemental Results 1)
+
+```{r normality}
+# Shapiro-Wilk
+ds$all %>%
+  mutate(Tissue = tissue_of(Dist)) %>%
+  group_by(Location, Electrode, Tissue) %>%
+  summarise(n = n(),
+            W = if (n() >= 3 && n() <= 5000) shapiro.test(PP)$statistic else NA_real_,
+            p = if (n() >= 3 && n() <= 5000) fmt_p(shapiro.test(PP)$p.value) else NA_character_,
+            .groups = "drop") %>%
+  show()
+```
+
+```{r voltage-comparisons}
+volt_tissue <- mutate(ds$all, Tissue = tissue_of(Dist))
+
+# Inferior wall vs roof (Mann-Whitney U), by tissue and electrode
+inf_vs_roof <- volt_tissue %>%
+  group_by(Tissue, Electrode) %>%
+  summarise(p = wilcox.test(PP[Location == "Inferior"], PP[Location == "Roof"])$p.value,
+            .groups = "drop") %>%
+  mutate(p = fmt_p(p))
+show(inf_vs_roof)
+save_table(inf_vs_roof, "SuppResults1_inferior_vs_roof")
+
+# Electrode configurations (Kruskal-Wallis + Dunn, Holm-corrected), by tissue
+for (tissue in levels(volt_tissue$Tissue)) {
+  d  <- filter(volt_tissue, Tissue == tissue)
+  kw <- kruskal.test(PP ~ Electrode, data = d)
+  cat(sprintf("\n%s tissue: Kruskal-Wallis p = %s\n", tissue, fmt_p(kw$p.value)))
+  dunn <- dunnTest(PP ~ Electrode, data = d, method = "holm")$res
+  print(show(mutate(dunn, P.adj = fmt_p(P.adj)) %>% select(Comparison, Z, P.adj)))
+}
+```
+
+# Primary analysis: decay models
+
+```{r primary-run}
+primary <- run_core(ds, label = "primary")
+```
+
+## Model selection (ML, AIC)
+
+```{r model-selection}
+selection_wide <- primary$selection %>%
+  select(Location, Metric, Electrode, model, AIC) %>%
+  pivot_wider(names_from = model, values_from = AIC, names_prefix = "AIC_") %>%
+  left_join(primary$selection %>% filter(best) %>% select(Location, Metric, Electrode, best_model = model),
+            by = c("Location", "Metric", "Electrode")) %>%
+  mutate(dAIC = abs(`AIC_Exponential` - `AIC_Power-law`))
+show(selection_wide, digits = 1)
+save_table(selection_wide, "ModelSelection_AIC")
+
+# Functional forms reported in the manuscript
+expected <- tribble(
+  ~Metric,          ~Electrode,  ~expected,
+  "Voltage",        "Unipolar",  "Power-law",
+  "Voltage",        "Bipolar",   "Exponential",
+  "Voltage",        "Omnipolar", "Exponential",
+  "Peak frequency", "Bipolar",   "Exponential",
+  "Peak frequency", "Omnipolar", "Exponential"
+)
+mismatch <- selection_wide %>%
+  mutate(Metric = as.character(Metric), Electrode = as.character(Electrode)) %>%
+  left_join(expected, by = c("Metric", "Electrode")) %>%
+  filter(best_model != expected)
+if (nrow(mismatch) > 0) warning("Selected model differs from the manuscript for: ",
+                                paste(mismatch$Location, mismatch$Metric, mismatch$Electrode, collapse = "; "))
+```
+
+## Table 3 and Supplemental Results 2-3 (REML estimates)
+
+```{r table3}
+table3 <- primary$reml %>%
+  mutate(p_b1 = fmt_p(p_b1)) %>%
+  select(Location, Metric, Electrode, model, equation, b1, b1_lower, b1_upper, p_b1,
+         A, R2m, R2c, RMSE, n)
+show(table3)
+save_table(primary$reml, "Table3_mixed_models_REML")
+```
+
+## Random-slope check (Supplemental Methods 2)
+
+```{r random-slope}
+random_slope <- primary$specs %>%
+  select(Location, Metric, Electrode, data, outcome) %>%
+  mutate(chk = map2(data, outcome, function(d, y) map_dfr(DECAY_MODELS, ~ check_random_slope(d, y, .x)))) %>%
+  select(-data, -outcome) %>% unnest(chk)
+show(select(random_slope, -message))
+count(random_slope, status) %>% show()
+```
+
+# Bayesian piecewise models
+
+## Table 5 and Supplemental Results 5
+
+`cp` is on the model scale (log-distance for unipolar); `cp_mm` is the change point in mm (cp' for unipolar), i.e. the effective field of view (voltage) or the transition boundary (peak frequency). `value_at_cp` is the voltage (mV) or peak frequency (Hz) at the change point.
+
+```{r table5}
+table5 <- primary$bayes %>%
+  filter(term %in% c("beta0", "beta1", "cp", "cp_mm", "sigma"),
+         !(term == "cp_mm" & model == "Exponential")) %>%
+  mutate(term = factor(term, levels = c("beta0", "beta1", "cp", "cp_mm", "sigma"))) %>%
+  arrange(Location, Metric, Electrode, term)
+show(table5, digits = 2)
+save_table(table5, "Table5_bayesian_posteriors")
+
+cat("Max Rhat across all parameters:", round(max(table5$Rhat, na.rm = TRUE), 3),
+    " | Min n_eff:", min(table5$n_eff, na.rm = TRUE), "\n")
+
+change_points <- primary$bayes %>%
+  filter(term %in% c("cp_mm", "value_at_cp")) %>%
+  select(Location, Metric, Electrode, term, mean, lower, upper) %>%
+  pivot_wider(names_from = term, values_from = c(mean, lower, upper), names_glue = "{term}_{.value}")
+show(change_points, digits = 2)
+save_table(change_points, "SuppResults5_change_points")
+
+# Look-up tables used below
+efov <- primary$bayes %>%
+  filter(Metric == "Voltage", term == "cp_mm") %>%
+  select(Location, Electrode, EFOV = mean)
+pf_cp_value <- primary$bayes %>%
+  filter(Metric == "Peak frequency", term == "value_at_cp") %>%
+  transmute(Location, Electrode, PF_threshold = round(mean))
+```
+
+## Distance at which voltage reaches 0.05 mV
+
+Estimated from the decay segment of the Bayesian piecewise model. If the voltage at the change point is above 0.05 mV, the threshold is not reached within the decay segment.
+
+```{r threshold-0.05}
+threshold_005 <- primary$bayes %>%
+  filter(Metric == "Voltage", Electrode != "Unipolar",  # not reported for unipolar (log-distance extrapolation)
+         term %in% c("dist_to_0.05mV", "P(0.05mV reached before cp)", "cp_mm", "value_at_cp")) %>%
+  select(Location, Electrode, term, mean) %>%
+  pivot_wider(names_from = term, values_from = mean)
+show(threshold_005, digits = 2)
+save_table(threshold_005, "Threshold_0.05mV_distance")
+```
+
+## Table 4: decay distances (bipolar and omnipolar)
+
+Distances at which voltage and peak frequency fall to 90%, 70% and 50% of their boundary value (REML exponential models), and the fraction of the boundary value remaining at a distance equal to the voltage effective field of view (table footnote).
+
+```{r table4}
+table4 <- primary$reml %>%
+  filter(model == "Exponential", Electrode != "Unipolar") %>%
+  left_join(efov, by = c("Location", "Electrode")) %>%
+  transmute(Location, Metric, Electrode,
+            boundary_value = A,
+            d_90pct = log(0.9) / b1, d_70pct = log(0.7) / b1, d_50pct = log(0.5) / b1,
+            EFOV, remaining_at_EFOV = exp(b1 * EFOV))
+show(table4, digits = 2)
+save_table(table4, "Table4_decay_distances")
+```
+
+## Peak frequency beyond the effective field of view (Supplemental Results 8)
+
+```{r pf-regions}
+pf_regions <- ds$freq_roi %>%
+  left_join(efov, by = c("Location", "Electrode")) %>%
+  mutate(Region = factor(case_when(Dist <= 0    ~ "Healthy side",
+                                   Dist <= EFOV ~ "Boundary to EFOV",
+                                   TRUE         ~ "Beyond EFOV"),
+                         levels = c("Healthy side", "Boundary to EFOV", "Beyond EFOV"))) %>%
+  group_by(Location, Electrode, Region) %>%
+  summarise(n = n(), median = median(PFreq), Q1 = quantile(PFreq, 0.25),
+            Q3 = quantile(PFreq, 0.75), p95 = quantile(PFreq, 0.95), .groups = "drop")
+show(pf_regions, digits = 0)
+save_table(pf_regions, "SuppResults8_PF_by_region")
+
+# PPV of peak frequency below the change-point value for identifying scar (distance > 0)
+ppv_pf <- ds$freq_roi %>%
+  left_join(pf_cp_value, by = c("Location", "Electrode")) %>%
+  group_by(Location, Electrode) %>%
+  summarise(PF_threshold   = first(PF_threshold),
+            n_pred_scar    = sum(PFreq < PF_threshold),
+            n_true_pos     = sum(PFreq < PF_threshold & Dist > 0),
+            PPV_pct        = 100 * n_true_pos / n_pred_scar, .groups = "drop")
+show(ppv_pf, digits = 1)
+save_table(ppv_pf, "SuppResults8_PPV_at_PF_change_point")
+```
+
+# Discriminatory performance across the scar boundary (Supplemental Results 7)
+
+Points within 5 mm either side of the scar boundary; healthy = distance <= 0, scar = distance > 0. Lower values predict scar; optimal thresholds by the Youden index.
+
+```{r roc}
+run_roc <- function(x, label) {
+  roc_obj <- roc(label, x, levels = c(0, 1), direction = ">", quiet = TRUE)
+  best <- coords(roc_obj, x = "best", best.method = "youden",
+                 ret = c("threshold", "sensitivity", "specificity", "ppv", "npv"),
+                 transpose = FALSE)[1, ]
+  tibble(AUC = as.numeric(auc(roc_obj)), Threshold = best$threshold,
+         Sensitivity = best$sensitivity, Specificity = best$specificity,
+         PPV = best$ppv, NPV = best$npv,
+         n_healthy = sum(label == 0), n_scar = sum(label == 1))
+}
+
+roc_data <- ds$all %>%
+  filter(abs(Dist) <= ROC_HALF_WIDTH) %>%
+  mutate(Label = as.integer(Dist > 0))
+
+roc_results <- bind_rows(
+  roc_data %>% group_by(Feature = "Voltage", Location, Electrode) %>%
+    group_modify(~ run_roc(.x$PP, .x$Label)),
+  roc_data %>% filter(Electrode != "Unipolar", !is.na(PFreq), PFreq > 0) %>%
+    group_by(Feature = "Peak frequency", Location, Electrode) %>%
+    group_modify(~ run_roc(.x$PFreq, .x$Label))
+) %>% ungroup()
+show(roc_results)
+save_table(roc_results, "SuppResults7_ROC")
+```
+
+# Sensitivity analyses
+
+## Manual vs automated geodesic distance (Supplemental Figure S2)
+
+```{r icc-bland-altman, fig.width = 10, fig.height = 8}
+validation <- tibble(
+  auto   = as.numeric(unlist(read.table(FILE_AUTO))),
+  manual = as.numeric(unlist(read.table(FILE_MANUAL)))
+) %>%
+  # same distance window as the original validation (-3 to 10 mm from the lesion line),
+  # excluding gross mismatches (> 15 mm)
+  filter(abs(auto - manual) <= 15,
+         between(auto, -3, 10), between(manual, -3, 10)) %>%
+  mutate(auto = auto + BOUNDARY_OFFSET, manual = manual + BOUNDARY_OFFSET)
+
+print(icc(as.data.frame(validation), model = "twoway", type = "consistency", unit = "single"))
+
+ba <- bland.altman.stats(validation$auto, validation$manual)
+cat(sprintf("Bland-Altman: mean bias %.2f mm, limits of agreement %.2f to %.2f mm (n = %d)\n",
+            ba$mean.diffs, ba$lower.limit, ba$upper.limit, nrow(validation)))
+
+draw_ba_plot <- function() {
+  par(mar = c(5.5, 5.5, 2, 2), cex.axis = 1.5, cex.lab = 1.8, lwd = 2, mgp = c(3.2, 1, 0))
+  bland.altman.plot(validation$auto, validation$manual, graph.sys = "base",
+                    xlab = "Mean Distance (mm)", ylab = "Difference (mm)",
+                    pch = 16, cex = 1.2, col = "black")
+  box(lwd = 1.5)
+}
+draw_ba_plot()
+if (SAVE_FIGURES) {
+  pdf(file.path(FIG_DIR, "FigureS2_BlandAltman.pdf"), width = 10, height = 8)
+  draw_ba_plot(); invisible(dev.off())
+  tiff(file.path(FIG_DIR, "FigureS2_BlandAltman.tiff"), width = 10, height = 8,
+       units = "in", res = FIG_DPI, compression = "lzw")
+  draw_ba_plot(); invisible(dev.off())
+}
+```
+
+## Without 99.9th-percentile truncation
+
+```{r sens-untruncated, eval = RUN_SENSITIVITY}
+sens_untrunc <- run_core(make_datasets(raw_post, trim = FALSE), label = "untruncated")
+cmp_untrunc  <- compare_to_primary(primary, sens_untrunc)
+show(cmp_untrunc, digits = 2)
+save_table(cmp_untrunc, "Sensitivity_untruncated")
+```
+
+## Geodesic instead of Euclidean distance
+
+```{r sens-geodesic, eval = RUN_SENSITIVITY}
+sens_geo <- run_core(make_datasets(read_map(FILE_GEO)), label = "geodesic")
+cmp_geo  <- compare_to_primary(primary, sens_geo)
+show(cmp_geo, digits = 2)
+save_table(cmp_geo, "Sensitivity_geodesic")
+
+# Full estimates under geodesic distance (for models whose form changed)
+show(sens_geo$reml %>% select(Location, Metric, Electrode, model, equation, b1, b1_lower, b1_upper))
+```
+
+# Figures
+
+```{r plot-helpers}
+theme_panel <- theme_minimal(base_size = 20) +
+  theme(plot.title    = element_text(face = "bold", size = 20, hjust = 0.5),
+        plot.subtitle = element_text(size = 16, colour = "grey30", hjust = 0.5, margin = margin(b = 5)),
+        panel.grid    = element_blank(),
+        panel.border  = element_rect(fill = NA, colour = "grey60", linewidth = 0.5),
+        legend.position = "none")
+no_y_text <- theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+
+# Per-patient LOESS curves (thin lines) and overall LOESS trend with 95% CI.
+loess_by_patient <- function(d, y, span = 0.5) {
+  d %>% group_by(Location, Electrode, patientID) %>% filter(n() > 5) %>%
+    group_modify(function(g, key) tryCatch({
+      fit  <- loess(reformulate("Dist", y), data = g, span = span, degree = 2)
+      grid <- seq(min(g$Dist), max(g$Dist), length.out = 100)
+      tibble(Dist = grid, value = predict(fit, newdata = data.frame(Dist = grid)))
+    }, error = function(e) tibble(Dist = numeric(), value = numeric()))) %>%
+    ungroup()
+}
+loess_overall <- function(d, y, span = 0.5) {
+  d %>% group_by(Location, Electrode) %>% filter(n() > 10) %>%
+    group_modify(function(g, key) {
+      fit  <- loess(reformulate("Dist", y), data = g, span = span, degree = 2)
+      grid <- seq(min(g$Dist), max(g$Dist), length.out = 200)
+      pr   <- predict(fit, newdata = data.frame(Dist = grid), se = TRUE)
+      tibble(Dist = grid, value = pr$fit, lo = pr$fit - 1.96 * pr$se.fit, hi = pr$fit + 1.96 * pr$se.fit)
+    }) %>% ungroup()
+}
+
+panel_observed <- function(pts, y, loc, subtitle, title = NULL, ylim = NULL,
+                           ybreaks = waiver(), boundary = FALSE) {
+  pts    <- filter(pts, Location == loc)
+  curves <- loess_by_patient(pts, y)
+  trend  <- loess_overall(pts, y)
+  p <- ggplot() +
+    geom_point(data = pts, aes(Dist, .data[[y]], colour = Electrode), alpha = 0.1, size = 0.6) +
+    geom_line(data = curves, aes(Dist, value, colour = Electrode,
+                                 group = interaction(Electrode, patientID)),
+              linewidth = 0.4, alpha = 0.2) +
+    geom_ribbon(data = trend, aes(Dist, ymin = lo, ymax = hi, fill = Electrode), alpha = 0.2) +
+    geom_line(data = trend, aes(Dist, value, colour = Electrode), linewidth = 1.2) +
+    scale_colour_manual(values = COLORS) + scale_fill_manual(values = COLORS) +
+    scale_x_continuous(breaks = seq(-10, 15, 5)) + scale_y_continuous(breaks = ybreaks) +
+    coord_cartesian(xlim = c(-10, 15), ylim = ylim) +
+    labs(title = title, subtitle = subtitle, x = NULL, y = NULL) + theme_panel
+  if (boundary) {
+    p <- p + geom_vline(xintercept = 0, linetype = "dashed", colour = "gray40", linewidth = 0.8) +
+      annotate("text", x = 0.5, y = Inf, vjust = 1.5, hjust = 0, label = "Scar Boundary",
+               size = 5, fontface = "italic", colour = "gray30")
+  }
+  if (loc == "Roof") p <- p + no_y_text
+  p
+}
+
+panel_model <- function(pts, pred, y, loc, ylim, ybreaks) {
+  p <- ggplot() +
+    geom_point(data = filter(pts, Location == loc), aes(Dist, .data[[y]], colour = Electrode),
+               alpha = 0.1, size = 0.6) +
+    geom_ribbon(data = filter(pred, Location == loc), aes(Dist, ymin = lo, ymax = hi, fill = Electrode), alpha = 0.2) +
+    geom_line(data = filter(pred, Location == loc), aes(Dist, value, colour = Electrode), linewidth = 1.2) +
+    scale_colour_manual(values = COLORS) + scale_fill_manual(values = COLORS) +
+    scale_x_continuous(breaks = seq(0, 15, 3)) + scale_y_continuous(breaks = ybreaks) +
+    coord_cartesian(xlim = c(0, 15), ylim = ylim) +
+    labs(subtitle = "Modeled (Post-Ablation)", x = NULL, y = NULL) + theme_panel
+  if (loc == "Roof") p <- p + no_y_text
+  p
+}
+
+add_axis_labels <- function(grid, ylab, xlab = "Distance from Scar Boundary (mm)", size = 20) {
+  y <- ggdraw() + draw_label(ylab, size = size, angle = 90)
+  x <- ggdraw() + draw_label(xlab, size = size)
+  plot_grid(plot_grid(y, grid, ncol = 2, rel_widths = c(0.04, 1)), x,
+            ncol = 1, rel_heights = c(1, 0.03))
+}
+```
+
+## Figure 3: observed and modeled signal patterns
+
+```{r figure3, fig.width = 18, fig.height = 16}
+# Population-level REML predictions with 95% CI
+model_preds <- function(metric, grid) {
+  primary$specs %>% filter(Metric == metric) %>%
+    mutate(pred = map2(fit_reml, model, ~ predict_decay(.x, .y, grid))) %>%
+    select(Location, Electrode, pred) %>% unnest(pred)
+}
+pred_volt <- model_preds("Voltage", seq(min(ds$volt$Dist), ROI_SCAR, length.out = 200))
+pred_freq <- model_preds("Peak frequency", seq(0, ROI_SCAR, length.out = 200))
+
+pre_volt <- raw_pre %>% in_roi() %>% filter(PP > DETECTION_LIMIT) %>% trim_upper("PP")
+pre_freq <- raw_pre %>% freq_ok() %>% in_roi() %>% trim_upper(c("PFreq", "PP"))
+
+volt_panels <- unlist(lapply(LOCATIONS, function(loc) list(
+  panel_observed(pre_volt, "PP", loc, "Observed (Pre-Ablation)",
+                 title = if (loc == "Inferior") "Inferior Wall" else "Roof",
+                 ylim = c(0, 8), ybreaks = seq(0, 8, 2)),
+  panel_observed(ds$all, "PP", loc, "Observed (Post-Ablation)",
+                 ylim = c(0, 6), ybreaks = seq(0, 6, 1), boundary = TRUE),
+  panel_model(ds$volt, pred_volt, "PP", loc, ylim = c(0, 2), ybreaks = seq(0, 2, 0.5))
+)), recursive = FALSE)
+freq_panels <- unlist(lapply(LOCATIONS, function(loc) list(
+  panel_observed(pre_freq, "PFreq", loc, "Observed (Pre-Ablation)",
+                 title = if (loc == "Inferior") "Inferior Wall" else "Roof",
+                 ylim = c(100, 700), ybreaks = seq(200, 600, 200)),
+  panel_observed(ds$freq_roi, "PFreq", loc, "Observed (Post-Ablation)", boundary = TRUE),
+  panel_model(ds$freq, pred_freq, "PFreq", loc, ylim = c(100, 400), ybreaks = seq(100, 400, 100))
+)), recursive = FALSE)
+
+# panels are listed Inferior(pre, post, model), Roof(pre, post, model); arrange as 3 rows x 2 cols
+as_grid <- function(p) plot_grid(p[[1]], p[[4]], p[[2]], p[[5]], p[[3]], p[[6]],
+                                 ncol = 2, align = "hv", axis = "tblr")
+body_volt <- add_axis_labels(as_grid(volt_panels), "Peak-to-Peak Voltage (mV)")
+body_freq <- add_axis_labels(as_grid(freq_panels), "Peak Frequency (Hz)")
+
+legend_plot <- ggplot(data.frame(x = 1:3, y = 1:3, Electrode = factor(ELECTRODES, levels = ELECTRODES)),
+                      aes(x, y, colour = Electrode, fill = Electrode)) +
+  geom_line(linewidth = 1.2) +
+  geom_ribbon(aes(ymin = y - 0.2, ymax = y + 0.2), alpha = 0.3) +
+  scale_colour_manual(values = COLORS, labels = c(Unipolar = "Unipolar (Panel A only)", Bipolar = "Bipolar", Omnipolar = "Omnipolar")) +
+  scale_fill_manual(values = COLORS, guide = "none") +
+  guides(colour = guide_legend(title = "Electrode", title.position = "left", direction = "horizontal",
+                               override.aes = list(fill = unname(COLORS), linewidth = 1.2))) +
+  theme_void() +
+  theme(legend.position = "bottom", legend.title = element_text(size = 18, face = "bold"),
+        legend.text = element_text(size = 15), legend.key.width = unit(2, "cm"),
+        legend.key.height = unit(0.5, "cm"), legend.spacing.x = unit(0.8, "cm"))
+
+label_panel <- function(p, lab) ggdraw() + draw_plot(p) +
+  draw_label(lab, x = 0.01, y = 0.99, hjust = 0, vjust = 1, fontface = "bold", size = 18)
+
+figure3 <- plot_grid(
+  plot_grid(label_panel(body_volt, "A"), ggdraw(), label_panel(body_freq, "B"),
+            ncol = 3, rel_widths = c(1, 0.03, 1)),
+  get_legend(legend_plot), ncol = 1, rel_heights = c(1, 0.04))
+figure3 <- ggdraw() + draw_plot(figure3, x = 0.02, y = 0.02, width = 0.96, height = 0.96)
+
+figure3
+save_figure(figure3, "Figure3_signal_patterns", width = 18, height = 16)
+```
+
+## Figure 4: Bayesian piecewise regression
+
+```{r figure4, fig.width = 12, fig.height = 20}
+panel_theme <- theme_classic(base_size = 18) +
+  theme(plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+        axis.text = element_text(size = 15), axis.title = element_blank())
+caption_theme <- theme(plot.caption = element_text(hjust = 0.5, size = 20), plot.caption.position = "plot")
+tag_theme     <- theme(plot.tag = element_text(angle = 90, hjust = 0.5, size = 20), plot.tag.position = "left")
+
+mcp_panel <- function(metric, loc, elec) {
+  fit <- primary$specs %>% filter(Metric == metric, Location == loc, Electrode == elec) %>% pull(fit_mcp)
+  plot(fit[[1]]) + panel_theme +
+    ggtitle(paste(elec, "-", if (loc == "Inferior") "Inferior Wall" else "Roof"))
+}
+with_caption <- function(p, caption) p + plot_annotation(caption = caption, theme = caption_theme)
+
+volt_uni <- with_caption(mcp_panel("Voltage", "Inferior", "Unipolar") | mcp_panel("Voltage", "Roof", "Unipolar"),
+                         "Log-Transformed Distance from Scar Boundary (mm)")
+volt_bo  <- with_caption((mcp_panel("Voltage", "Inferior", "Bipolar")   | mcp_panel("Voltage", "Roof", "Bipolar")) /
+                         (mcp_panel("Voltage", "Inferior", "Omnipolar") | mcp_panel("Voltage", "Roof", "Omnipolar")),
+                         "Distance from Scar Boundary (mm)")
+plot_A <- wrap_elements(
+  wrap_elements(volt_uni) / wrap_elements(volt_bo) + plot_layout(heights = c(1, 2))
+) + labs(tag = "Log-Transformed Peak-to-Peak Voltage") + tag_theme
+
+freq_bo <- with_caption((mcp_panel("Peak frequency", "Inferior", "Bipolar")   | mcp_panel("Peak frequency", "Roof", "Bipolar")) /
+                        (mcp_panel("Peak frequency", "Inferior", "Omnipolar") | mcp_panel("Peak frequency", "Roof", "Omnipolar")),
+                        "Distance from Scar Boundary (mm)")
+plot_B <- wrap_elements(freq_bo) + labs(tag = "Log-Transformed Peak Frequency") + tag_theme
+
+ab_title <- function(p, lab) p + labs(title = lab) +
+  theme(plot.title = element_text(size = 24, face = "bold", hjust = 0), plot.title.position = "plot")
+figure4 <- ab_title(plot_A, "A") / plot_spacer() / ab_title(plot_B, "B") +
+  plot_layout(heights = c(4, 0.05, 3)) & theme(plot.margin = margin(10, 30, 10, 10))
+
+figure4
+save_figure(figure4, "Figure4_bayesian_piecewise", width = 12, height = 20)
+```
+
+## Figure 5: normalized voltage within the effective field of view
+
+Voltage predicted by the REML mixed model, normalized to the value at the scar boundary, and shown out to the effective field of view (Bayesian change point).
+
+```{r figure5, fig.width = 11, fig.height = 16}
+pct_labels   <- paste0(seq(0, 90, 10), "-", seq(10, 100, 10), "%")
+disc_palette <- setNames(colorRampPalette(c("#EFF6FF", "#BFDBFE", "#60A5FA", "#2563EB",
+                                            "#1D4ED8", "#1E3A8A"))(10), pct_labels)
+
+make_semicircle <- function(loc, elec) {
+  spec <- primary$specs %>% filter(Metric == "Voltage", Location == loc, Electrode == elec)
+  fit <- spec$fit_reml[[1]]; model <- spec$model
+  cp  <- efov %>% filter(Location == loc, Electrode == elec) %>% pull(EFOV)
+  # reference point: boundary (d = 0) for exponential; smallest observed distance for power-law
+  ref <- if (model == "Power-law") min(ds$volt$Dist) else 0
+  b   <- lme4::fixef(fit)
+  pred_fn <- if (model == "Power-law") function(d) exp(b[1] + b[2] * log(pmax(d, ref)))
+             else function(d) exp(b[1] + b[2] * d)
+
+  grid <- expand.grid(x = seq(0, 15, length.out = 400), y = seq(-15, 15, length.out = 400))
+  grid$r   <- sqrt(grid$x^2 + grid$y^2)
+  grid$pct <- ifelse(grid$r <= cp, pmin(pmax(pred_fn(grid$r) / pred_fn(ref) * 100, 0), 100), NA)
+  grid$bin <- factor(cut(grid$pct, breaks = c(-1e-8, seq(10, 90, 10), 100 + 1e-8),
+                         include.lowest = TRUE, right = FALSE, labels = pct_labels), levels = pct_labels)
+  arc <- data.frame(t = seq(-pi / 2, pi / 2, length.out = 500)) %>% mutate(x = cp * cos(t), y = cp * sin(t))
+
+  ggplot(grid, aes(x, y, fill = bin)) +
+    geom_raster() +
+    geom_path(data = arc, aes(x, y), inherit.aes = FALSE, colour = "grey50", linewidth = 0.7) +
+    annotate("segment", x = 0, xend = 0, y = -15, yend = 15, colour = "grey50", linewidth = 0.7) +
+    scale_fill_manual(values = disc_palette, limits = pct_labels, drop = FALSE, na.value = "white") +
+    coord_fixed(xlim = c(-1, 16.5), ylim = c(-16.5, 16.5), clip = "off") +
+    scale_x_continuous(breaks = seq(0, 15, 5)) + scale_y_continuous(breaks = seq(-15, 15, 5)) +
+    labs(title = paste(elec, "-", if (loc == "Inferior") "Inferior Wall" else "Roof"), x = NULL, y = NULL) +
+    theme_minimal(base_size = 26) +
+    theme(plot.title = element_text(face = "bold", size = 25, hjust = 0.5), panel.grid = element_blank(),
+          panel.border = element_rect(fill = NA, colour = "grey70"), legend.position = "none",
+          axis.text = element_text(size = 20), plot.margin = margin(10, 10, 10, 10))
+}
+
+semi_legend <- get_legend(
+  ggplot(data.frame(x = 1, y = 1:10, bin = factor(pct_labels, levels = pct_labels)), aes(x, y, fill = bin)) +
+    geom_tile() +
+    scale_fill_manual(values = disc_palette, limits = pct_labels, name = "Relative\nValue") +
+    guides(fill = guide_legend(ncol = 1, reverse = TRUE)) + theme_void() +
+    theme(legend.key.size = unit(0.8, "cm"), legend.text = element_text(size = 20),
+          legend.title = element_text(size = 25, face = "bold"))
+)
+
+semi_grid <- plot_grid(plotlist = lapply(ELECTRODES, function(e) lapply(LOCATIONS, make_semicircle, elec = e)) %>%
+                         unlist(recursive = FALSE), ncol = 2)
+figure5 <- plot_grid(
+  add_axis_labels(semi_grid, "Distance (mm)", "Effective Field of View (mm)", size = 25),
+  semi_legend, ncol = 2, rel_widths = c(1, 0.18))
+
+figure5
+save_figure(figure5, "Figure5_effective_field_of_view", width = 11, height = 16)
+```

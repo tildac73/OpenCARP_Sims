@@ -23,7 +23,7 @@ Chain (all settings in a JSON config):
     6. export      points.csv (everything) + xlsx files in Wang's Rmd input format
 
 Usage:
-    python3 egmpipe.py configs/wang_default.json
+    python3 egmpipe.py configs/clin_default.json
     python3 egmpipe.py configs/noise_sweep.json          # "sweep" key -> one output per value
 Outputs go to results/<config name>[__<sweep values>]/
 """
