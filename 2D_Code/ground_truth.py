@@ -20,7 +20,7 @@ Per recording it reports
                    electrode (absolute scale differs only by sigma_b / thickness)
 
 Usage:
-    python3 groundtruth.py configs/clin_default.json
+    python3 ground_truth.py configs/clin_default.json
 Writes results/<name>/groundtruth.csv and, if points.csv exists, points_with_gt.csv.
 
 Settings (optional "groundtruth" block in the config):

@@ -19,7 +19,9 @@ Chain (all settings in a JSON config):
                    (fixed SD, or auto: SD giving a target filtered bipolar noise floor)
     3. filters     unipolar band (or none) and differential band, Butterworth
     4. recordings  unipolar, bipolar (along / across / both / max_orthogonal), omnipolar
-    5. measure     peak-to-peak within an optional window of interest
+    5. measure     peak-to-peak within an optional window of interest, and peak frequency
+                   (bipolar/omnipolar: frequency of the power-spectrum maximum, as openCARP
+                   igbdft --op DomF)
     6. export      points.csv (everything) + xlsx files in Wang's Rmd input format
 
 Usage:
@@ -55,6 +57,9 @@ DEFAULTS = {
     "bipolar_mode": "max_orthogonal",                # along | across | both | max_orthogonal
     "omni_angle_step_deg": 2,
     "woi_ms": None,                                  # [start, end] or None = whole trace
+    "peak_freq": {"enabled": True,
+                  "band_hz": None,                   # search band; None = filters.differential_hz
+                  "nfft": 4096},                     # zero-padded FFT length (finer frequency grid)
     "wang_export": {
         "enabled": True,
         "patient_field": "cv",                       # metadata field -> patientID
@@ -207,6 +212,22 @@ def woi_slice(t, woi):
     return slice(i[0], i[-1] + 1)
 
 
+def peak_frequency(tr, fs, band, nfft):
+    """
+    Peak (dominant) frequency of each trace: frequency of the maximum of the power spectrum
+    within band, as openCARP igbdft --op DomF. tr (P, T) -> (P,) Hz; 0 for a flat trace
+    (undetectable, as in the clinical export).
+    """
+    x = tr - tr.mean(axis=-1, keepdims=True)
+    x = x * np.hanning(x.shape[-1])
+    n = max(int(nfft), x.shape[-1])
+    power = np.abs(np.fft.rfft(x, n=n, axis=-1)) ** 2
+    f = np.fft.rfftfreq(n, 1.0 / fs)
+    sel = (f >= band[0]) & (f <= min(band[1], fs / 2))
+    p = power[:, sel]
+    return np.where(p.max(axis=-1) > 0, f[sel][np.argmax(p, axis=-1)], 0.0)
+
+
 def process_run(run, cfg, gain, sd, rng):
     fs = 1000.0 / float(np.median(np.diff(run['t'])))
     F = cfg['filters']
@@ -217,11 +238,15 @@ def process_run(run, cfg, gain, sd, rng):
     df = apply_filter(make_filter(F['differential_hz'], fs, F['order']), uni, F['zero_phase'])
     import pandas as pd
     w = woi_slice(run['t'], cfg['woi_ms'])
+    PF = cfg['peak_freq']
+    pf_band = PF['band_hz'] or F['differential_hz'] or [0.0, fs / 2]
     parts = []
     for kind, label, pos, tr in recordings(uf[..., w], df[..., w], run['xy'], cfg):
+        pf = (peak_frequency(tr, fs, pf_band, PF['nfft']) if PF['enabled'] and kind != 'uni'
+              else np.full(len(pos), np.nan))   # no unipolar peak frequency, as in the clinical data
         parts.append(pd.DataFrame({'placement': np.arange(len(pos)), 'kind': kind, 'label': label,
                                    'x_mm': pos[:, 0], 'y_mm': pos[:, 1], 'd_mm': pos[:, 0],
-                                   'PP_mV': np.ptp(tr, axis=-1)}))
+                                   'PP_mV': np.ptp(tr, axis=-1), 'PF_Hz': pf}))
     out = pd.concat(parts, ignore_index=True)
     for k, v in run['meta'].items():
         out.insert(0, k, v)
@@ -277,7 +302,7 @@ def export_wang(df, cfg, out):
         'uni1_bi2_omni3': df['kind'].map({'uni': 1, 'bi': 2, 'omni': 3}),
         'DistAcrossPath': df['d_mm'] - W['boundary_offset_mm'],
         'PP': df['PP_mV'],
-        'PFreq': np.nan,
+        'PFreq': df['PF_Hz'],
         'state': df['state']})
     if wang['inf0_roof1'].isna().any():
         sys.exit('location_map does not cover all values of ' + W['location_field'])

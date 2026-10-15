@@ -85,6 +85,7 @@ read_map <- function(path) {
       Electrode = factor(ELECTRODES[uni1_bi2_omni3], levels = ELECTRODES),
       Dist      = DistAcrossPath + BOUNDARY_OFFSET,          # 0 = scar boundary, > 0 = scar
       PP_log    = log(PP),
+      PFreq     = as.numeric(PFreq),                         # all-NA columns are read as logical
       PFreq_log = if_else(!is.na(PFreq) & PFreq > 0, log(PFreq), NA_real_)
     )
 }
@@ -151,7 +152,12 @@ cached <- function(key_obj, prefix, expr) {
   f <- file.path(CACHE_DIR, paste0(prefix, "_", rlang::hash(key_obj), ".rds"))
   if (USE_CACHE && file.exists(f)) return(readRDS(f))
   value <- expr
-  if (USE_CACHE) saveRDS(value, f)
+  if (USE_CACHE) {
+    # write to a temp file first so a failed write (e.g. disk full) never leaves a corrupt cache file
+    tmp <- paste0(f, ".tmp")
+    tryCatch({ saveRDS(value, tmp); file.rename(tmp, f) },
+             error = function(e) { unlink(tmp); warning("Could not cache ", basename(f), ": ", conditionMessage(e)) })
+  }
   value
 }
 ```
@@ -236,7 +242,8 @@ fit_piecewise <- function(d, outcome, model, label) {
     mutate(x = if (model == "Power-law") log(Dist) else Dist) %>%
     filter(is.finite(x), is.finite(.data[[outcome]]))
   d <- as.data.frame(d[, c(outcome, "x")])
-  cached(list(d, outcome, MCP_CHAINS, MCP_ITER, MCP_ADAPT, MCP_SEED), paste0("mcp_", label), {
+  # cache by inputs only (not label), so identical fits across analyses share one file
+  cached(list(d, outcome, MCP_CHAINS, MCP_ITER, MCP_ADAPT, MCP_SEED), "mcp", {
     set.seed(MCP_SEED)
     mcp(list(as.formula(paste(outcome, "~ 1 + x")), ~ 0), data = d, par_x = "x",
         chains = MCP_CHAINS, iter = MCP_ITER, adapt = MCP_ADAPT, cores = MCP_CHAINS)
@@ -344,6 +351,10 @@ compare_to_primary <- function(prim, sens) {
 raw_post <- read_map(FILE_POST)
 raw_pre  <- read_map(FILE_PRE)
 ds       <- make_datasets(raw_post)
+
+# Peak frequency may be absent (e.g. simulated data exports PFreq = NA); PF analyses are then skipped.
+HAS_PF <- nrow(ds$freq) > 0
+if (!HAS_PF) message("No peak frequency data: peak frequency analyses and panels are skipped.")
 ```
 
 Methods / Results "Electroanatomical Mapping Data": points in the region of interest, exclusions, and points per patient.
@@ -610,7 +621,7 @@ roc_data <- ds$all %>%
 roc_results <- bind_rows(
   roc_data %>% group_by(Feature = "Voltage", Location, Electrode) %>%
     group_modify(~ run_roc(.x$PP, .x$Label)),
-  roc_data %>% filter(Electrode != "Unipolar", !is.na(PFreq), PFreq > 0) %>%
+  if (HAS_PF) roc_data %>% filter(Electrode != "Unipolar", !is.na(PFreq), PFreq > 0) %>%
     group_by(Feature = "Peak frequency", Location, Electrode) %>%
     group_modify(~ run_roc(.x$PFreq, .x$Label))
 ) %>% ungroup()
@@ -765,10 +776,8 @@ model_preds <- function(metric, grid) {
     select(Location, Electrode, pred) %>% unnest(pred)
 }
 pred_volt <- model_preds("Voltage", seq(min(ds$volt$Dist), ROI_SCAR, length.out = 200))
-pred_freq <- model_preds("Peak frequency", seq(0, ROI_SCAR, length.out = 200))
 
 pre_volt <- raw_pre %>% in_roi() %>% filter(PP > DETECTION_LIMIT) %>% trim_upper("PP")
-pre_freq <- raw_pre %>% freq_ok() %>% in_roi() %>% trim_upper(c("PFreq", "PP"))
 
 volt_panels <- unlist(lapply(LOCATIONS, function(loc) list(
   panel_observed(pre_volt, "PP", loc, "Observed (Pre-Ablation)",
@@ -778,19 +787,24 @@ volt_panels <- unlist(lapply(LOCATIONS, function(loc) list(
                  ylim = c(0, 6), ybreaks = seq(0, 6, 1), boundary = TRUE),
   panel_model(ds$volt, pred_volt, "PP", loc, ylim = c(0, 2), ybreaks = seq(0, 2, 0.5))
 )), recursive = FALSE)
-freq_panels <- unlist(lapply(LOCATIONS, function(loc) list(
-  panel_observed(pre_freq, "PFreq", loc, "Observed (Pre-Ablation)",
-                 title = if (loc == "Inferior") "Inferior Wall" else "Roof",
-                 ylim = c(100, 700), ybreaks = seq(200, 600, 200)),
-  panel_observed(ds$freq_roi, "PFreq", loc, "Observed (Post-Ablation)", boundary = TRUE),
-  panel_model(ds$freq, pred_freq, "PFreq", loc, ylim = c(100, 400), ybreaks = seq(100, 400, 100))
-)), recursive = FALSE)
 
 # panels are listed Inferior(pre, post, model), Roof(pre, post, model); arrange as 3 rows x 2 cols
 as_grid <- function(p) plot_grid(p[[1]], p[[4]], p[[2]], p[[5]], p[[3]], p[[6]],
                                  ncol = 2, align = "hv", axis = "tblr")
 body_volt <- add_axis_labels(as_grid(volt_panels), "Peak-to-Peak Voltage (mV)")
-body_freq <- add_axis_labels(as_grid(freq_panels), "Peak Frequency (Hz)")
+
+if (HAS_PF) {
+  pred_freq <- model_preds("Peak frequency", seq(0, ROI_SCAR, length.out = 200))
+  pre_freq  <- raw_pre %>% freq_ok() %>% in_roi() %>% trim_upper(c("PFreq", "PP"))
+  freq_panels <- unlist(lapply(LOCATIONS, function(loc) list(
+    panel_observed(pre_freq, "PFreq", loc, "Observed (Pre-Ablation)",
+                   title = if (loc == "Inferior") "Inferior Wall" else "Roof",
+                   ylim = c(100, 700), ybreaks = seq(200, 600, 200)),
+    panel_observed(ds$freq_roi, "PFreq", loc, "Observed (Post-Ablation)", boundary = TRUE),
+    panel_model(ds$freq, pred_freq, "PFreq", loc, ylim = c(100, 400), ybreaks = seq(100, 400, 100))
+  )), recursive = FALSE)
+  body_freq <- add_axis_labels(as_grid(freq_panels), "Peak Frequency (Hz)")
+}
 
 legend_plot <- ggplot(data.frame(x = 1:3, y = 1:3, Electrode = factor(ELECTRODES, levels = ELECTRODES)),
                       aes(x, y, colour = Electrode, fill = Electrode)) +
@@ -808,10 +822,11 @@ legend_plot <- ggplot(data.frame(x = 1:3, y = 1:3, Electrode = factor(ELECTRODES
 label_panel <- function(p, lab) ggdraw() + draw_plot(p) +
   draw_label(lab, x = 0.01, y = 0.99, hjust = 0, vjust = 1, fontface = "bold", size = 18)
 
-figure3 <- plot_grid(
+fig3_body <- if (HAS_PF) {
   plot_grid(label_panel(body_volt, "A"), ggdraw(), label_panel(body_freq, "B"),
-            ncol = 3, rel_widths = c(1, 0.03, 1)),
-  get_legend(legend_plot), ncol = 1, rel_heights = c(1, 0.04))
+            ncol = 3, rel_widths = c(1, 0.03, 1))
+} else label_panel(body_volt, "A")
+figure3 <- plot_grid(fig3_body, get_legend(legend_plot), ncol = 1, rel_heights = c(1, 0.04))
 figure3 <- ggdraw() + draw_plot(figure3, x = 0.02, y = 0.02, width = 0.96, height = 0.96)
 
 figure3
@@ -843,18 +858,24 @@ plot_A <- wrap_elements(
   wrap_elements(volt_uni) / wrap_elements(volt_bo) + plot_layout(heights = c(1, 2))
 ) + labs(tag = "Log-Transformed Peak-to-Peak Voltage") + tag_theme
 
-freq_bo <- with_caption((mcp_panel("Peak frequency", "Inferior", "Bipolar")   | mcp_panel("Peak frequency", "Roof", "Bipolar")) /
-                        (mcp_panel("Peak frequency", "Inferior", "Omnipolar") | mcp_panel("Peak frequency", "Roof", "Omnipolar")),
-                        "Distance from Scar Boundary (mm)")
-plot_B <- wrap_elements(freq_bo) + labs(tag = "Log-Transformed Peak Frequency") + tag_theme
-
 ab_title <- function(p, lab) p + labs(title = lab) +
   theme(plot.title = element_text(size = 24, face = "bold", hjust = 0), plot.title.position = "plot")
-figure4 <- ab_title(plot_A, "A") / plot_spacer() / ab_title(plot_B, "B") +
-  plot_layout(heights = c(4, 0.05, 3)) & theme(plot.margin = margin(10, 30, 10, 10))
+
+if (HAS_PF) {
+  freq_bo <- with_caption((mcp_panel("Peak frequency", "Inferior", "Bipolar")   | mcp_panel("Peak frequency", "Roof", "Bipolar")) /
+                          (mcp_panel("Peak frequency", "Inferior", "Omnipolar") | mcp_panel("Peak frequency", "Roof", "Omnipolar")),
+                          "Distance from Scar Boundary (mm)")
+  plot_B <- wrap_elements(freq_bo) + labs(tag = "Log-Transformed Peak Frequency") + tag_theme
+  figure4 <- ab_title(plot_A, "A") / plot_spacer() / ab_title(plot_B, "B") +
+    plot_layout(heights = c(4, 0.05, 3)) & theme(plot.margin = margin(10, 30, 10, 10))
+  fig4_height <- 20
+} else {
+  figure4 <- ab_title(plot_A, "A") & theme(plot.margin = margin(10, 30, 10, 10))
+  fig4_height <- 20 * 4 / 7   # panel A only
+}
 
 figure4
-save_figure(figure4, "Figure4_bayesian_piecewise", width = 12, height = 20)
+save_figure(figure4, "Figure4_bayesian_piecewise", width = 12, height = fig4_height)
 ```
 
 ## Figure 5: normalized voltage within the effective field of view
