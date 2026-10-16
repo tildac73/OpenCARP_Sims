@@ -30,7 +30,7 @@ invisible(lapply(pkgs, library, character.only = TRUE))
 
 ```{r config}
 # ---- Input files (edit to match your local copy) ------------------------------
-DATA_DIR    <- "results/clin_default"
+DATA_DIR    <- Sys.getenv("EFOV_DATA_DIR", "results/clin_default")   # efov.sh sets this per config
 FILE_POST   <- file.path(DATA_DIR, "merged_rectangle_summary_euclidean.xlsx")     # post-SRI, Euclidean (primary)
 FILE_PRE    <- file.path(DATA_DIR, "merged_rectangle_summary_euclidean_pre.xlsx") # pre-ablation (Figure 3)
 FILE_GEO    <- file.path(DATA_DIR, "merged_rectangle_summary_geodesic.xlsx")      # post-SRI, geodesic (sensitivity)
@@ -38,7 +38,7 @@ FILE_AUTO   <- file.path(DATA_DIR, "auto_y.txt")    # automated geodesic distanc
 FILE_MANUAL <- file.path(DATA_DIR, "manual_y.txt")  # manual distances, same points in the same order
 
 # ---- Outputs -------------------------------------------------------------------
-OUT_DIR   <- "output"
+OUT_DIR   <- Sys.getenv("EFOV_OUT_DIR", "output")
 FIG_DIR   <- file.path(OUT_DIR, "figures")
 TAB_DIR   <- file.path(OUT_DIR, "tables")
 CACHE_DIR <- file.path(OUT_DIR, "cache")
@@ -57,6 +57,7 @@ DETECTION_LIMIT   <- 0.01   # mV, system limit of detection (points <= this are 
 TRIM_Q            <- 0.999  # upper-percentile truncation of voltage and peak frequency
 SCAR_THRESHOLD_MV <- 0.05   # conventional electrical-scar threshold
 ROC_HALF_WIDTH    <- 5      # mm either side of the scar boundary for ROC analysis
+MIN_FIT_POINTS    <- 10     # minimum points (d > 0) for a decay model to be fitted
 
 # Bayesian piecewise regression (mcp). These equal the mcp defaults:
 # 3 chains x 3000 iterations = 9000 posterior draws, weakly informative default priors
@@ -289,7 +290,21 @@ build_specs <- function(ds) {
     mutate(Metric = factor(Metric, levels = c("Voltage", "Peak frequency"))) %>%
     arrange(Location, Metric, Electrode) %>%
     mutate(data = pmap(list(source, Location, Electrode),
-                       function(s, l, e) filter(ds[[s]], Location == l, Electrode == e)))
+                       function(s, l, e) filter(ds[[s]], Location == l, Electrode == e))) %>%
+    drop_unfittable()
+}
+
+# Subsets too small or degenerate for a mixed model give a non-positive-definite
+# covariance matrix, which crashes lme4::vcov ("no applicable method for `@`").
+drop_unfittable <- function(specs) {
+  ok <- map_lgl(specs$data, function(d) {
+    d <- filter(d, Dist > 0)
+    nrow(d) >= MIN_FIT_POINTS && n_distinct(d$Dist) >= 3 && n_distinct(d$patientID) >= 2
+  })
+  if (any(!ok)) cat("Skipping decay models with too little data:",
+                    paste(specs$Location[!ok], specs$Metric[!ok], specs$Electrode[!ok],
+                          collapse = "; "), "\n")
+  specs[ok, ]
 }
 
 run_core <- function(ds, label) {

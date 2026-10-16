@@ -19,7 +19,7 @@ imp_region[0].im       = Courtemanche
 imp_region[0].num_IDs  = 2
 imp_region[0].ID[0]    = 1          # active tissue
 imp_region[0].ID[1]    = 101        # isolated wall (sits at prepaced rest)
-imp_region[1].im       = PASSIVE    # confirm name with: bench --list-imps
+imp_region[1].im       = Courtemanche
 imp_region[1].num_IDs  = 1
 imp_region[1].ID[0]    = 100        # lesion (membrane irrelevant once decoupled)
 # imp_region[0].im_sv_init is set from run.py (path to the bench state file)
