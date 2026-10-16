@@ -1,51 +1,45 @@
-"""Generate electrodes/egm_points.pts for openCARP phie recovery.
+"""Write the recovery samples for the 3D slab's electrode lattice.
 
-One 1 mm lattice covers EVERY grid in the paper's Table 1 (1/3/6/9 mm
-spacing) and every +/-1 mm offset, so all 656 configurations are subsets
-of a single recovery run.
-
-Electrodes: cylinders r = 0.5 mm, length 1 mm (paper), axis parallel to
-the wall along x (like electrodes on a grid-catheter spline). Each is
-sampled at 8 surface points (2 axial x 4 around), averaged afterwards.
-Gap to tissue 0.25 or 1.0 mm (paper) measured to the cylinder surface.
-Endocardium at z = +2 mm. Output in um.
-
-Point order: gap, x, y, sample  ->  reshape (T, 2, 23, 23, 8).mean(-1)
+The slab surface is z=2 mm. Each cylinder has radius 0.5 mm and length
+1 mm, with its axis along x. Eight surface samples are averaged per electrode.
+Coordinates are written in micrometres, ordered by gap, x, y, then sample.
+The 23 x 23 lattice supports the 242 four-by-four placements exported by run.py.
 """
-import os
+
+from pathlib import Path
+
 import numpy as np
 
-ENDO_Z = 2.0                     # mm
-R, HALF_LEN = 0.5, 0.5           # mm
-GAPS = (0.25, 1.0)               # mm
-LATTICE = np.arange(-11, 12)     # mm, 23 positions centred on bundle
-
-pts = []
-for gap in GAPS:
-    zc = ENDO_Z + gap + R
-    for x in LATTICE:
-        for y in LATTICE:
-            for dx in (-HALF_LEN / 2, HALF_LEN / 2):
-                for th in np.deg2rad([0, 90, 180, 270]):
-                    pts.append([x + dx, y + R * np.cos(th), zc + R * np.sin(th)])
-
-pts = np.asarray(pts) * 1000.0   # mm -> um
-os.makedirs('electrodes', exist_ok=True)
-np.savetxt('electrodes/egm_points.pts', pts, fmt='%.1f',
-           header=str(len(pts)), comments='')
-print(f'{len(pts)} points written')  # 2 * 23 * 23 * 8 = 8464
+ENDO_Z_MM = 2.0
+RADIUS_MM = 0.5
+HALF_LENGTH_MM = 0.5
+GAPS_MM = (0.25, 1.0)
+LATTICE_MM = np.arange(-11, 12)
 
 
-def grid_indices(spacing, n, ox=0, oy=0):
-    """Lattice indices (ix, iy) of an n x n grid with given spacing (mm),
-    centred on the bundle, shifted by (ox, oy) mm. Drop any outside."""
-    start = -spacing * (n - 1) / 2
-    coords = start + spacing * np.arange(n)
-    ix = [int(round(c + ox)) + 11 for c in coords]
-    iy = [int(round(c + oy)) + 11 for c in coords]
-    ix = [i for i in ix if 0 <= i < len(LATTICE)]
-    iy = [i for i in iy if 0 <= i < len(LATTICE)]
-    return ix, iy
+def write_electrodes(path="electrodes/egm_points.pts"):
+    """Return and write (8464, 3) recovery sample coordinates in micrometres."""
+    points = []
+    for gap in GAPS_MM:
+        centre_z = ENDO_Z_MM + gap + RADIUS_MM
+        for x in LATTICE_MM:
+            for y in LATTICE_MM:
+                for dx in (-HALF_LENGTH_MM / 2, HALF_LENGTH_MM / 2):
+                    for angle in np.deg2rad([0, 90, 180, 270]):
+                        points.append(
+                            [
+                                x + dx,
+                                y + RADIUS_MM * np.cos(angle),
+                                centre_z + RADIUS_MM * np.sin(angle),
+                            ]
+                        )
+    points_um = np.asarray(points) * 1000
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savetxt(path, points_um, fmt="%.1f", header=str(len(points_um)), comments="")
+    return points_um
 
-# Paper's base grids: (1 mm, 21), (3 mm, 7), (6 mm, 4), (9 mm, 3);
-# offsets ox, oy in {-1, 0, 1} mm.
+
+if __name__ == "__main__":
+    points = write_electrodes()
+    print(f"{len(points)} recovery points written")

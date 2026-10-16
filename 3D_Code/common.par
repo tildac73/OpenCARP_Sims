@@ -14,17 +14,16 @@ meshname       = mesh/slab_bundle      # .pts/.elem/.lon, tags 1-4
 
 # ---------- Formulation and numerics ----------------------------------
 bidomain       = 0                     # monodomain (paper)
-dt             = 20                    # us; not given in paper - check vs 10
+dt             = 20                    # check vs 10
 parab_solve    = 1                     # Crank-Nicolson
 cg_tol_parab   = 1e-8
 mass_lumping   = 1
 
-# ---------- Ionic model: Koivumaki 2011 with chronic AF remodelling ---
-# Paper (ref 14): SERCA -16%, PLB:SERCA +18%, SLN:SERCA -40%,
-#   INCX max +50%, RyR sensitivity to [Ca]SR +100%,
-#   gCaL -59%, gto -44%, gKur -22%, gK1 +100%
-# Parameter names below are placeholders - replace with the names from
-#   bench --imp=<Koivumaki name> --imp-info
+# ---------- Ionic model: Courtemanche with selected cAF changes --------
+# This is a Courtemanche approximation, NOT the paper's Koivumaki model.
+# The current factors change ICaL, Ito, IKur, IK1, INCX and SERCA uptake.
+# Koivumaki-specific PLB/SLN/RyR remodelling is not represented here.
+# Confirm capture and reentry with this model before interpreting results.
 num_imp_regions         = 1
 imp_region[0].im       = Courtemanche
 imp_region[0].im_param = "GCaL*0.41,Gto*0.56,factorGKur*0.78,GK1*2.0,maxINaCa*1.5,maxIup*0.84"

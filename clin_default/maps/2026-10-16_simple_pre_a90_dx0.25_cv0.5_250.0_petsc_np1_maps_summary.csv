@@ -1,0 +1,4 @@
+run,state,cv,stim_angle,placement,xc_mm,kind,label,site_x,site_y,fov80_res_mm,fov80_node_mm
+2026-10-16_simple_pre_a90_dx0.25_cv0.5_250.0_petsc_np1,pre,0.5,90,40,0.0,uni,E5,-2.0,-2.0,3.0,1.5
+2026-10-16_simple_pre_a90_dx0.25_cv0.5_250.0_petsc_np1,pre,0.5,90,40,0.0,bi,E5-E6|E9,-0.6666666666666666,-0.6666666666666666,3.0,3.25
+2026-10-16_simple_pre_a90_dx0.25_cv0.5_250.0_petsc_np1,pre,0.5,90,40,0.0,omni,E5-E6-E9,-0.6666666666666666,-0.6666666666666666,3.0,3.25

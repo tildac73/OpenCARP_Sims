@@ -6,7 +6,7 @@
 # Lesion (my choice; the paper does not model ablation):
 #   transmural cylinder, radius 2.5 mm, axis along z through x=0, y=0
 #   (bundle midpoint) -> fully transects bundle (2.5 mm) + sheath (3 mm)
-# Built by retag.py into mesh/slab_bundle_scar.elem (same .pts/.lon).
+# Built by run.py into mesh/slab_bundle_scar.elem (same .pts/.lon).
 # =====================================================================
 meshname                = mesh/slab_bundle_scar
 
@@ -20,7 +20,7 @@ gregion[4].g_el         = 1e-6
 gregion[4].g_et         = 1e-6
 gregion[4].g_en         = 1e-6
 
-# Optional border zone (tag 6, e.g. a 1 mm shell; add it in retag.py):
+# Optional border zone (tag 6, e.g. a 1 mm shell; add it in run.py):
 # num_gregions            = 6
 # gregion[5].num_IDs      = 1
 # gregion[5].ID[0]        = 6

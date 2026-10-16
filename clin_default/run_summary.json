@@ -1,0 +1,60 @@
+{
+ "config": {
+  "name": "clin_default",
+  "runs": "/home/pcal/Matilda/2D_Run/OpenCARP_Sims/2D_Code/runs/2026-10-16/cv*/20*_simple_*",
+  "out_dir": "/home/pcal/Matilda/2D_Run/OpenCARP_Sims/results",
+  "seed": 1,
+  "gain": {
+   "mode": "auto",
+   "value": 1.0,
+   "target_bipolar_healthy_mV": 1.44
+  },
+  "noise": {
+   "mode": "floor",
+   "sd_mV": 0.0,
+   "floor_bipolar_mV": 0.04
+  },
+  "filters": {
+   "unipolar_hz": null,
+   "differential_hz": [
+    30,
+    500
+   ],
+   "order": 2,
+   "zero_phase": false
+  },
+  "bipolar_mode": "max_orthogonal",
+  "omni_angle_step_deg": 2,
+  "woi_ms": null,
+  "peak_freq": {
+   "enabled": true,
+   "band_hz": null,
+   "nfft": 4096
+  },
+  "wang_export": {
+   "enabled": true,
+   "patient_field": "cv",
+   "location_field": "stim_angle",
+   "location_map": {
+    "0": 0,
+    "45": 0,
+    "90": 1
+   },
+   "boundary_offset_mm": 3
+  },
+  "sweep": {}
+ },
+ "gain": 290.55484124337653,
+ "noise_sd_mV": 0.008463119799992395,
+ "n_points": 88938,
+ "pre_median_PP_mV": {
+  "bi": 1.4342573610015668,
+  "omni": 1.447166919708252,
+  "uni": 0.896502628974946
+ },
+ "wang_table2_inferior_healthy_mV": {
+  "uni": 1.83,
+  "bi": 1.44,
+  "omni": 2.05
+ }
+}

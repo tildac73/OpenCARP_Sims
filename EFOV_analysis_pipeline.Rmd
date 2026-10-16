@@ -79,14 +79,16 @@ COLORS     <- c(Unipolar = "#0072B2", Bipolar = "#D55E00", Omnipolar = "#009E73"
 ```{r helpers}
 # ---- Data preparation -----------------------------------------------------------
 read_map <- function(path) {
-  read_excel(path) %>%
+  # guess column types from every row: by default only the first 1000 are used, and when
+  # those are unipolar (PFreq empty) PFreq is read as logical and every PF becomes 1 Hz
+  read_excel(path, guess_max = 1e6) %>%
     mutate(
       patientID = factor(patientID),
       Location  = factor(if_else(inf0_roof1 == 0, "Inferior", "Roof"), levels = LOCATIONS),
       Electrode = factor(ELECTRODES[uni1_bi2_omni3], levels = ELECTRODES),
       Dist      = DistAcrossPath + BOUNDARY_OFFSET,          # 0 = scar boundary, > 0 = scar
       PP_log    = log(PP),
-      PFreq     = as.numeric(PFreq),                         # all-NA columns are read as logical
+      PFreq     = as.numeric(PFreq),                         # all-NA (no PF data) is read as logical
       PFreq_log = if_else(!is.na(PFreq) & PFreq > 0, log(PFreq), NA_real_)
     )
 }
