@@ -1,0 +1,106 @@
+# =====================================================================
+# common.par  -  settings shared by every stage (pre AND post ablation)
+# Micro-anatomical reentry slab, after PLOS Comp Biol 2026
+# (doi 10.1371/journal.pcbi.1014493)
+#
+# Units: mesh coordinates um | dt us | times ms | conductivity S/m
+#        stimulus strength uA/cm^2 (transmembrane current)
+# Lines marked TODO must be checked against your openCARP build:
+#        openCARP +Help <param>     bench --list-imps
+# =====================================================================
+
+# ---------- Mesh ------------------------------------------------------
+meshname       = mesh/slab_bundle      # .pts/.elem/.lon, tags 1-4
+
+# ---------- Formulation and numerics ----------------------------------
+bidomain       = 0                     # monodomain (paper)
+dt             = 20                    # us; not given in paper - check vs 10
+parab_solve    = 1                     # Crank-Nicolson
+cg_tol_parab   = 1e-8
+mass_lumping   = 1
+
+# ---------- Ionic model: Koivumaki 2011 with chronic AF remodelling ---
+# Paper (ref 14): SERCA -16%, PLB:SERCA +18%, SLN:SERCA -40%,
+#   INCX max +50%, RyR sensitivity to [Ca]SR +100%,
+#   gCaL -59%, gto -44%, gKur -22%, gK1 +100%
+# Parameter names below are placeholders - replace with the names from
+#   bench --imp=<Koivumaki name> --imp-info
+num_imp_regions         = 1
+imp_region[0].im       = Courtemanche
+imp_region[0].im_param = "GCaL*0.41,Gto*0.56,factorGKur*0.78,GK1*2.0,maxINaCa*1.5,maxIup*0.84"
+# Region 0 is the default: every tag (1-5) runs the same cAF model.
+# Sheath (4) and scar (5) are made inert through conductivity, not by a
+# PASSIVE model, so checkpoint state vectors match across pre/post.
+
+# ---------- Conductivities (monodomain uses harmonic mean of gi, ge) --
+# Starting values only: run tuneCV to hit your target CVs (guide sec. 3/7).
+# Transverse values give a 1.85:1 longitudinal:transverse conductivity
+# ratio = 1.36:1 CV ratio (paper).
+num_gregions            = 4
+
+gregion[0].num_IDs      = 1            # atrial wall
+gregion[0].ID[0]        = 1
+gregion[0].g_il         = 0.174
+gregion[0].g_it         = 0.094
+gregion[0].g_in         = 0.094
+gregion[0].g_el         = 0.625
+gregion[0].g_et         = 0.338
+gregion[0].g_en         = 0.338
+
+gregion[1].num_IDs      = 1            # myobundle body: wall x 0.6 (paper -40%)
+gregion[1].ID[0]        = 2
+gregion[1].g_il         = 0.1044
+gregion[1].g_it         = 0.0564
+gregion[1].g_in         = 0.0564
+gregion[1].g_el         = 0.375
+gregion[1].g_et         = 0.2028
+gregion[1].g_en         = 0.2028
+
+gregion[2].num_IDs      = 1            # exit segment: = bundle (blocked in s2 only)
+gregion[2].ID[0]        = 3
+gregion[2].g_il         = 0.1044
+gregion[2].g_it         = 0.0564
+gregion[2].g_in         = 0.0564
+gregion[2].g_el         = 0.375
+gregion[2].g_et         = 0.2028
+gregion[2].g_en         = 0.2028
+
+gregion[3].num_IDs      = 1            # insulating sheath: effectively zero
+gregion[3].ID[0]        = 4
+gregion[3].g_il         = 1e-6
+gregion[3].g_it         = 1e-6
+gregion[3].g_in         = 1e-6
+gregion[3].g_el         = 1e-6
+gregion[3].g_et         = 1e-6
+gregion[3].g_en         = 1e-6
+
+# ---------- Pacing: 10 beats, CL 200 ms, wall beside bundle exit -------
+num_stim                = 1
+stim[0].crct.type       = 0            # transmembrane current
+stim[0].pulse.strength  = 100          # uA/cm^2; not given - check capture
+stim[0].ptcl.duration   = 2            # ms
+stim[0].ptcl.start      = 0            # beats at 0, 200, ... 1800 ms
+stim[0].ptcl.bcl        = 200          # paper
+stim[0].ptcl.npls       = 10           # paper
+stim[0].elec.p0[0]      = 8000         # 0.5 mm beyond exit end (x = 7.5 mm)
+stim[0].elec.p0[1]      = -1250
+stim[0].elec.p0[2]      = 500
+stim[0].elec.p1[0]      = 9000
+stim[0].elec.p1[1]      = 1250
+stim[0].elec.p1[2]      = 2000
+
+# ---------- Outputs ----------------------------------------------------
+spacedt                 = 1            # ms (paper stored EGMs at 500 Hz = 2 ms)
+timedt                  = 10
+
+num_LATs                = 1            # ground-truth activation times from Vm
+lats[0].ID              = act
+lats[0].all             = 1            # every activation, not just first
+lats[0].measurand       = 0            # Vm
+lats[0].threshold       = -20          # mV
+lats[0].mode            = 0            # upstroke
+
+# Unipolar EGMs by phie recovery (the paper's Eq. 1), at all electrode
+# sample points (guide sec. 6). TODO: confirm recovery flags for your
+# version with  openCARP +Help phie_rec_ptf
+phie_rec_ptf            = electrodes/egm_points

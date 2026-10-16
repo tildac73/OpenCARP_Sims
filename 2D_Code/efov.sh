@@ -3,9 +3,8 @@
 #
 #   1. run.py       3 CVs x {pre, post} x 3 angles = 18 runs (0.25 mm), into runs/<batch>/cv<CV>/
 #                   (the first run at each CV tunes conductivity and caches it in tuned_cv.csv)
-#   2. meta.json    per run: the gi/ge it actually used (from its parameters.par)
-#   3. egm.py       -> results/<config>/  points.csv + xlsx files for EFOV_analysis_pipeline.Rmd
-#      ground_truth.py -> results/<config>/  groundtruth.csv, points_with_gt.csv (fov80 per recording)
+#   2. egm.py       -> results/<config>/  points.csv + xlsx files for EFOV_analysis_pipeline.Rmd
+#   3. ground_truth.py -> results/<config>/  groundtruth.csv, points_with_gt.csv (fov80 per recording)
 #   4. gt_maps.py   -> results/<config>/maps/  contribution maps (.png, .npz, summary .csv)
 #   5. EFOV_analysis_pipeline.Rmd -> results/<config>/EFOV_analysis_pipeline.html (.md without
 #                   pandoc) + R_output/ (tables, figures, cache) + R_log.txt
@@ -20,7 +19,8 @@
 #   MAPS=0           skip step 4
 #   RUN_R=0          skip step 5 (needs Rscript, the Rmd's R packages, and JAGS for mcp)
 set -u
-NP=1                                   # 1 core: mpirun on this machine does not match openCARP's MPI
+export PYTHONUNBUFFERED=1              # write Python output to the log immediately (not in 4 kB chunks)
+NP=1                                  # 1 core: mpirun on this machine does not match openCARP's MPI
 REPO="$(cd "$(dirname "$0")" && pwd)"            # 2D_Code
 ROOT="$(dirname "$REPO")"                        # repo root (EFOV_analysis_pipeline.Rmd lives here)
 PIPE="$ROOT/Shared_Pipeline"
@@ -54,17 +54,8 @@ if [ ! -e "${RUNS[0]}" ]; then
   echo "No run folders in $BATCH_DIR - nothing to process"; exit 1
 fi
 
-# ---------------- 2. per-run metadata ----------------
-# ground_truth.py takes gi from meta.json if present (otherwise from Shared_Pipeline/tuned_cv.csv)
-for RUN in "${RUNS[@]}"; do
-  [ -f "$RUN/parameters.par" ] || continue
-  awk '$1 == "gregion[0].g_il" {gi = $3} $1 == "gregion[0].g_el" {ge = $3}
-       END {if (gi != "") printf "{\"gi\": %s, \"ge\": %s}\n", gi, ge}' \
-      "$RUN/parameters.par" > "$RUN/meta.json"
-  [ -s "$RUN/meta.json" ] || rm -f "$RUN/meta.json"
-done
-
-# ---------------- 3-4. electrograms, ground truth, maps ----------------
+# ---------------- 2-4. electrograms, ground truth, maps ----------------
+# (ground_truth.py reads each run's conductivities from its parameters.par and mesh tags)
 # The Shared_Pipeline scripts resolve relative paths against Shared_Pipeline/, so each config is
 # copied with absolute paths: this batch's runs in, results/<name>/ at the repo root out
 # (where the Rmd's DATA_DIR = "results/<name>" expects them).

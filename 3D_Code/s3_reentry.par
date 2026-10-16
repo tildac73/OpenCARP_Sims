@@ -1,0 +1,13 @@
+# =====================================================================
+# s3_reentry.par  -  block lifted (common.par conductivities restored)
+#                    -> sustained micro-reentry, baseline EGMs
+# Run:  openCARP +F common.par +F s3_reentry.par
+# =====================================================================
+simID          = out/s3_reentry
+start_statef   = out/s2_block/state.1950.0    # TODO exact name; matches T_LIFT
+tend           = 4000          # ms; >= ~10 reentry cycles to judge stability
+
+# checkpoint inside sustained reentry -> starting point for ablation (s4)
+num_tsav       = 1
+tsav[0]        = 3500
+write_statef   = state

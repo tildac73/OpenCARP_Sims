@@ -6,9 +6,16 @@ Model-agnostic: any model (2D sheet, bilayer, 3D) only has to provide, per run f
 an egm.npz with
     uni     (P, 16, T)  unipolar electrograms in mV; P catheter placements,
                         electrode e = row*4 + col (col = along spline, row = across)
-    uni_xy  (P, 16, 2+) electrode positions in mm; x = signed distance to the scar
-                        boundary (negative = healthy)
+    uni_xy  (P, 16, 2+) electrode positions in mm (x, y[, z]); z defaults to standoff_mm
+                        above the top of the tissue
     t_ms    (T,)        time axis
+optionally
+    d_mm            (P, 16)       signed distance to the scar boundary used for d_mm
+                                  (negative = healthy); default x
+    uni_sample_xyz  (P, 16, S, 3) points averaged into each unipole (finite electrodes),
+                                  used by ground_truth.py; default the electrode position
+    centre_xy_mm    (P, 2)        catheter centre of each placement; default (xc_mm, 0)
+    p_<name>        (P,)          per-placement metadata -> column <name> (e.g. p_gap_mm)
 and metadata either in meta.json (any keys, e.g. model, cv, state, stim_angle) or in
 the run-folder name used by run.py.
 
@@ -133,8 +140,12 @@ def load_runs(cfg):
         if 'state' not in meta:
             print('skip (no state in metadata): ' + f)
             continue
-        runs.append(dict(meta=meta, uni=z['uni'].astype(np.float64),
-                         xy=z['uni_xy'][..., :2].astype(np.float64), t=z['t_ms']))
+        # positions carried through as (x, y, d): bipoles/omnipoles average all three
+        xy = z['uni_xy'][..., :2].astype(np.float64)
+        d = z['d_mm'] if 'd_mm' in z.files else xy[..., 0]
+        runs.append(dict(meta=meta, uni=z['uni'].astype(np.float64), t=z['t_ms'],
+                         xy=np.concatenate([xy, d[..., None]], axis=-1),
+                         pmeta={k[2:]: z[k] for k in z.files if k.startswith('p_')}))
     return runs
 
 
@@ -245,9 +256,11 @@ def process_run(run, cfg, gain, sd, rng):
         pf = (peak_frequency(tr, fs, pf_band, PF['nfft']) if PF['enabled'] and kind != 'uni'
               else np.full(len(pos), np.nan))   # no unipolar peak frequency, as in the clinical data
         parts.append(pd.DataFrame({'placement': np.arange(len(pos)), 'kind': kind, 'label': label,
-                                   'x_mm': pos[:, 0], 'y_mm': pos[:, 1], 'd_mm': pos[:, 0],
+                                   'x_mm': pos[:, 0], 'y_mm': pos[:, 1], 'd_mm': pos[:, 2],
                                    'PP_mV': np.ptp(tr, axis=-1), 'PF_Hz': pf}))
     out = pd.concat(parts, ignore_index=True)
+    for k, v in run['pmeta'].items():
+        out.insert(0, k, v[out.placement.values])
     for k, v in run['meta'].items():
         out.insert(0, k, v)
     return out
