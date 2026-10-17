@@ -20,6 +20,7 @@ import os
 import shutil
 import re
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -99,6 +100,12 @@ def parser():
         help="Disabled until the tuner supports the same cAF remodelling as common.par",
     )
     group.add_argument(
+        "--resume",
+        action="store_true",
+        help="Reuse completed stages (meta.json marked complete); move incomplete or stale "
+        "stage folders aside and rerun them. Without it, existing output is an error",
+    )
+    group.add_argument(
         "--gi",
         type=float,
         default=None,
@@ -171,6 +178,13 @@ def buildMesh(job):
             DX_MM * 1000.0,
         ]  # mm -> um
     job.bash(cmd + ["-mesh", raw])
+    missing = [raw + ext for ext in (".pts", ".elem", ".lon") if not os.path.isfile(raw + ext)]
+    if missing:
+        raise RuntimeError(
+            "mesher did not write {}; check settings.execs.MESHER in your carputils settings".format(
+                missing
+            )
+        )
 
     pts = np.loadtxt(raw + ".pts", skiprows=1)
     lo, hi = pts.min(axis=0) / 1000.0, pts.max(axis=0) / 1000.0
@@ -228,7 +242,31 @@ def writeRecoveryPoints(job):
             job.bash([sys.executable, os.path.join(EXAMPLE_DIR, "make_electrodes.py")])
         finally:
             os.chdir(cwd)
+    if not os.path.isfile(base + ".pts"):
+        raise RuntimeError("make_electrodes.py did not write " + base + ".pts")
     return base
+
+
+def stage_time_axis(path, t0, tend):
+    """
+    Absolute output times of a stage. Uses the IGB header when it spans t0..tend; if the
+    header origin is missing or reset on restart, infers the axis from the frame count
+    (first frame at t0, or one output step later) and reports the correction.
+    """
+    t = igb_io.time_axis(path)
+    if np.isclose(t[0], t0, rtol=0, atol=1e-6) and np.isclose(t[-1], tend, rtol=0, atol=SPACEDT_MS):
+        return t
+    step = float(t[1] - t[0]) if len(t) > 1 else SPACEDT_MS
+    for first in (t0, t0 + step):
+        if np.isclose(first + (len(t) - 1) * step, tend, rtol=0, atol=0.5 * step + 1e-6):
+            print(
+                f"NOTE {path}: header times {t[0]:g}-{t[-1]:g} ms; using {first:g}-{tend:g} ms "
+                "from the restart time and frame count"
+            )
+            return first + np.arange(len(t)) * step
+    raise RuntimeError(
+        f"{path}: {len(t)} frames ({t[0]:g}-{t[-1]:g} ms) do not cover {t0:g}-{tend:g} ms"
+    )
 
 
 def checkpoint(simdir, expected_ms):
@@ -245,7 +283,7 @@ def checkpoint(simdir, expected_ms):
     return str(matches[0])[:-4], expected_ms
 
 
-def buildEGMs(simdir, t0_ms, egm_points):
+def buildEGMs(simdir, t0_ms, egm_points, t_ms=None):
     """
     Unipolar electrograms from phie_recovery.igb: average each electrode's surface
     samples. Saves <simdir>/egm.npz with
@@ -257,12 +295,16 @@ def buildEGMs(simdir, t0_ms, egm_points):
     """
     path = os.path.join(simdir, "phie_recovery.igb")
     phi = igb_io.read(path).T  # (recovery points, time)
-    t_ms = igb_io.time_axis(path)
+    header_t = igb_io.time_axis(path)
     vm_time = igb_io.time_axis(os.path.join(simdir, "vm.igb"))
-    if t_ms.shape != vm_time.shape or not np.allclose(t_ms, vm_time):
+    if header_t.shape != vm_time.shape or not np.allclose(np.diff(header_t), np.diff(vm_time)):
         raise ValueError("Vm and recovered electrograms have different time axes")
-    if not np.isclose(t_ms[0], t0_ms):
-        raise ValueError(f"IGB starts at {t_ms[0]} ms, expected restart at {t0_ms} ms")
+    if t_ms is None:  # trust the header
+        t_ms = header_t
+        if not np.isclose(t_ms[0], t0_ms):
+            raise ValueError(f"IGB starts at {t_ms[0]} ms, expected restart at {t0_ms} ms")
+    elif np.shape(t_ms) != header_t.shape:
+        raise ValueError("Supplied time axis does not match the recovery frames")
     n = len(EGM_XY_MM)
     expected_points = len(EGM_GAPS_MM) * n * n * EGM_SAMPLES
     if phi.shape[0] != expected_points or not np.isfinite(phi).all():
@@ -305,6 +347,41 @@ def buildEGMs(simdir, t0_ms, egm_points):
     print("Electrograms saved: " + os.path.join(simdir, "egm.npz"))
 
 
+# Checkpoint each stage must leave for the next (ms, or the block-lift time)
+CHECKPOINT_FOR = {"s1_pace": 1795.0, "s2_block": "t_lift", "s3_reentry": 3500.0}
+
+
+def stageTimes(stage, t_lift):
+    """(start, end) in ms of a stage; restarts begin at the checkpoint they load."""
+    return {
+        "s1_pace": (0.0, 1795.0),
+        "s2_block": (1795.0, float(t_lift)),
+        "s3_reentry": (float(t_lift), 4000.0),
+        "s4_ablate_terminate": (3500.0, 6000.0),
+    }[stage]
+
+
+def stageComplete(simdir, stage, t_lift):
+    """True when a stage folder holds every output of a finished stage at the same T_LIFT."""
+    try:
+        with open(os.path.join(simdir, "meta.json")) as f:
+            meta = json.load(f)
+        if not meta.get("complete") or meta.get("stage") != stage:
+            return False
+        if not np.isclose(meta.get("t_lift_ms", t_lift), t_lift):
+            return False
+        for name in ("vm.igb", "phie_recovery.igb", "parameters.par", "egm.npz", "meshname.txt"):
+            if not os.path.isfile(os.path.join(simdir, name)):
+                return False
+        needed = CHECKPOINT_FOR.get(stage)
+        if needed is not None:
+            checkpoint(simdir, t_lift if needed == "t_lift" else needed)
+        igb_io.header(os.path.join(simdir, "vm.igb"))  # raises if truncated
+        return True
+    except (OSError, ValueError, KeyError):
+        return False
+
+
 # The runner owns its stage folders: carputils must not clean the parent on restart.
 @tools.carpexample(parser, jobID, simple=True)
 def run(args, job):
@@ -341,18 +418,36 @@ def run(args, job):
         if args.scenario == "all"
         else ["pre", "ablate"] if args.scenario == "protocol" else [args.scenario]
     )
-    # Do not silently mix a rerun with existing output or stale checkpoints.
-    for scenario in scenarios:
-        for _, out, _ in SCENARIOS[scenario][1]:
-            destination = Path(job.ID) / out
-            if destination.exists() and any(destination.iterdir()):
-                raise FileExistsError(
-                    f"{destination} already contains output; archive it or use SKIP_SIMS=1"
-                )
+    # Do not silently mix a rerun with existing output or stale checkpoints. With --resume,
+    # completed stages are reused and incomplete ones are moved aside and rerun.
+    resume = getattr(args, "resume", False)
+    if not resume:
+        for scenario in scenarios:
+            for _, out, _ in SCENARIOS[scenario][1]:
+                destination = Path(job.ID) / out
+                if destination.exists() and any(destination.iterdir()):
+                    raise FileExistsError(
+                        f"{destination} already contains output; archive it, use RESUME=1 "
+                        "or SKIP_SIMS=1"
+                    )
+    rerun = set()  # stages (re)simulated in this call: anything restarting from them is stale
     for scenario in scenarios:
         scar, stages = SCENARIOS[scenario]
         for stage, out, restart in stages:
             simdir = os.path.join(job.ID, out)
+            t0, tend = stageTimes(stage, args.t_lift)
+            if resume and os.path.isdir(simdir) and os.listdir(simdir):
+                if restart not in rerun and stageComplete(simdir, stage, args.t_lift):
+                    print("=== {}: {} complete, reusing {}".format(scenario, stage, simdir))
+                    continue
+                aside = "{}.{}-{}".format(
+                    simdir,
+                    "stale" if restart in rerun else "incomplete",
+                    time.strftime("%Y%m%d-%H%M%S"),
+                )
+                os.rename(simdir, aside)
+                print("=== {}: moved previous {} output to {}".format(scenario, stage, aside))
+            rerun.add(out)
 
             # Layered settings: later files override earlier ones
             cmd = tools.carp_cmd(os.path.join(EXAMPLE_DIR, "common.par"))
@@ -369,39 +464,36 @@ def run(args, job):
                 "-phie_rec_ptf",
                 egm_points,
             ]
-            t0 = 0.0
             if restart:
-                expected_time = (
-                    1795.0
-                    if stage == "s2_block"
-                    else args.t_lift if stage == "s3_reentry" else 3500.0
-                )
-                state, t0 = checkpoint(os.path.join(job.ID, restart), expected_time)
+                state, _ = checkpoint(os.path.join(job.ID, restart), t0)
                 cmd += ["-start_statef", state]
             if stage == "s2_block":
                 cmd += ["-tend", args.t_lift, "-tsav[0]", args.t_lift]
             if args.gi is not None:
                 cmd += conductivityOpts(args.gi, args.ge, stage)
 
-            print("=== {}: {} -> {}".format(scenario, stage, simdir))
+            print("=== {}: {} -> {}  ({:g}-{:g} ms)".format(scenario, stage, simdir, t0, tend))
+            started = time.time()
             job.carp(cmd)
+            elapsed = time.time() - started
 
             required = ["vm.igb", "phie_recovery.igb", "parameters.par"]
             missing = [name for name in required if not (Path(simdir) / name).is_file()]
             if missing:
                 raise RuntimeError(f"{out}: missing simulation outputs: {missing}")
-            expected_end = (
-                args.t_lift
-                if stage == "s2_block"
-                else {"s1_pace": 1795, "s3_reentry": 4000, "s4_ablate_terminate": 6000}[stage]
-            )
-            actual_end = igb_io.time_axis(Path(simdir) / "vm.igb")[-1]
-            if not np.isclose(actual_end, expected_end, rtol=0, atol=SPACEDT_MS):
-                raise RuntimeError(
-                    f"{out}: output ends at {actual_end} ms, expected {expected_end}"
-                )
+            t_ms = stage_time_axis(Path(simdir) / "vm.igb", t0, tend)
+            needed = CHECKPOINT_FOR.get(stage)
+            if needed is not None:
+                checkpoint(simdir, args.t_lift if needed == "t_lift" else needed)
 
-            # Metadata and mesh for the shared pipeline (egm.py, ground_truth.py)
+            with open(os.path.join(simdir, "meshname.txt"), "w") as f:
+                f.write(os.path.abspath(mesh_post if scar else mesh_pre) + "\n")
+
+            # Unipolar electrograms from the recovered potentials
+            buildEGMs(simdir, t0, egm_points, t_ms)
+
+            # Metadata for the shared pipeline (egm.py, ground_truth.py); written last, so a
+            # stage with meta.json "complete" has every output
             with open(os.path.join(simdir, "meta.json"), "w") as f:
                 json.dump(
                     {
@@ -410,15 +502,18 @@ def run(args, job):
                         "state": "post" if scar else "pre",
                         "scenario": scenario,
                         "stage": stage,
+                        "t_start_ms": float(t_ms[0]),
+                        "t_end_ms": float(t_ms[-1]),
+                        "t_lift_ms": float(args.t_lift),
+                        "restart_from": restart,
+                        "np": getattr(args, "np", None),
+                        "wall_time_s": round(elapsed, 1),
+                        "complete": True,
                     },
                     f,
                     indent=1,
                 )
-            with open(os.path.join(simdir, "meshname.txt"), "w") as f:
-                f.write(os.path.abspath(mesh_post if scar else mesh_pre) + "\n")
-
-            # Unipolar electrograms from the recovered potentials
-            buildEGMs(simdir, t0, egm_points)
+            print("=== {}: {} finished in {:.1f} min".format(scenario, stage, elapsed / 60))
 
     # Do visualization: Vm of the last stage run
     if args.visualize and not settings.platform.BATCH:

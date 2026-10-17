@@ -1,1 +1,6 @@
-./2D_Meshes
+2D_Meshes
+# simulation outputs and results are large; keep them out of git
+3D_Code/runs/
+results/
+__pycache__/
+.DS_Store

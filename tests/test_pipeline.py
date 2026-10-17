@@ -155,7 +155,10 @@ class IOAndSignals(unittest.TestCase):
             ), patch.object(runner, "buildEGMs"), patch.object(
                 runner.igb_io,
                 "time_axis",
-                side_effect=lambda p: np.array([ends[Path(p).parent.name]]),
+                side_effect=lambda p: np.append(
+                    np.arange(*runner.stageTimes(Path(p).parent.name, 1950)),
+                    ends[Path(p).parent.name],
+                ),
             ):
                 runner.run(args, Job())
                 self.assertEqual([Path(c[c.index("-simID") + 1]).name for c in calls], list(ends))
@@ -165,6 +168,50 @@ class IOAndSignals(unittest.TestCase):
                 self.assertEqual(calls[-1][calls[-1].index("-meshname") + 1], "scar")
                 with self.assertRaises(FileExistsError):
                     runner.run(args, Job())
+
+    def test_resume_reuses_complete_stages_and_reruns_the_rest(self):
+        runner = import_runner()
+        ends = {"s1_pace": 1795, "s2_block": 1950, "s3_reentry": 4000, "s4_ablate_terminate": 6000}
+        with tempfile.TemporaryDirectory() as tmp:
+            calls = []
+
+            class Job:
+                ID = tmp
+
+                def carp(self, command):
+                    calls.append(Path(command[command.index("-simID") + 1]).name)
+                    folder = Path(command[command.index("-simID") + 1])
+                    folder.mkdir()
+                    start, end = runner.stageTimes(folder.name, 1950)
+                    # restarted stages get a header without org_t: frames from 0
+                    write_igb(folder / "vm.igb", np.zeros((int(end - start) + 1, 2)), start=0 if start else 0)
+                    for name in ("phie_recovery.igb", "parameters.par"):
+                        (folder / name).write_text("x")
+                    save = {"s1_pace": 1795, "s2_block": 1950, "s3_reentry": 3500}.get(folder.name)
+                    if save:
+                        (folder / f"state.{save}.0.roe").touch()
+
+            def fake_egms(simdir, t0, points, t_ms):
+                self.assertEqual(t_ms[0], t0)  # restart time recovered from the frame count
+                (Path(simdir) / "egm.npz").write_text("x")
+
+            args = types.SimpleNamespace(t_lift=1950, tune_cv=None, gi=None, ge=None,
+                                         scenario="protocol", visualize=False, resume=True)
+            with patch.object(runner, "buildMesh", return_value=("pre", "scar")), patch.object(
+                runner, "writeRecoveryPoints", return_value="electrodes"
+            ), patch.object(runner, "buildEGMs", side_effect=fake_egms):
+                runner.run(args, Job())
+                self.assertEqual(calls, list(ends))
+                # A crash during s3 leaves it incomplete: s3 and the s4 branch rerun, s1/s2 are reused.
+                (Path(tmp) / "s3_reentry/meta.json").unlink()
+                calls.clear()
+                runner.run(args, Job())
+                self.assertEqual(calls, ["s3_reentry", "s4_ablate_terminate"])
+                moved = sorted(p.name.split(".")[1].split("-")[0] for p in Path(tmp).iterdir() if "." in p.name)
+                self.assertEqual(moved, ["incomplete", "stale"])
+                calls.clear()
+                runner.run(args, Job())
+                self.assertEqual(calls, [])
 
     def test_stage_error_stops_the_chain(self):
         runner = import_runner()
@@ -321,6 +368,10 @@ class ShellIntegration(unittest.TestCase):
             self.assertEqual(len(list((out / "maps").glob("*_maps.png"))), 4)
             self.assertEqual(len(list((out / "maps").glob("*_maps_depth.png"))), 4)
             self.assertEqual(len(list((out / "maps").glob("*.vtk"))), 16)
+            figures = out / "figures"
+            self.assertTrue((figures / "FIGURES.md").is_file())
+            self.assertGreaterEqual(len(list(figures.glob("*.png"))), 15, result.stdout)
+            self.assertEqual(len(list(figures.glob("*.png"))), len(list(figures.glob("*.pdf"))))
             # Every geometry-derived weighted signal matches the selected EGM trace.
             cfg = egm.deep_update(
                 egm.DEFAULTS, json.loads(next((job / "configs").iterdir()).read_text())

@@ -319,15 +319,19 @@ def region_shares(e, regions):
     }
 
 
-def fov_metrics(g, S, energy_terms, site, xyz, h, frac):
-    """fov80 by signal reconstruction and by per-node energy, around site in the tissue plane."""
+def fov_metrics(g, S, energy_terms, site, xyz, h, frac, curves=False):
+    """
+    fov80 by signal reconstruction and by per-node energy, around site in the tissue plane.
+    With curves=True also returns (radius_mm, explained, node_energy_fraction): the share of
+    signal energy explained by tissue within each radius, and the cumulative node energy.
+    """
     rho = np.hypot(xyz[:, 0] - site[0], xyz[:, 1] - site[1])
     b = np.minimum((rho / h).astype(int), int(rho.max() / h))
     nb = b.max() + 1
     full = np.einsum("cn,cnt->t", g, S)
     total = float(np.sum(full**2))
     if total == 0:
-        return np.nan, np.nan, full
+        return (np.nan, np.nan, full) + ((None,) if curves else ())
     rows = np.arange(len(b))
     ring = sum(
         sparse.csr_matrix((g[c], (b, rows)), shape=(nb, len(b))) @ S[c] for c in range(len(g))
@@ -340,6 +344,10 @@ def fov_metrics(g, S, energy_terms, site, xyz, h, frac):
     e = node_energy(g, energy_terms)
     ce = np.cumsum(np.bincount(b, weights=e, minlength=nb))
     fov_node = (np.searchsorted(ce, frac * ce[-1]) + 1) * h
+    if curves:
+        radius = (np.arange(nb) + 1) * h
+        node_frac = ce / ce[-1] if ce[-1] > 0 else np.full(nb, np.nan)
+        return float(fov_res), float(fov_node), full, (radius, 1 - resid, node_frac)
     return float(fov_res), float(fov_node), full
 
 
@@ -356,8 +364,11 @@ def load_tissue(folder, cfg, gt):
     t = z["t_ms"]
     vm_path = os.path.join(folder, "vm.igb")
     vm_time = igb_io.time_axis(vm_path)
-    if t.shape != vm_time.shape or not np.allclose(t, vm_time, rtol=0, atol=1e-6):
+    if t.shape != vm_time.shape or not np.allclose(np.diff(t), np.diff(vm_time), atol=1e-6):
         raise ValueError(f"{folder}: Vm and EGM time axes do not match")
+    if not np.isclose(t[0], vm_time[0], rtol=0, atol=1e-6):
+        # run.py corrects restart headers that omit org_t; egm.npz holds the absolute times
+        print(f"NOTE {folder}: Vm header starts at {vm_time[0]:g} ms, egm.npz at {t[0]:g} ms")
     fs = 1000.0 / float(np.median(np.diff(t)))
     shared_window = cfg.get("analysis_window_last_ms")
     legacy_window = gt.get("window_last_ms")
@@ -411,7 +422,7 @@ def load_tissue(folder, cfg, gt):
     )
 
 
-def process_run(folder, cfg, gt):
+def process_run(folder, cfg, gt, curve_store=None):
     T = load_tissue(folder, cfg, gt)
     meta, z, xyz, h = T["meta"], T["z"], T["xyz"], T["h"]
     F = cfg["filters"]
@@ -419,7 +430,9 @@ def process_run(folder, cfg, gt):
     pmeta = {k[2:]: z[k] for k in z.files if k.startswith("p_")}
 
     rows = []
-    for p in placements(z, gt, meta["state"]):
+    chosen = placements(z, gt, meta["state"])
+    for n_done, p in enumerate(chosen):
+        print("  {}: placement {} ({}/{})".format(meta["run"], p, n_done + 1, len(chosen)), flush=True)
         sites, samples = electrode_sites(z, p, top)
         measured = None if T["measured"] is None else T["measured"][T["measured"].placement == p]
         if measured is not None and len(measured) != 16 + len(
@@ -430,7 +443,9 @@ def process_run(folder, cfg, gt):
             sites, cfg, T["Sd"], T["comps"], xyz, samples, measured
         ):
             X, E = (T["Su"], T["E"]["u"]) if kind == "uni" else (T["Sd"], T["E"]["d"])
-            fr, fn, full = fov_metrics(g, X, E, site, xyz, h, gt["fraction"])
+            fr, fn, full, curve = fov_metrics(g, X, E, site, xyz, h, gt["fraction"], curves=True)
+            if curve is not None and curve_store is not None:
+                curve_store.append((meta["run"], p, kind, label) + curve)
             row = dict(
                 meta,
                 **{k: v[p].item() for k, v in pmeta.items()},
@@ -469,6 +484,25 @@ def process_run(folder, cfg, gt):
     return rows
 
 
+def save_curves(path, curves):
+    """Explained-signal and node-energy fractions vs radius, padded to a common radius grid."""
+    if not curves:
+        return
+    n = max(len(c[4]) for c in curves)
+    h = curves[0][4][0]
+    pad = lambda v: np.pad(v, (0, n - len(v)), mode="edge")  # noqa: E731 (complete beyond max radius)
+    np.savez_compressed(
+        path,
+        run=np.array([c[0] for c in curves]),
+        placement=np.array([c[1] for c in curves]),
+        kind=np.array([c[2] for c in curves]),
+        label=np.array([c[3] for c in curves]),
+        radius_mm=(np.arange(n) + 1) * h,
+        explained=np.array([pad(c[5]) for c in curves], np.float32),
+        node_fraction=np.array([pad(c[6]) for c in curves], np.float32),
+    )
+
+
 def main():
     import pandas as pd
 
@@ -488,13 +522,14 @@ def main():
             if not os.path.isfile(os.path.join(folder, name)):
                 raise FileNotFoundError(os.path.join(folder, name))
 
-    rows = []
+    rows, curves = [], []
     for f in folders:
-        rows += process_run(f, cfg, gt)
+        rows += process_run(f, cfg, gt, curves)
     df = pd.DataFrame(rows)
     out = os.path.join(ep.REPO, cfg["out_dir"], cfg["name"])
     os.makedirs(out, exist_ok=True)
     df.to_csv(os.path.join(out, "groundtruth.csv"), index=False)
+    save_curves(os.path.join(out, "groundtruth_curves.npz"), curves)
 
     u = df[df.kind == "uni"]
     print(
