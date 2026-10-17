@@ -46,9 +46,9 @@ command -v "$PYTHON" > /dev/null || { echo "Python not found: $PYTHON (set PYTHO
 [[ -f "$CONFIG" ]] || { echo "Config not found: $CONFIG" >&2; exit 2; }
 
 # Check dependencies, simulator executables and configuration before spending time on simulations.
-"$PYTHON" - "$CONFIG" "$NP" "$T_LIFT" "$SKIP_SIMS" "$MAPS" "$FIGURES" "$SCRIPT_DIR" <<'PY'
+"$PYTHON" - "$CONFIG" "$NP" "$T_LIFT" "$SKIP_SIMS" "$MAPS" "$FIGURES" "$SCRIPT_DIR" "$SCENARIO" <<'PY'
 import importlib, json, math, os, shutil, sys
-config, np_, lift, skip, maps, figures, here = sys.argv[1:]
+config, np_, lift, skip, maps, figures, here, scenario = sys.argv[1:]
 if sys.version_info < (3, 8):
     sys.exit(f'Python 3.8 or newer is required, found {sys.version.split()[0]}')
 if int(np_) < 1 or not math.isfinite(float(lift)) or not 1802 < float(lift) < 3500:
@@ -70,15 +70,13 @@ if cfg.get('sweep'):
 if cfg.get('wang_export', {}).get('enabled', False):
     sys.exit('Clinical Wang export needs real patient/location metadata; use the 3D CSV outputs')
 if skip == '0':
-    from carputils import settings
-    for name in ('CARP', 'MESHER'):
-        exe = getattr(settings.execs, name, None)
-        found = exe and (os.access(str(exe), os.X_OK) or shutil.which(str(exe)))
-        if not found:
-            sys.exit(f'carputils settings.execs.{name} = {exe!r} is not an executable; '
-                     'fix it in your carputils settings.yaml')
-    if getattr(settings.platform, 'BATCH', False):
-        sys.exit('carputils is configured for batch submission; use a local platform inside your job')
+    # Simulator executables are checked by run.py: carputils only exposes settings.execs
+    # inside its carpexample decorator. Parameter files are checked here, before any stage runs.
+    pars = ['common.par', 's1_pace.par', 's2_block.par', 's3_reentry.par']
+    pars += ['scar.par', 's4_ablate_terminate.par'] if scenario != 'pre' else []
+    absent = [p for p in pars if not os.path.isfile(os.path.join(here, p))]
+    if absent:
+        sys.exit('Missing parameter files in 3D_Code: ' + ', '.join(absent))
     free = shutil.disk_usage(here).free / 1e9
     if free < 20:
         print(f'WARNING: only {free:.0f} GB free; a full run needs roughly 15-20 GB', file=sys.stderr)
@@ -162,10 +160,10 @@ if [[ "$MAPS" == 1 ]]; then
 fi
 FIG_NOTE=""
 if [[ "$FIGURES" == 1 ]]; then
-  step 'Thesis figures'
+  step 'Figures'
   STRICT=()
   [[ "$STRICT_FIGURES" == 1 ]] && STRICT=(--strict)
-  "$PYTHON" "$SCRIPT_DIR/thesis_figures.py" --results "$OUT" --config "$CFG" "${STRICT[@]+"${STRICT[@]}"}" "${STAGES[@]}"
+  "$PYTHON" "$SCRIPT_DIR/figures.py" --results "$OUT" --config "$CFG" "${STRICT[@]+"${STRICT[@]}"}" "${STAGES[@]}"
   if [[ -s "$OUT/figures/failures.log" ]]; then
     FIG_NOTE=" ($(grep -c '^=== ' "$OUT/figures/failures.log") figure(s) failed: see $OUT/figures/failures.log)"
   fi

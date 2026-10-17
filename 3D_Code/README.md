@@ -73,7 +73,7 @@ Results go to `results/slab3d_default__reentry_tlift1950_np1__protocol/` for the
 
 ## Thesis figures
 
-`thesis_figures.py` runs last and writes about 33 figures to `results/<name>/figures/`, each as PNG (300 dpi) and PDF (vector, for LaTeX). `FIGURES.md` gives every figure with a caption and the numbers measured from that run. `figure_stats.json` holds those numbers, and `tables/` holds CSV and LaTeX summary tables.
+`figures.py` runs last and writes about 33 figures to `results/<name>/figures/`, each as PNG (300 dpi) and PDF (vector, for LaTeX). `FIGURES.md` gives every figure with a caption and the numbers measured from that run. `figure_stats.json` holds those numbers, and `tables/` holds CSV and LaTeX summary tables.
 
 | Group | Figures |
 |---|---|
@@ -85,7 +85,7 @@ Results go to `results/slab3d_default__reentry_tlift1950_np1__protocol/` for the
 Each figure is independent: one that cannot be made is logged in `figures/failures.log` and the rest continue, and the final message says how many failed. Use `STRICT_FIGURES=1` to make any figure failure fail the run. Vm planes and probe traces are extracted once into `figures/cache/` (about 0.6 GB at full resolution). Regenerate figures without rerunning anything else:
 
 ```bash
-python3 3D_Code/thesis_figures.py --results results/<name> --config 3D_Code/runs/<job>/configs/slab3d_default.json \
+python3 3D_Code/figures.py --results results/<name> --config 3D_Code/runs/<job>/configs/slab3d_default.json \
     3D_Code/runs/<job>/s1_pace 3D_Code/runs/<job>/s2_block 3D_Code/runs/<job>/s3_reentry 3D_Code/runs/<job>/s4_ablate_terminate
 ```
 

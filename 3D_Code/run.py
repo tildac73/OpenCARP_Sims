@@ -404,6 +404,15 @@ def run(args, job):
             "This checkpoint chain needs immediate execution; use a local carputils platform (inside your compute allocation), without --dry"
         )
 
+    # Fail now, not after hours of simulation, if the simulator executables are misconfigured.
+    for name in ("MESHER", "CARP"):
+        exe = getattr(settings.execs, name, None)
+        if not exe or not (os.access(str(exe), os.X_OK) or shutil.which(str(exe))):
+            raise RuntimeError(
+                f"carputils settings.execs.{name} = {exe!r} is not an executable; "
+                "set it in your carputils settings.yaml"
+            )
+
     # Conductivity overrides must be a complete intracellular/extracellular pair.
     if (args.gi is None) != (args.ge is None):
         raise ValueError("Give both --gi and --ge, or neither for common.par")

@@ -45,7 +45,10 @@ def import_runner():
     )
     package = types.ModuleType("carputils")
     package.tools = tools
-    package.settings = types.SimpleNamespace(platform=types.SimpleNamespace(BATCH=False))
+    package.settings = types.SimpleNamespace(
+        platform=types.SimpleNamespace(BATCH=False),
+        execs=types.SimpleNamespace(CARP=sys.executable, MESHER=sys.executable),
+    )
     carpio = types.ModuleType("carputils.carpio")
     carpio.txt = types.SimpleNamespace()
     with patch.dict(sys.modules, {"carputils": package, "carputils.carpio": carpio}):

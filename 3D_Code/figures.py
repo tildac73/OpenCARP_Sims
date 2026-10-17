@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-thesis_figures - figures, tables and captions for the 3D slab EFOV pipeline.
+figures, tables and captions for the 3D slab EFOV pipeline.
 
 Runs after egm.py and ground_truth.py (efov_3d.sh calls it last). Reads the stage
 folders (vm.igb, egm.npz, meta.json, mesh) and the results folder (points.csv,
@@ -16,7 +16,7 @@ groundtruth.csv, groundtruth_curves.npz, run_summary.json), and writes to
     cache/                 Vm planes and probe traces extracted once from vm.igb
 
 Usage:
-    python3 thesis_figures.py --results <results dir> --config <job config.json> <stage dirs...>
+    python3 figures.py --results <results dir> --config <job config.json> <stage dirs...>
     [--only 04,09] [--no-vm] [--strict]
 
 Vm figures describe what the simulation did; they do not decide whether reentry or
