@@ -1,0 +1,99 @@
+{
+  "slabSizeMm": [
+    40.0,
+    40.0,
+    4.0
+  ],
+  "meshSpacingMm": 0.5,
+  "timeStepUs": 20.0,
+  "sampleStepMs": 1.0,
+  "boundary": {
+    "shape": "straight",
+    "positionMm": 0.0
+  },
+  "pacing": {
+    "cycleLengthMs": 500.0,
+    "beatCount": 8,
+    "durationMs": 2.0,
+    "strength": 50.0,
+    "stripWidthMm": 0.5
+  },
+  "electrodes": {
+    "gridOffsetsMm": [
+      -6.0,
+      -2.0,
+      2.0,
+      6.0
+    ],
+    "centreXmm": 0.0,
+    "centreYmm": [
+      -10.0,
+      -8.0,
+      -6.0,
+      -4.0,
+      -2.0,
+      0.0,
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+    ],
+    "gapsMm": [
+      0.25,
+      1.0
+    ],
+    "radiusMm": 0.5,
+    "lengthMm": 1.0,
+    "axialSamples": 2,
+    "angularSamples": 4
+  },
+  "analysis": {
+    "beatWindowMs": [
+      0.0,
+      400.0
+    ],
+    "filterHistoryMs": 200.0,
+    "differentialBandHz": [
+      30.0,
+      450.0
+    ],
+    "filterOrder": 2,
+    "omniAngleStepDeg": 2,
+    "targetBipolarMv": 1.44,
+    "referenceGapMm": 0.25,
+    "referenceCentreYmm": 0.0,
+    "noiseSdMv": 0.005,
+    "noiseRepeats": 3,
+    "noiseSeed": 1701,
+    "groundTruthCentreYmm": [
+      -8.0,
+      0.0,
+      8.0
+    ],
+    "minimumCleanPpMv": 0.001,
+    "minimumAbsCorrelation": 0.95,
+    "maximumShapeError": 0.2,
+    "maximumGlobalScaleError": 0.3,
+    "farRegionMm": 10.0,
+    "maximumFarRelativeRange": 0.15,
+    "minimumTransitionFraction": 0.2,
+    "maximumFilterHistoryError": 0.001
+  },
+  "acceptance": {
+    "activationThresholdMv": -20.0,
+    "regionXmm": [
+      -8.0,
+      8.0
+    ],
+    "viableRegionYmm": [
+      1.0,
+      18.0
+    ],
+    "maximumPlaneResidualMs": 2.0,
+    "maximumDirectionErrorDeg": 5.0,
+    "maximumBeatLatencyChangeMs": 2.0,
+    "maximumBeatAmplitudeChange": 0.05,
+    "maximumBeatApdChangeMs": 5.0
+  }
+}

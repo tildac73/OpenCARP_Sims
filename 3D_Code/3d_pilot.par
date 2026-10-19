@@ -1,0 +1,44 @@
+# Homogeneous, full-thickness boundary pilot.
+# Units: coordinates um; dt us; times ms; conductivity S/m.
+# run_boundary.py supplies paths, duration, output interval and stimulus settings.
+bidomain = 0
+parab_solve = 1
+cg_tol_parab = 1e-8
+mass_lumping = 1
+
+# The current notebook requests unmodified CRN, not the old cAF reentry model.
+num_imp_regions = 1
+imp_region[0].im = Courtemanche
+
+# Wall and near-insulating lesion. Same ionic model in both regions.
+# The lesion is excluded from direct stimulation; absence of lesion activation is checked.
+num_gregions = 2
+gregion[0].num_IDs = 1
+gregion[0].ID[0] = 1
+gregion[0].g_il = 0.174
+gregion[0].g_it = 0.094
+gregion[0].g_in = 0.094
+gregion[0].g_el = 0.625
+gregion[0].g_et = 0.338
+gregion[0].g_en = 0.338
+gregion[1].num_IDs = 1
+gregion[1].ID[0] = 5
+gregion[1].g_il = 1e-6
+gregion[1].g_it = 1e-6
+gregion[1].g_in = 1e-6
+gregion[1].g_el = 1e-6
+gregion[1].g_et = 1e-6
+gregion[1].g_en = 1e-6
+
+num_stim = 1
+stim[0].crct.type = 0
+stim[0].pulse.shape = 0
+stim[0].ptcl.start = 0
+
+timedt = 1
+num_LATs = 1
+lats[0].ID = act
+lats[0].all = 1
+lats[0].measurand = 0
+lats[0].threshold = -20
+lats[0].mode = 0

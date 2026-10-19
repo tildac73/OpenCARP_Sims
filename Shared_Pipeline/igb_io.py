@@ -11,18 +11,18 @@ def header(path):
     fields = dict(token.split(":", 1) for token in raw.decode("latin-1").split() if ":" in token)
     nodes = np.prod([int(fields.get(axis, 1)) for axis in ("x", "y", "z")])
     frames = int(fields["t"])
-    byte_order = ">" if "big" in fields.get("systeme", "little") else "<"
+    byteOrder = ">" if "big" in fields.get("systeme", "little") else "<"
     types = {"float": "f4", "double": "f8"}
     if fields.get("type") not in types:
         raise ValueError(f"{path}: expected scalar float or double IGB data")
-    dtype = np.dtype(byte_order + types[fields["type"]])
+    dtype = np.dtype(byteOrder + types[fields["type"]])
     expected = 1024 + int(nodes) * frames * dtype.itemsize
     if nodes <= 0 or frames <= 0 or Path(path).stat().st_size < expected:
         raise ValueError(f"{path}: incomplete IGB file (expected at least {expected} bytes)")
     return fields, int(nodes), frames, dtype
 
 
-def time_axis(path):
+def timeAxis(path):
     fields, _, frames, _ = header(path)
     if "inc_t" in fields:
         step = float(fields["inc_t"])
