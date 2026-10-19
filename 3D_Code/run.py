@@ -22,27 +22,204 @@ import re
 import sys
 import time
 from pathlib import Path
-
 import numpy as np
-
 from carputils import settings, tools
 
+# ------ So that code in Shared Pipeline can see our imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "Shared_Pipeline"))
 import igb_io
 
-# Slab mesh, hard-coded: mesher -size 3.0 3.0 0.4 (cm) -resolution 250 250 250 (um)
-SLAB_MM = (30.0, 30.0, 4.0)  # x, y, thickness (mm); centred on the origin
-DX_MM = 0.25  # mesh resolution (mm), all three axes
+# ------- Resolution and Mesh Size ---------
+# ------------------- Make sure of these for the real runs
+# Slab mesh: 3.0 3.0 0.4
+# Resolution 250 250 250 (um)
+slabSize = (30.0, 30.0, 4.0)
+resolution = 0.25
 
-# Electrode lattice written by make_electrodes.py; point order gap, x, y, sample
-EGM_GAPS_MM = (0.25, 1.0)
-EGM_XY_MM = np.arange(-11, 12)  # 23 x 23 positions, 1 mm pitch
-EGM_SAMPLES = 8  # surface points per cylindrical electrode, averaged
+# Areas of the mesh
+wallTag = 1
+bundleTag = 2
+bundleExitTag = 3
+sheathTag = 4
+scarTag = 5
+ 
+
+def allMeshFilesExist(meshBaseName):
+    for extension in [".pts", ".elem", ".lon"]:
+        if not os.path.exists(meshBaseName + extension):
+            return False
+    return True
+ 
+ 
+def readNodePositions(ptsFilePath):
+    """Read the .pts file. Returns a list of [x, y, z] in micrometres."""
+    nodePositions = []
+
+    with open(ptsFilePath) as ptsFile:
+        allLines = ptsFile.read().splitlines()
+
+    for line in allLines[1:]:  # first line is just the node count
+        if line.strip() == "":
+            continue
+        parts = line.split()
+        nodePositions.append([float(parts[0]), float(parts[1]), float(parts[2])])
+    return nodePositions
+ 
+ 
+def readElements(elemFilePath):
+    """Read the .elem file. Each element looks like ['Tt', n1, n2, n3, n4, tag]."""
+    elementList = []
+    with open(elemFilePath) as elemFile:
+        allLines = elemFile.read().splitlines()
+    for line in allLines[1:]:  # first line is just the element count
+        if line.strip() == "":
+            continue
+        elementList.append(line.split())
+    return elementList
+ 
+ 
+def chooseTagForElement(centreX, centreY, centreZ):
+    """Decide which tissue region an element belongs to, from its centre (mm)."""
+    distanceFromMidlineY = abs(centreY)
+    isWithinBundleLength = -7.5 < centreX < 7.5
+ 
+    isInSheathSideWalls = 1.25 < distanceFromMidlineY < 1.5
+    isInSheathFloor = centreZ < 0.5 and distanceFromMidlineY < 1.5
+    isSheath = (
+        isWithinBundleLength
+        and centreZ > 0.25
+        and (isInSheathSideWalls or isInSheathFloor)
+    )
+ 
+    isBundle = (
+        isWithinBundleLength
+        and distanceFromMidlineY < 1.25
+        and centreZ > 0.5
+    )
+ 
+    if isBundle and centreX > 5.5:
+        return bundleExitTag
+    if isBundle:
+        return bundleTag
+    if isSheath:
+        return sheathTag
+    return wallTag
+ 
+ 
+def buildMesh(job):
+    meshFolder = os.path.join(job.ID, "mesh")
+    preAblationMesh = os.path.join(meshFolder, "slab_bundle")
+    postAblationMesh = os.path.join(meshFolder, "slab_bundle_scar")
+ 
+    # Step 1: if both meshes were already built, reuse them
+    if allMeshFilesExist(preAblationMesh) and allMeshFilesExist(postAblationMesh):
+        return preAblationMesh, postAblationMesh
+ 
+    # Step 2: run openCARP's mesher to make a plain rectangular block
+    os.makedirs(meshFolder, exist_ok=True)
+    rawMesh = os.path.join(meshFolder, "slab_raw")
+ 
+    mesherCommand = [settings.execs.MESHER]
+    for axisNumber in range(3):
+        sizeInCm = slabSize[axisNumber] / 10.0
+        resolutionInMicrometres = resolution * 1000.0
+        mesherCommand.append("-size[" + str(axisNumber) + "]")
+        mesherCommand.append(sizeInCm)
+        mesherCommand.append("-resolution[" + str(axisNumber) + "]")
+        mesherCommand.append(resolutionInMicrometres)
+    mesherCommand.append("-mesh")
+    mesherCommand.append(rawMesh)
+    job.bash(mesherCommand)
+ 
+    # Step 3: check the mesher actually wrote its files
+    missingFiles = []
+    for extension in [".pts", ".elem", ".lon"]:
+        if not os.path.isfile(rawMesh + extension):
+            missingFiles.append(rawMesh + extension)
+    if len(missingFiles) > 0:
+        raise RuntimeError(
+            "mesher did not write " + str(missingFiles)
+            + "; check settings.execs.MESHER in your carputils settings"
+        )
+ 
+    # Step 4: check the block is centred on (0, 0, 0)
+    nodePositions = readNodePositions(rawMesh + ".pts")
+    for axisNumber in range(3):
+        allValuesOnAxis = [position[axisNumber] for position in nodePositions]
+        smallestMm = min(allValuesOnAxis) / 1000.0
+        largestMm = max(allValuesOnAxis) / 1000.0
+        expectedHalfSize = slabSize[axisNumber] / 2
+        if abs(smallestMm + expectedHalfSize) > 0.01 or abs(largestMm - expectedHalfSize) > 0.01:
+            raise ValueError(
+                "mesher block is not centred on the origin on axis "
+                + str(axisNumber) + ": " + str(smallestMm) + " to " + str(largestMm) + " mm"
+            )
+ 
+    # Step 5: read the elements and check they are all tetrahedra
+    elementList = readElements(rawMesh + ".elem")
+    for element in elementList:
+        if element[0] != "Tt" or len(element) != 6:
+            raise ValueError("Expected tagged tetrahedra from mesher")
+ 
+    # Step 6: give every element a tag based on where its centre is
+    preAblationTags = []
+    postAblationTags = []
+    for element in elementList:
+        cornerNodeNumbers = [int(element[1]), int(element[2]), int(element[3]), int(element[4])]
+ 
+        sumX = 0.0
+        sumY = 0.0
+        sumZ = 0.0
+        for nodeNumber in cornerNodeNumbers:
+            sumX += nodePositions[nodeNumber][0]
+            sumY += nodePositions[nodeNumber][1]
+            sumZ += nodePositions[nodeNumber][2]
+        centreX = sumX / 4 / 1000.0  # micrometres -> mm
+        centreY = sumY / 4 / 1000.0
+        centreZ = sumZ / 4 / 1000.0
+ 
+        tagBeforeAblation = chooseTagForElement(centreX, centreY, centreZ)
+        preAblationTags.append(tagBeforeAblation)
+ 
+        # After ablation: anything within the scar radius of the centre becomes scar
+        distanceFromSlabCentre = math.hypot(centreX, centreY)
+        if distanceFromSlabCentre < scarRMM:
+            postAblationTags.append(scarTag)
+        else:
+            postAblationTags.append(tagBeforeAblation)
+ 
+    # Step 7: write the two meshes (same nodes and fibres, different tags)
+    for meshBaseName, tagList in [(preAblationMesh, preAblationTags), (postAblationMesh, postAblationTags)]:
+        with open(meshBaseName + ".elem", "w") as elemFile:
+            elemFile.write(str(len(elementList)) + "\n")
+            for elementIndex in range(len(elementList)):
+                element = elementList[elementIndex]
+                lineWithoutOldTag = " ".join(element[0:5])
+                elemFile.write(lineWithoutOldTag + " " + str(tagList[elementIndex]) + "\n")
+        shutil.copy(rawMesh + ".pts", meshBaseName + ".pts")
+        shutil.copy(rawMesh + ".lon", meshBaseName + ".lon")
+ 
+    # Step 8: print a summary
+    tagCounts = {}
+    for tagValue in preAblationTags:
+        tagCounts[tagValue] = tagCounts.get(tagValue, 0) + 1
+    print("Mesh tags (pre): " + str(dict(sorted(tagCounts.items()))))
+    print("Scar elements: " + str(postAblationTags.count(scarTag)))
+ 
+    return preAblationMesh, postAblationMesh
+
+
+# --------- Electrode lattice --------------
+egmGaps = (0.25, 1.0)
+egmLattice = np.arange(-11, 12)  # 23 x 23 positions, 1 mm pitch
+egmSamples = 8  # surface points per cylindrical electrode, averaged
+egmSurfaceMM = 2.0
+egmRadiusMM = 0.5
 
 # Shared-pipeline export (Shared_Pipeline/egm.py, ground_truth.py): HD Grid 4 x 4 placements
 # cut from the lattice at every centre where the whole grid fits, at both gaps
-GRID_OFFSETS_MM = (-6, -2, 2, 6)  # 4 mm pitch, electrode e = row*4 + col (col along x)
-SCAR_R_MM = 2.5  # lesion radius; d_mm = SCAR_R_MM - r (> 0 inside the lesion)
+gridOffsetsMM = (-6, -2, 2, 6)  # 4 mm pitch, electrode e = row*4 + col (col along x)
+scarRMM = 2.5  # lesion radius; d_mm = SCAR_R_MM - r (> 0 inside the lesion)
 
 SPACEDT_MS = 1.0  # output step - must match spacedt in common.par
 
@@ -77,46 +254,6 @@ SCENARIOS = {
 # define parameters exposed to the user on the commandline
 def parser():
     parser = tools.standard_parser()
-    group = parser.add_argument_group("experiment specific options")
-
-    group.add_argument(
-        "--scenario",
-        default="protocol",
-        choices=["protocol", "all"] + list(SCENARIOS),
-        help="protocol = four stages (pre then ablate); all also runs reinduction. ablate needs the pre "
-        "run's s3 checkpoint in the same output folder",
-    )
-    group.add_argument(
-        "--t-lift",
-        type=float,
-        default=1950.0,
-        help="Time the exit block is lifted (ms) = s2 tend and checkpoint. "
-        "Set from a pilot simulation measuring APD90 and arrival at the exit",
-    )
-    group.add_argument(
-        "--tune-cv",
-        type=float,
-        default=None,
-        help="Disabled until the tuner supports the same cAF remodelling as common.par",
-    )
-    group.add_argument(
-        "--resume",
-        action="store_true",
-        help="Reuse completed stages (meta.json marked complete); move incomplete or stale "
-        "stage folders aside and rerun them. Without it, existing output is an error",
-    )
-    group.add_argument(
-        "--gi",
-        type=float,
-        default=None,
-        help="Validated longitudinal wall intracellular conductivity (S/m); also give --ge",
-    )
-    group.add_argument(
-        "--ge",
-        type=float,
-        default=None,
-        help="Validated longitudinal wall extracellular conductivity (S/m); also give --gi",
-    )
     return parser
 
 
@@ -155,79 +292,27 @@ def jobID(args):
     )
 
 
-def buildMesh(job):
-    """
-    mesher block -> mesh/slab_raw, retagged by element centroid (tags in the setup notes):
-    mesh/slab_bundle (pre, tags 1-4) and mesh/slab_bundle_scar (post, + tag 5).
-    Same .pts/.lon for both, so checkpoints restart across pre and post.
-    Returns the two mesh base names. Reused if already built.
-    """
-    mdir = os.path.join(job.ID, "mesh")
-    pre, post = os.path.join(mdir, "slab_bundle"), os.path.join(mdir, "slab_bundle_scar")
-    if all(os.path.exists(base + ext) for base in (pre, post) for ext in (".pts", ".elem", ".lon")):
-        return pre, post
-
-    os.makedirs(mdir, exist_ok=True)
-    raw = os.path.join(mdir, "slab_raw")
-    cmd = [settings.execs.MESHER]
-    for i in range(3):
-        cmd += [
-            "-size[{}]".format(i),
-            SLAB_MM[i] / 10.0,  # mm -> cm
-            "-resolution[{}]".format(i),
-            DX_MM * 1000.0,
-        ]  # mm -> um
-    job.bash(cmd + ["-mesh", raw])
-    missing = [raw + ext for ext in (".pts", ".elem", ".lon") if not os.path.isfile(raw + ext)]
-    if missing:
-        raise RuntimeError(
-            "mesher did not write {}; check settings.execs.MESHER in your carputils settings".format(
-                missing
-            )
-        )
-
-    pts = np.loadtxt(raw + ".pts", skiprows=1)
-    lo, hi = pts.min(axis=0) / 1000.0, pts.max(axis=0) / 1000.0
-    if not (
-        np.allclose(lo, -np.array(SLAB_MM) / 2, atol=0.01)
-        and np.allclose(hi, np.array(SLAB_MM) / 2, atol=0.01)
-    ):
-        raise ValueError("mesher block is not centred on the origin: {} to {} mm".format(lo, hi))
-
-    with open(raw + ".elem") as stream:
-        lines = stream.read().splitlines()[1:]
-    elems = [l.split() for l in lines if l.strip()]
-    if any(e[0] != "Tt" or len(e) != 6 for e in elems):
-        raise ValueError("Expected tagged tetrahedra from mesher")
-    idx = np.array([[int(v) for v in e[1:5]] for e in elems])  # tetrahedra (Tt)
-    c = pts[idx].mean(axis=1) / 1000.0  # centroids in mm
-    x, y, z = c[:, 0], c[:, 1], c[:, 2]
-
-    tag = np.ones(len(c), dtype=int)  # 1 = wall
-    in_x = (x > -7.5) & (x < 7.5)
-    sheath = (
-        in_x
-        & (z > 0.25)
-        & (((np.abs(y) > 1.25) & (np.abs(y) < 1.5)) | ((z < 0.5) & (np.abs(y) < 1.5)))
-    )
-    bundle = in_x & (np.abs(y) < 1.25) & (z > 0.5)
-    tag[sheath] = 4
-    tag[bundle] = 2
-    tag[bundle & (x > 5.5)] = 3  # exit segment
-    tag_post = tag.copy()
-    tag_post[np.hypot(x, y) < SCAR_R_MM] = 5  # transmural scar cylinder
-
-    for base, t in ((pre, tag), (post, tag_post)):
-        with open(base + ".elem", "w") as f:
-            f.write(f"{len(elems)}\n")
-            for e, ti in zip(elems, t):
-                f.write(" ".join(e[:5]) + f" {ti}\n")
-        for ext in (".pts", ".lon"):
-            shutil.copy(raw + ext, base + ext)
-    print("Mesh tags (pre): " + str(dict(zip(*np.unique(tag, return_counts=True)))))
-    print("Scar elements: {}".format(int(np.sum(tag_post == 5))))
-    return pre, post
-
+def write_electrodes(path="electrodes/egm_points.pts"):
+    """Return and write recovery sample coordinates in micrometres."""
+    points = []
+    for gap in egmGaps:
+        centre_z = egmSurfaceMM + gap + egmRadiusMM
+        for x in egmLattice:
+            for y in egmLattice:
+                for dx in (-egmRadiusMM / 2, egmRadiusMM / 2):
+                    for angle in np.deg2rad([0, 90, 180, 270]):
+                        points.append(
+                            [
+                                x + dx,
+                                y + egmRadiusMM * np.cos(angle),
+                                centre_z + egmRadiusMM * np.sin(angle),
+                            ]
+                        )
+    points_um = np.asarray(points) * 1000
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savetxt(path, points_um, fmt="%.1f", header=str(len(points_um)), comments="")
+    return points_um
 
 def writeRecoveryPoints(job):
     """
@@ -305,43 +390,43 @@ def buildEGMs(simdir, t0_ms, egm_points, t_ms=None):
             raise ValueError(f"IGB starts at {t_ms[0]} ms, expected restart at {t0_ms} ms")
     elif np.shape(t_ms) != header_t.shape:
         raise ValueError("Supplied time axis does not match the recovery frames")
-    n = len(EGM_XY_MM)
-    expected_points = len(EGM_GAPS_MM) * n * n * EGM_SAMPLES
+    n = len(egmLattice)
+    expected_points = len(egmGaps) * n * n * egmSamples
     if phi.shape[0] != expected_points or not np.isfinite(phi).all():
         raise ValueError(
             f"Invalid recovery data: expected {expected_points} finite traces, got {phi.shape}"
         )
-    lattice = phi.reshape(len(EGM_GAPS_MM), n, n, EGM_SAMPLES, -1).mean(axis=3)
+    lattice = phi.reshape(len(egmGaps), n, n, egmSamples, -1).mean(axis=3)
     samples = (np.loadtxt(egm_points + ".pts", skiprows=1) / 1000.0).reshape(
-        len(EGM_GAPS_MM), n, n, EGM_SAMPLES, 3
-    )  # mm
+        len(egmGaps), n, n, egmSamples, 3
+    )
 
-    off = np.array(GRID_OFFSETS_MM)
-    centres = EGM_XY_MM[
-        (EGM_XY_MM + off.min() >= EGM_XY_MM[0]) & (EGM_XY_MM + off.max() <= EGM_XY_MM[-1])
+    off = np.array(gridOffsetsMM)
+    centres = egmLattice[
+        (egmLattice + off.min() >= egmLattice[0]) & (egmLattice + off.max() <= egmLattice[-1])
     ]
-    sel = [(g, cx, cy) for g in range(len(EGM_GAPS_MM)) for cx in centres for cy in centres]
-    ix = lambda v: np.searchsorted(EGM_XY_MM, v)  # noqa: E731
+    sel = [(g, cx, cy) for g in range(len(egmGaps)) for cx in centres for cy in centres]
+    ix = lambda v: np.searchsorted(egmLattice, v)  # noqa: E731
     grid = [
         (ix(cx + off[c]), ix(cy + off[r])) for _, cx, cy in sel for r in range(4) for c in range(4)
     ]
     g16 = np.repeat([g for g, _, _ in sel], 16)
     i, j = np.array(grid).T
     uni = lattice[g16, i, j].reshape(len(sel), 16, -1)
-    smp = samples[g16, i, j].reshape(len(sel), 16, EGM_SAMPLES, 3)
+    smp = samples[g16, i, j].reshape(len(sel), 16, egmSamples, 3)
     xyz = smp.mean(axis=2)
     np.savez_compressed(
         os.path.join(simdir, "egm.npz"),
         lattice_uni=lattice,
-        gap_mm=np.array(EGM_GAPS_MM),
-        x_mm=EGM_XY_MM,
-        y_mm=EGM_XY_MM,
+        gap_mm=np.array(egmGaps),
+        x_mm=egmLattice,
+        y_mm=egmLattice,
         uni=uni,
         uni_xy=xyz,
         uni_sample_xyz=smp,
-        d_mm=SCAR_R_MM - np.hypot(xyz[..., 0], xyz[..., 1]),
+        d_mm=scarRMM - np.hypot(xyz[..., 0], xyz[..., 1]),
         centre_xy_mm=np.array([(cx, cy) for _, cx, cy in sel], float),
-        p_gap_mm=np.array([EGM_GAPS_MM[g] for g, _, _ in sel]),
+        p_gap_mm=np.array([egmGaps[g] for g, _, _ in sel]),
         t_ms=t_ms,
     )
     print("Electrograms saved: " + os.path.join(simdir, "egm.npz"))
