@@ -1,24 +1,31 @@
-"""Approximate tissue contributions for the regular, x-fibre 3D slab.
+"""Tetrahedron-based contribution reconstruction for the x-fibre slab.
 
-The calculation is deliberately separate from openCARP's recovered potentials:
-1. estimate grad(Vm) on the regular node grid;
-2. multiply by intracellular conductivity and nodal integration volume;
-3. project onto the recording's finite-electrode lead field;
-4. expand a full-thickness cylinder until the requested energy criterion holds.
+Each tetrahedron retains its own conductivity, volume and linear Vm gradient.
+We never average conductivity across the viable-lesion interface. The finite
+lead field is evaluated at each tetrahedron's centroid, a quadrature approximation
+checked against openCARP recovery before reporting FOV. The common prefactor is
+omitted and one signed scale is estimated from intact unipoles.
 
-The common physical prefactor is omitted. boundary_analysis compares waveform,
-polarity and a common fitted scale against openCARP recovery before accepting FOV.
-Arrays called sourceDensity have shape (xyz component, node, time).
+The primary radius is the persistent 80% waveform-reconstruction radius of a
+full-thickness cylinder. Version 1's node-energy radius is removed: it is not
+interchangeable with an element-energy definition.
 """
-
+from dataclasses import dataclass
 from pathlib import Path
-
 import numpy as np
-import pandas as pd
 from scipy import sparse
-
 import egm
 import igb_io
+
+
+@dataclass
+class ElementGeometry:
+    nodePositions: np.ndarray       # node, xyz; mm
+    elementNodes: np.ndarray        # element, four node IDs
+    centres: np.ndarray             # element, xyz; mm
+    gradients: np.ndarray           # element, xyz, four shape functions; 1/mm
+    volumes: np.ndarray             # element; mm^3
+    conductivity: np.ndarray        # element, xyz; S/m, fibres along x
 
 
 def readParameters(parameterPath):
@@ -31,179 +38,107 @@ def readParameters(parameterPath):
     return parameters
 
 
-def nodeConductivities(simulationFolder, meshBase, nodeCount):
-    """Average the adjacent tetrahedra's intracellular conductivities at each node."""
-    parameters = readParameters(Path(simulationFolder) / "parameters.par")
+def readElementGeometry(runFolder, condition):
+    """Use local mesh paths so copied results can be reanalysed on another host."""
+    runFolder = Path(runFolder)
+    meshBase = runFolder / "mesh" / condition
+    with open(str(meshBase) + ".pts") as stream:
+        nodeCount = int(stream.readline())
+        positions = np.loadtxt(stream, ndmin=2) / 1000
+    with open(str(meshBase) + ".elem") as stream:
+        elementCount = int(stream.readline())
+        rows = np.loadtxt(stream, dtype=str, ndmin=2)
+    if positions.shape != (nodeCount, 3) or rows.shape != (elementCount, 6):
+        raise ValueError("Mesh headers do not match their data")
+    if not np.all(rows[:, 0] == "Tt"):
+        raise ValueError("Contribution reconstruction requires tetrahedra")
+    elements = rows[:, 1:5].astype(int)
+    tags = rows[:, 5].astype(int)
+    if elements.min() < 0 or elements.max() >= nodeCount:
+        raise ValueError("Invalid mesh node index")
+    with open(str(meshBase) + ".lon") as stream:
+        stream.readline()
+        fibres = np.loadtxt(stream, ndmin=2)
+    if len(fibres) != elementCount or not np.allclose(np.abs(fibres[:, :3]), [1, 0, 0]):
+        raise ValueError("This pilot implementation requires x-aligned fibres")
+    parameters = readParameters(runFolder / condition / "parameters.par")
     conductivityByTag = {}
-    for regionIndex in range(int(parameters["num_gregions"])):
-        prefix = f"gregion[{regionIndex}]"
-        # Require explicit values: do not silently invent a conductivity default.
-        conductivity = [float(parameters[f"{prefix}.g_i{axis}"]) for axis in "ltn"]
-        for tagIndex in range(int(parameters[f"{prefix}.num_IDs"])):
-            tissueTag = int(parameters[f"{prefix}.ID[{tagIndex}]"])
-            conductivityByTag[tissueTag] = conductivity
-    elements = pd.read_csv(str(meshBase) + ".elem", sep=r"\s+", skiprows=1, header=None)
-    elementNodes = elements.iloc[:, 1:5].to_numpy(int)
-    tissueTags = elements.iloc[:, 5].to_numpy(int)
-    fibres = np.loadtxt(str(meshBase) + ".lon", skiprows=1, ndmin=2)
-    if not np.allclose(np.abs(fibres[:, :3]), [1, 0, 0], atol=1e-3):
-        raise ValueError("Contribution calculation requires fibres along x")
-    missingTags = set(tissueTags) - conductivityByTag.keys()
-    if missingTags:
-        raise ValueError(f"Missing conductivity settings for tissue tags {missingTags}")
-    elementConductivities = np.array([conductivityByTag[tag] for tag in tissueTags])
-    flatNodeIds = elementNodes.ravel()
-    adjacentCount = np.bincount(flatNodeIds, minlength=nodeCount)
-    if np.any(adjacentCount == 0):
-        raise ValueError("Mesh contains a node with no adjacent tetrahedron")
-    conductivity = np.empty((nodeCount, 3), dtype=np.float32)
-    for axis in range(3):
-        total = np.bincount(
-            flatNodeIds, weights=np.repeat(elementConductivities[:, axis], 4), minlength=nodeCount
-        )
-        conductivity[:, axis] = total / adjacentCount
-    return conductivity
+    for region in range(int(parameters["num_gregions"])):
+        prefix = f"gregion[{region}]"
+        values = [float(parameters[f"{prefix}.g_i{axis}"]) for axis in "ltn"]
+        for index in range(int(parameters[f"{prefix}.num_IDs"])):
+            conductivityByTag[int(parameters[f"{prefix}.ID[{index}]"])] = values
+    if set(tags) - conductivityByTag.keys():
+        raise ValueError("Missing intracellular conductivity for an element tag")
+    conductivity = np.asarray([conductivityByTag[tag] for tag in tags])
+    vertices = positions[elements]
+    # V = a + bx + cy + dz in each tetrahedron. Rows are its four vertices.
+    matrices = np.concatenate([np.ones((elementCount, 4, 1)), vertices], axis=2)
+    volumes = np.abs(np.linalg.det(matrices)) / 6
+    if np.any(volumes <= 0) or not np.isfinite(volumes).all():
+        raise ValueError("Invalid tetrahedron volume")
+    gradients = np.linalg.inv(matrices)[:, 1:, :]
+    return ElementGeometry(positions, elements, vertices.mean(axis=1), gradients,
+                           volumes, conductivity)
 
 
-def sourceDensity(simulationFolder, frames=slice(None)):
-    """Return volume-weighted sources, ordered node positions, and grid spacing in mm."""
-    simulationFolder = Path(simulationFolder)
-    meshBase = (simulationFolder / "meshname.txt").read_text().strip()
-    positions = np.loadtxt(meshBase + ".pts", skiprows=1) / 1000
-    conductivity = nodeConductivities(simulationFolder, meshBase, len(positions))
-    voltage = igb_io.read(simulationFolder / "vm.igb", frames)
-    if voltage.shape[1] != len(positions):
-        raise ValueError("Vm node count does not match mesh points")
-
-    # Reorder the mesh into a regular array: time, z, y, x (x varies fastest).
-    spacingMm = min(np.diff(np.unique(positions[:, axis])).min() for axis in range(3))
-    gridIndices = []
-    for axis in range(3):
-        indices = np.rint((positions[:, axis] - positions[:, axis].min()) / spacingMm).astype(int)
-        if not np.allclose(positions[:, axis], positions[:, axis].min() + spacingMm * indices):
-            raise ValueError("Contribution calculation needs equal Cartesian grid spacing")
-        gridIndices.append(indices)
-    gridShape = [indices.max() + 1 for indices in gridIndices]
-    flatIndices = np.ravel_multi_index(gridIndices[::-1], gridShape[::-1])
-    if np.prod(gridShape) != len(positions) or len(np.unique(flatIndices)) != len(positions):
-        raise ValueError("Contribution calculation needs a complete regular 3D node grid")
-    nodeOrder = np.argsort(flatIndices)
-    positions = positions[nodeOrder]
-    conductivity = conductivity[nodeOrder]
-    frameCount = len(voltage)
-    voltageGrid = voltage[:, nodeOrder].reshape([frameCount] + gridShape[::-1])
-    del voltage
-    # np.gradient returns z, y, x derivatives here; reverse to x, y, z.
-    gradients = np.gradient(voltageGrid, spacingMm, axis=(1, 2, 3))[::-1]
-    del voltageGrid
-
-    # Trapezoidal volume weights: half weight on each outer face.
-    nodeVolumes = np.full(gridShape[::-1], spacingMm**3, dtype=np.float32)
-    for axis in range(3):
-        face = [slice(None)] * 3
-        for endIndex in [0, -1]:
-            face[axis] = endIndex
-            nodeVolumes[tuple(face)] *= 0.5
-    nodeVolumes = nodeVolumes.ravel()
-    sources = np.empty((3, len(positions), frameCount), dtype=np.float32)
-    for axis in range(3):
-        gradient = gradients[axis].reshape(frameCount, -1)
-        sources[axis] = (gradient * (conductivity[:, axis] * nodeVolumes)).T
-    return sources, positions, spacingMm
+def finiteRecordingField(samplePositions, weights, elementCentres):
+    """Average cylinder-surface samples and apply the actual recording weights."""
+    field = np.zeros_like(elementCentres)
+    for electrode in np.flatnonzero(np.abs(weights) > 1e-12):
+        samples = samplePositions[electrode]
+        for sample in samples:
+            displacement = sample - elementCentres
+            distance = np.linalg.norm(displacement, axis=1)
+            if np.any(distance == 0):
+                raise ValueError("A recovery point coincides with an element centroid")
+            field += weights[electrode] * displacement / distance[:, None]**3 / len(samples)
+    return field
 
 
-def filterSources(sources, bandHz, sampleRateHz, filterOrder):
-    """Apply the same causal filter as the electrodes, in small memory batches."""
-    filterSections = egm.makeFilter(bandHz, sampleRateHz, filterOrder)
-    if filterSections is None:
-        return sources
-    filteredSources = np.empty_like(sources)
-    batchSize = 4000
-    for axis in range(3):
-        for firstNode in range(0, sources.shape[1], batchSize):
-            nodeSlice = slice(firstNode, firstNode + batchSize)
-            filteredSources[axis, nodeSlice] = egm.applyFilter(
-                filterSections, sources[axis, nodeSlice]
-            )
-    return filteredSources
+def ringOperator(geometry, samplePositions, weights, anchor, ringStepMm):
+    """Map nodal Vm to a trace for each cylindrical tissue ring using sparse weights.
 
-
-def sourceEnergyTerms(sources):
-    """Cache sum over time of source[a] * source[b], for each node.
-
-    Cross terms matter because a node's x/y/z contributions add before squaring.
-    einsum performs this sum without a large temporary array.
+    This sums conductivity * grad(Vm) * lead field * volume over tetrahedra.
+    Constructing the map once avoids a huge element-by-time source array.
+    Ring membership uses element centroids and includes the full thickness.
     """
-    energyTerms = np.empty((3, 3, sources.shape[1]))
-    for firstAxis in range(3):
-        for secondAxis in range(firstAxis, 3):
-            crossEnergy = np.einsum(
-                "nt,nt->n", sources[firstAxis], sources[secondAxis], dtype=np.float64
-            )
-            energyTerms[firstAxis, secondAxis] = crossEnergy
-            energyTerms[secondAxis, firstAxis] = crossEnergy
-    return energyTerms
-
-
-def pointLeadField(electrodePosition, nodePositions):
-    """Gradient of 1/r with respect to tissue position; shape (3, nodes)."""
-    displacement = electrodePosition - nodePositions
-    squaredDistance = np.sum(displacement**2, axis=1)
-    if np.any(squaredDistance == 0):
-        raise ValueError("An electrode sample coincides with a tissue node")
-    return (displacement / squaredDistance[:, None] ** 1.5).T.astype(np.float32)
-
-
-def finiteElectrodeFields(samplePositions, nodePositions):
-    """Average the point lead fields over each electrode's cylinder samples."""
-    fields = []
-    for electrodeSamples in samplePositions:
-        sampleFields = [pointLeadField(position, nodePositions) for position in electrodeSamples]
-        fields.append(np.mean(sampleFields, axis=0))
-    return fields
-
-
-def contributionRadii(
-    leadField, sources, energyTerms, anchor, nodePositions, spacingMm, fraction=0.8
-):
-    """Return reconstruction radius, node-energy radius, full trace and both curves.
-
-    Cylinders include the full tissue thickness. The reconstruction criterion is
-    persistent: residual energy must stay <= 1-fraction at every larger radius.
-    Radius bins retain the original convention [R-spacing, R).
-    """
-    lateralDistance = np.hypot(nodePositions[:, 0] - anchor[0], nodePositions[:, 1] - anchor[1])
-    ringIndex = (lateralDistance / spacingMm).astype(int)
-    ringCount = ringIndex.max() + 1
-    fullTrace = np.einsum("cn,cnt->t", leadField, sources)
-    totalEnergy = float(np.sum(fullTrace**2))
-    if totalEnergy == 0:
-        return np.nan, np.nan, fullTrace, None
-
-    # A sparse matrix adds the nodes in each ring without storing every node trace.
-    nodeIds = np.arange(len(nodePositions))
-    ringSignals = np.zeros((ringCount, sources.shape[2]), dtype=np.float32)
-    for axis in range(3):
-        ringWeights = sparse.csr_matrix(
-            (leadField[axis], (ringIndex, nodeIds)), shape=(ringCount, len(nodePositions))
-        )
-        ringSignals += ringWeights @ sources[axis]
-    partialTraces = np.cumsum(ringSignals, axis=0)
-    residualFraction = np.sum((fullTrace - partialTraces) ** 2, axis=1) / totalEnergy
-    failedRings = np.flatnonzero(residualFraction > 1 - fraction)
-    reconstructionRadius = (failedRings[-1] + 2) * spacingMm if len(failedRings) else spacingMm
-
-    field64 = leadField.astype(np.float64)
-    nodeEnergy = np.maximum(0, np.einsum("cn,dn,cdn->n", field64, field64, energyTerms))
-    cumulativeEnergy = np.cumsum(np.bincount(ringIndex, weights=nodeEnergy, minlength=ringCount))
-    nodeRadius = (
-        np.searchsorted(cumulativeEnergy, fraction * cumulativeEnergy[-1]) + 1
-    ) * spacingMm
-    nodeFraction = (
-        cumulativeEnergy / cumulativeEnergy[-1]
-        if cumulativeEnergy[-1] > 0
-        else np.full(ringCount, np.nan)
+    field = finiteRecordingField(samplePositions, weights, geometry.centres)
+    coefficients = np.einsum(
+        "ec,ec,ecj,e->ej", field, geometry.conductivity,
+        geometry.gradients, geometry.volumes,
     )
-    radii = (np.arange(ringCount) + 1) * spacingMm
-    curves = (radii, 1 - residualFraction, nodeFraction)
-    return float(reconstructionRadius), float(nodeRadius), fullTrace, curves
+    distance = np.linalg.norm(geometry.centres[:, :2] - anchor[:2], axis=1)
+    rings = np.floor(distance / ringStepMm).astype(int)
+    operator = sparse.coo_matrix(
+        (coefficients.ravel(), (np.repeat(rings, 4), geometry.elementNodes.ravel())),
+        shape=(int(rings.max()) + 1, len(geometry.nodePositions)),
+    ).tocsr()
+    radii = (np.arange(operator.shape[0]) + 1) * ringStepMm
+    return operator, radii
+
+
+def readFilteredVoltage(simulationFolder, frames, bandHz, sampleRateHz, filterOrder):
+    """Filter nodal Vm in small batches; linear filtering commutes with recovery."""
+    voltage = igb_io.read(Path(simulationFolder) / "vm.igb", frames).T
+    sections = egm.makeFilter(bandHz, sampleRateHz, filterOrder)
+    if sections is not None:
+        for first in range(0, len(voltage), 1000):
+            voltage[first:first + 1000] = egm.applyFilter(sections, voltage[first:first + 1000])
+    return voltage
+
+
+def reconstructRecording(geometry, voltage, samplePositions, weights, anchor, ringStepMm):
+    operator, radii = ringOperator(geometry, samplePositions, weights, anchor, ringStepMm)
+    ringTraces = operator @ voltage
+    fullTrace = ringTraces.sum(axis=0)
+    energy = float(fullTrace @ fullTrace)
+    if not np.isfinite(energy) or energy <= 1e-24:
+        return fullTrace, np.nan, radii, np.full(len(radii), np.nan)
+    cumulative = np.cumsum(ringTraces, axis=0)
+    residualFraction = np.sum((fullTrace - cumulative)**2, axis=1) / energy
+    # The criterion must remain satisfied at every larger radius, not just once.
+    failed = np.flatnonzero(residualFraction > 0.2)
+    firstPersistent = int(failed[-1] + 1) if len(failed) else 0
+    radius = float(radii[firstPersistent]) if firstPersistent < len(radii) else np.nan
+    return fullTrace, radius, radii, 1 - residualFraction

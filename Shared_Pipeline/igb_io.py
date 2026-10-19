@@ -40,4 +40,6 @@ def read(path, frames=slice(None)):
     fields, nodes, count, dtype = header(path)
     values = np.memmap(path, dtype=dtype, mode="r", offset=1024, shape=(count, nodes))
     selected = np.array(values[frames], dtype=np.float32)
-    return selected * float(fields.get("facteur", 1)) + float(fields.get("zero", 0))
+    selected *= float(fields.get("facteur", 1))
+    selected += float(fields.get("zero", 0))
+    return selected

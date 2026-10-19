@@ -59,12 +59,15 @@ def prepareExperiment(runFolder, config):
         for path in (projectFolder / folder).glob("*.py"):
             shutil.copy2(path, destination / path.name)
     shutil.copy2(projectFolder / "3D_Code/3d_pilot.par", sourceFolder / "3d_pilot.par")
+    for path in (projectFolder / "3D_Code").glob("*.R"):
+        shutil.copy2(path, sourceFolder / "3D_Code" / path.name)
     return runFolder
 
 
 def simulateExperiment(runFolder, config, processCount=1):
     """Run both conditions and export the averaged finite-electrode signals."""
     checkSimulationSettings(runFolder, config)
+    conditionCells(runFolder, config)
     simulator = findExecutable("openCARP", "OPENCARP_BIN")
     commandPrefix = [simulator]
     if processCount > 1:
@@ -108,7 +111,7 @@ def simulateExperiment(runFolder, config, processCount=1):
                 condition=condition,
                 run=condition,
                 state="pre" if condition == "intact" else "post",
-                model="boundaryPilot",
+                model="boundaryPilotV2",
                 complete=True,
                 processCount=processCount,
             ),
@@ -149,7 +152,7 @@ def buildMesh(runFolder, config):
             for nodeIds, tag in zip(elementNodes, tags):
                 meshFile.write("Tt " + " ".join(map(str, nodeIds)) + f" {tag}\n")
         shutil.copyfile(str(rawMesh) + ".pts", str(meshBase) + ".pts")
-        # Explicit fibre direction; the contribution approximation assumes x-aligned fibres.
+        # Explicit fibre direction; the element conductivity tensor is diagonal in xyz.
         with open(str(meshBase) + ".lon", "w") as fibreFile:
             fibreFile.write("1\n")
             np.savetxt(fibreFile, np.tile([1.0, 0.0, 0.0], (len(elementNodes), 1)), fmt="%.1f")
@@ -214,6 +217,8 @@ def writeParameters(runFolder, condition, meshBase, stimulusBase, recoveryBase, 
             "stim[0].ptcl.npls": pace["beatCount"],
         }
     )
+    if config.get("conditioning", {}).get("enabled", False):
+        parameters["imp_region[0].im_sv_init"] = runFolder / "conditioning" / "Courtemanche.sv"
     parameterFile = runFolder / f"{condition}.par"
     conditionParameters = baseParameters
     if condition == "intact":
@@ -245,10 +250,15 @@ def buildEGMs(simulationFolder, runFolder, config):
     if len(voltageTime) < 2 or not np.allclose(np.diff(voltageTime), config["sampleStepMs"]):
         raise ValueError("Recorded sample interval does not match the requested configuration")
     layout = dict(np.load(Path(runFolder) / "electrodes/layout.npz"))
-    recovery = igb_io.read(simulationFolder / "phie_recovery.igb").T
-    if recovery.shape[0] != len(layout["recoveryPoints"]) or not np.isfinite(recovery).all():
-        raise ValueError("Invalid extracellular recovery data")
-    electrodeSignals = recovery[layout["recoveryIndex"]].mean(axis=2)
+    electrodeSignals = np.empty((*layout["recoveryIndex"].shape[:2], len(recoveryTime)), dtype=np.float32)
+    # The denser sweep reuses many recovery points. Gather a short time block
+    # instead of allocating every surface sample for the entire simulation.
+    for firstFrame in range(0, len(recoveryTime), 500):
+        frames = slice(firstFrame, min(firstFrame + 500, len(recoveryTime)))
+        recovery = igb_io.read(simulationFolder / "phie_recovery.igb", frames).T
+        if recovery.shape[0] != len(layout["recoveryPoints"]) or not np.isfinite(recovery).all():
+            raise ValueError("Invalid extracellular recovery data")
+        electrodeSignals[..., frames] = recovery[layout["recoveryIndex"]].mean(axis=2)
     np.savez_compressed(
         simulationFolder / "egm.npz",
         uni=electrodeSignals,
@@ -289,6 +299,8 @@ def startAnalysis(runFolder, config):
     for folder in [projectFolder / "3D_Code", projectFolder / "Shared_Pipeline"]:
         for path in folder.glob("*.py"):
             shutil.copy2(path, snapshotFolder / path.name)
+    for path in (projectFolder / "3D_Code").glob("*.R"):
+        shutil.copy2(path, snapshotFolder / path.name)
 
 
 def checkCompletedSimulations(runFolder):
@@ -322,7 +334,7 @@ def checkSimulationSettings(runFolder, config):
                 "Regenerate in a new run folder; changing an old mesh invalidates its simulation."
             )
     for name, value in config.items():
-        if name not in ["analysis", "acceptance"] and savedConfig.get(name) != value:
+        if name not in ["analysis", "acceptance", "clinical"] and savedConfig.get(name) != value:
             raise ValueError(f"Simulation setting {name} changed. Use a new run folder.")
     savedTemplate = runFolder / "sourceSnapshot/3d_pilot.par"
     currentTemplate = projectFolder / "3D_Code/3d_pilot.par"
@@ -486,7 +498,65 @@ def validateConfig(config):
         raise ValueError("Electrode gaps must be unique")
     if analysis["targetBipolarMv"] <= 0:
         raise ValueError("Calibration target must be positive")
+    conditioning = config.get("conditioning", {})
+    if conditioning.get("enabled", False):
+        count = conditioning["beatCount"]
+        if not isinstance(count, int) or isinstance(count, bool) or count < 3:
+            raise ValueError("Conditioning beatCount must be an integer >= 3")
+    if "contributionRingStepMm" in analysis and analysis["contributionRingStepMm"] <= 0:
+        raise ValueError("Contribution ring spacing must be positive")
+    if "recordingLabels" in analysis:
+        if set(analysis["recordingLabels"]) != {"uni", "bi", "omni"}:
+            raise ValueError("Declare primary labels for uni, bi and omni")
+        import egm
+        available = {kind: set() for kind in ["uni", "bi", "omni"]}
+        for record in egm.makeRecordings(np.zeros((1, 16, 3)), np.zeros((1, 16, 3)), 90):
+            available[record.kind].add(record.label)
+        for kind, labels in analysis["recordingLabels"].items():
+            if not labels or len(labels) != len(set(labels)) or not set(labels) <= available[kind]:
+                raise ValueError(f"Invalid or repeated {kind} recording labels")
     return config
+
+
+def conditionCells(runFolder, config):
+    """Pace one Courtemanche cell, then share its pre-stimulus state between slabs.
+
+    This is the bench limit-cycle workflow from the openCARP tutorial. A fixed,
+    declared conditioning duration avoids selecting whichever tissue beat passes.
+    It does not replace the final three-beat tissue checks.
+    """
+    settings = config.get("conditioning", {})
+    if not settings.get("enabled", False):
+        return
+    folder = Path(runFolder) / "conditioning"
+    folder.mkdir(exist_ok=True)
+    statePath = folder / "Courtemanche.sv"
+    statusPath = folder / "complete.json"
+    if statusPath.exists():
+        if not statePath.is_file() or statePath.stat().st_size == 0:
+            raise FileNotFoundError("Conditioning state is missing; do not reuse this run")
+        return
+    pace = config["pacing"]
+    duration = settings["beatCount"] * pace["cycleLengthMs"]
+    command = [
+        findExecutable("bench", "BENCH_BIN"), "--imp", "Courtemanche",
+        "--dt", config["timeStepUs"] / 1000,
+        "--duration", duration, "--numstim", settings["beatCount"],
+        "--bcl", pace["cycleLengthMs"], "--stim-start", 0,
+        "--stim-curr", pace["strength"], "--stim-dur", pace["durationMs"],
+        "--stim-assign", "on", "--no-trace",
+        "--save-ini-file", statePath, "--save-ini-time", duration,
+    ]
+    runCommand(command, folder / "bench.log")
+    if not statePath.is_file() or statePath.stat().st_size == 0:
+        raise RuntimeError("bench did not write the requested initial state")
+    if "Courtemanche" not in statePath.read_text():
+        raise ValueError("Initial state does not identify the Courtemanche model")
+    saveJson(statusPath, dict(
+        model="Courtemanche", beatCount=settings["beatCount"],
+        cycleLengthMs=pace["cycleLengthMs"], savedAtMs=duration,
+        interpretation="Preconditioned initial state; tissue stability is checked separately",
+    ))
 
 
 def checkSimulationLog(logPath):

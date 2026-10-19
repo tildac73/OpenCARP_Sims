@@ -12,6 +12,7 @@ from boundary_setup import (
     findExecutable,
     startAnalysis,
     checkCompletedSimulations,
+    conditionCells,
 )
 
 
@@ -33,12 +34,15 @@ def main():
     if arguments.processOnly:
         checkSimulationSettings(runFolder, config)
     else:
-        if not arguments.prepareOnly:
+        if not arguments.prepareOnly and not arguments.conditionOnly:
             findExecutable("openCARP", "OPENCARP_BIN")
             if arguments.np > 1:
                 findExecutable("mpiexec", "MPIEXEC_BIN")
         prepareExperiment(runFolder, config)
         if arguments.prepareOnly:
+            return 0
+        if arguments.conditionOnly:
+            conditionCells(runFolder, config)
             return 0
         simulateExperiment(runFolder, config, arguments.np)
         if arguments.simulateOnly:
@@ -57,6 +61,7 @@ def main():
             "Physiological checks failed. Inspect physiologyChecks.csv and figures/01_activation.png.\n"
             "No accepted EFOV estimates were produced. Use --process-only --diagnostic for diagnostic signal exports."
         )
+        return 2
     # 4. Measure signals, estimate contributions, and draw the results.
     _, pilotPassed = analyseExperiment(runFolder, config, physiologyPassed)
     makeFigures(runFolder, config)
@@ -70,7 +75,7 @@ def readArguments():
     parser.add_argument(
         "--config", type=Path, default=Path(__file__).parent / "configs/boundary_pilot.json"
     )
-    parser.add_argument("--output", type=Path, default=Path(__file__).parent / "runs/boundaryPilot")
+    parser.add_argument("--output", type=Path, default=Path(__file__).parent / "runs/boundaryPilotV2")
     parser.add_argument("--np", type=int, default=1, help="MPI processes for openCARP")
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument(
@@ -84,6 +89,10 @@ def readArguments():
         dest="prepareOnly",
         action="store_true",
         help="Write mesh, electrodes and parameter files",
+    )
+    actions.add_argument(
+        "--condition-only", dest="conditionOnly", action="store_true",
+        help="Prepare the experiment and pace the single cell, then stop",
     )
     actions.add_argument(
         "--simulate-only",

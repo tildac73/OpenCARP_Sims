@@ -25,6 +25,7 @@ def makeFigures(runFolder, config):
     outputFolder = runFolder / "figures"
     outputFolder.mkdir(exist_ok=True)
     plotActivation(runFolder, config, outputFolder)
+    plotBeatStability(runFolder, outputFolder)
     if not (runFolder / "results/points.csv").exists():
         return
     points = pd.read_csv(runFolder / "results/points.csv")
@@ -69,27 +70,23 @@ def plotActivation(runFolder, config, outputFolder):
 
 
 def plotVoltageDistance(clean, config, outputFolder):
+    """One column per declared geometry; never stitch mirrored clique families."""
+    recordings = clean[["kind", "label"]].drop_duplicates()
     gaps = config["electrodes"]["gapsMm"]
-    figure, axes = plt.subplots(
-        len(gaps), 3, figsize=(13, 4 * len(gaps)), squeeze=False, constrained_layout=True
-    )
+    figure, axes = plt.subplots(len(gaps), len(recordings),
+                               figsize=(4 * len(recordings), 4 * len(gaps)),
+                               squeeze=False, constrained_layout=True)
     for gapIndex, gap in enumerate(gaps):
-        for kindIndex, kind in enumerate(["uni", "bi", "omni"]):
-            axis = axes[gapIndex, kindIndex]
+        for recordIndex, record in enumerate(recordings.itertuples()):
+            axis = axes[gapIndex, recordIndex]
             for condition, colour in [("intact", "tab:blue"), ("lesion", "tab:orange")]:
-                subset = clean[
-                    (clean.kind == kind)
-                    & np.isclose(clean.gapMm, gap)
-                    & (clean.condition == condition)
-                ]
+                subset = clean[(clean.kind == record.kind) & (clean.label == record.label)
+                               & np.isclose(clean.gapMm, gap) & (clean.condition == condition)]
                 profile = subset.groupby("distanceViableMm").ppMv.median().sort_index()
                 axis.plot(profile.index, profile.values, ".-", color=colour, label=condition)
             axis.axvline(0, color="black", linestyle="--", linewidth=0.7)
-            axis.set(
-                title=f"{kind}; gap {gap:g} mm",
-                xlabel="Distance into viable side (mm)",
-                ylabel="Clean peak-to-peak (mV)",
-            )
+            axis.set(title=f"{record.kind} {record.label}; gap {gap:g} mm",
+                     xlabel="Distance into viable side (mm)", ylabel="Clean peak-to-peak (mV)")
             axis.legend()
     saveFigure(figure, outputFolder, "02_clean_voltage_distance")
 
@@ -109,11 +106,11 @@ def plotContributionRadii(clean, outputFolder):
                 color=colour,
                 label=condition,
             )
-        axis.set(
-            title=kind,
-            xlabel="Distance into viable side (mm)",
-            ylabel="Eligible reconstruction radius (mm)",
-        )
+        if not ((clean.kind == kind) & (clean.fovEligible == True)).any():
+            axis.text(0.5, 0.5, "No eligible radii\nRead contributions.csv", transform=axis.transAxes,
+                      ha="center", va="center")
+        axis.set(title=kind, xlabel="Distance into viable side (mm)",
+                 ylabel="Eligible reconstruction radius (mm)")
         axis.legend()
     figure.suptitle("Pilot contribution estimates; gaps shown together; convergence unverified")
     saveFigure(figure, outputFolder, "03_contribution_radii")
@@ -169,3 +166,28 @@ def plotReconstructionChecks(clean, outputFolder):
     for axis in axes:
         axis.legend()
     saveFigure(figure, outputFolder, "05_reconstruction_checks")
+
+
+def plotBeatStability(runFolder, outputFolder):
+    """Show the measured adaptation behind the final three-beat decision."""
+    for condition in ["intact", "lesion"]:
+        path = runFolder / "results" / f"{condition}BeatTraces.csv"
+        if not path.exists():
+            continue
+        traces = pd.read_csv(path)
+        nodeIds = traces.nodeId.unique()
+        figure, axes = plt.subplots(len(nodeIds), 2, figsize=(11, 3 * len(nodeIds)),
+                                    squeeze=False, constrained_layout=True)
+        for rowIndex, node in enumerate(nodeIds):
+            subset = traces[traces.nodeId == node]
+            first = subset.iloc[0]
+            peakTime = subset.loc[subset.voltageMv.idxmax(), "timeAfterStimulusMs"]
+            for beat, group in subset.groupby("beatNumber"):
+                for axis in axes[rowIndex]:
+                    axis.plot(group.timeAfterStimulusMs, group.voltageMv, label=f"Beat {beat}")
+            for axis in axes[rowIndex]:
+                axis.set(title=f"{condition}, node {node}, xyz=({first.xMm:g}, {first.yMm:g}, {first.zMm:g}) mm",
+                         xlabel="Time after stimulus (ms)", ylabel="Vm (mV)")
+                axis.legend()
+            axes[rowIndex, 1].set_xlim(peakTime - 4, peakTime + 8)
+        saveFigure(figure, outputFolder, f"06_{condition}_beat_stability")

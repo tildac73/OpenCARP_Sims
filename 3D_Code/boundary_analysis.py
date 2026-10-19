@@ -136,6 +136,10 @@ def processCondition(runFolder, condition, config, gain):
         recordings = egm.makeRecordings(
             unipolar, differential, config["analysis"]["omniAngleStepDeg"]
         )
+        declaredLabels = config["analysis"].get("recordingLabels")
+        if declaredLabels:
+            recordings = [record for record in recordings
+                          if record.label in declaredLabels[record.kind]]
         for recording in recordings:
             kind, label = recording.kind, recording.label
             trace, weights = recording.traces, recording.weights
@@ -260,105 +264,76 @@ def saveElectrodePositions(source, config, condition, outputFolder):
 
 
 def computeContributions(runFolder, condition, config, measurements, gain, physiologyPassed):
-    """Clean primary recordings only. Noise repeats retain their own weights, without borrowing clean FOVs."""
+    """Reconstruct clean primary recordings; eligibility remains separate from diagnostics."""
     outputFolder = Path(runFolder) / "results"
     source = dict(np.load(Path(runFolder) / condition / "egm.npz"))
     rawSlice, measureSlice = measurementSlices(source["t_ms"], config)
-    sourceDensity, nodePositions, spacing = groundTruth.sourceDensity(
-        Path(runFolder) / condition, rawSlice
-    )
     sampleRate = 1000 / np.diff(source["t_ms"])[0]
+    geometry = groundTruth.readElementGeometry(runFolder, condition)
     selectedRows = measurements[
         (measurements.noiseRepeat == 0)
         & measurements.centreYmm.isin(config["analysis"]["groundTruthCentreYmm"])
     ]
-    traceArchive = np.load(outputFolder / f"{condition}Traces.npz")
-    measuredTraces = traceArchive["cleanAtSelectedWeightsMv"]
-    rows, curveIds, radiusCurves, reconstructionCurves, nodeCurves = [], [], [], [], []
-    sourceModes = [("uni", None), ("differential", config["analysis"]["differentialBandHz"])]
-    for mode, band in sourceModes:
-        filteredSource = groundTruth.filterSources(
-            sourceDensity, band, sampleRate, config["analysis"]["filterOrder"]
+    rows, curveIds, radiusCurves, reconstructionCurves = [], [], [], []
+    fullReconstructions, recoveredTraces = [], []
+    with np.load(outputFolder / f"{condition}Traces.npz") as traceArchive:
+        measuredTraces = traceArchive["cleanAtSelectedWeightsMv"]
+    for mode in ["uni", "differential"]:
+        modeRows = selectedRows[selectedRows.kind == "uni"] if mode == "uni" else selectedRows[selectedRows.kind != "uni"]
+        if modeRows.empty:
+            continue
+        band = None if mode == "uni" else config["analysis"]["differentialBandHz"]
+        voltage = groundTruth.readFilteredVoltage(
+            Path(runFolder) / condition, rawSlice, band, sampleRate,
+            config["analysis"]["filterOrder"],
         )
-        selectedSource = filteredSource[..., measureSlice]
-        energyTerms = groundTruth.sourceEnergyTerms(selectedSource)
-        modeRows = (
-            selectedRows[selectedRows.kind == "uni"]
-            if mode == "uni"
-            else selectedRows[selectedRows.kind != "uni"]
-        )
-        for placementIndex, placementRows in modeRows.groupby("placement", sort=True):
-            print(f"Contributions: {condition}, {mode}, placement {placementIndex}", flush=True)
-            electrodeFields = groundTruth.finiteElectrodeFields(
-                source["uni_sample_xyz"][placementIndex], nodePositions
+        selectedVoltage = voltage[:, measureSlice]
+        if len(voltage) != len(geometry.nodePositions):
+            raise ValueError("Vm node count differs from contribution mesh")
+        for record in modeRows.to_dict("records"):
+            print(f"Contributions: {record['recordingId']}", flush=True)
+            weights = np.array([record[f"weightE{index}"] for index in range(16)])
+            anchor = np.array([record["anchorXmm"], record["anchorYmm"], record["anchorZmm"]])
+            fullTrace, radius, radii, curve = groundTruth.reconstructRecording(
+                geometry, selectedVoltage, source["uni_sample_xyz"][record["placement"]],
+                weights, anchor, config["analysis"].get("contributionRingStepMm", config["meshSpacingMm"]),
             )
-            for record in placementRows.to_dict("records"):
-                weights = np.array([record[f"weightE{index}"] for index in range(16)])
-                field = np.zeros_like(electrodeFields[0])
-                for electrodeIndex in np.flatnonzero(weights):
-                    field += weights[electrodeIndex] * electrodeFields[electrodeIndex]
-                anchor = np.array([record["anchorXmm"], record["anchorYmm"], record["anchorZmm"]])
-                recovered = measuredTraces[record["traceIndex"]].astype(float) / gain
-                fullTrace = np.einsum("cn,cnt->t", field, selectedSource)
-                agreement = waveformAgreement(fullTrace, recovered)
-                signalEligible = bool(
-                    physiologyPassed
-                    and record["cleanAtSelectedWeightsPpMv"]
-                    >= config["analysis"]["minimumCleanPpMv"]
-                    and np.isfinite(fullTrace).all()
-                    and np.linalg.norm(fullTrace - fullTrace.mean()) > 1e-12
-                )
-                rawRadius, nodeRadius, curve = np.nan, np.nan, None
-                if signalEligible:
-                    rawRadius, nodeRadius, fullTrace, curve = groundTruth.contributionRadii(
-                        field,
-                        selectedSource,
-                        energyTerms,
-                        anchor,
-                        nodePositions,
-                        spacing,
-                        fraction=0.8,
-                    )
-                edgeDistance = float(
-                    np.min(np.asarray(config["slabSizeMm"][:2]) / 2 - np.abs(anchor[:2]))
-                )
-                rows.append(
-                    dict(
-                        recordingId=record["recordingId"],
-                        condition=condition,
-                        kind=record["kind"],
-                        rawFov80ReconstructionMm=rawRadius,
-                        rawFov80NodeMm=nodeRadius,
-                        signalEligible=signalEligible,
-                        outerEdgeDistanceMm=edgeDistance,
-                        radiusReachesOuterEdge=bool(
-                            np.isfinite(rawRadius) and rawRadius >= edgeDistance
-                        ),
-                        **agreement,
-                    )
-                )
-                if curve is not None:
-                    radius, reconstructionFraction, nodeFraction = curve
-                    curveIds.append(record["recordingId"])
-                    radiusCurves.append(radius)
-                    reconstructionCurves.append(reconstructionFraction)
-                    nodeCurves.append(nodeFraction)
-        del selectedSource, filteredSource, energyTerms
+            recovered = measuredTraces[record["traceIndex"]].astype(float) / gain
+            agreement = waveformAgreement(fullTrace, recovered)
+            cleanSignalUsable = bool(
+                record["cleanAtSelectedWeightsPpMv"] >= config["analysis"]["minimumCleanPpMv"]
+                and np.isfinite(fullTrace).all()
+                and np.linalg.norm(fullTrace - fullTrace.mean()) > 1e-12
+            )
+            edgeDistance = float(np.min(np.asarray(config["slabSizeMm"][:2]) / 2 - np.abs(anchor[:2])))
+            rows.append(dict(
+                recordingId=record["recordingId"], condition=condition, kind=record["kind"],
+                rawFov80ReconstructionMm=radius,
+                physiologyPassed=bool(physiologyPassed), cleanSignalUsable=cleanSignalUsable,
+                signalEligible=bool(physiologyPassed and cleanSignalUsable),
+                outerEdgeDistanceMm=edgeDistance,
+                radiusReachesOuterEdge=bool(np.isfinite(radius) and radius >= edgeDistance),
+                **agreement,
+            ))
+            curveIds.append(record["recordingId"])
+            radiusCurves.append(radii)
+            reconstructionCurves.append(curve)
+            fullReconstructions.append(fullTrace)
+            recoveredTraces.append(recovered)
+        del selectedVoltage, voltage
     maximumBins = max(map(len, radiusCurves), default=0)
     padded = []
-    for curves in [radiusCurves, reconstructionCurves, nodeCurves]:
+    for curves in [radiusCurves, reconstructionCurves]:
         values = np.full((len(curves), maximumBins), np.nan)
         for index, curve in enumerate(curves):
-            values[index, : len(curve)] = curve
+            values[index, :len(curve)] = curve
         padded.append(values)
     np.savez_compressed(
         outputFolder / f"{condition}ContributionCurves.npz",
-        recordingId=np.asarray(curveIds),
-        radiusMm=padded[0],
-        reconstructionFraction=padded[1],
-        nodeEnergyFraction=padded[2],
+        recordingId=np.asarray(curveIds), radiusMm=padded[0], reconstructionFraction=padded[1],
+        timeMs=source["t_ms"][rawSlice][measureSlice],
+        reconstructedRaw=np.asarray(fullReconstructions), recoveredRaw=np.asarray(recoveredTraces),
     )
-    traceArchive.close()
     return pd.DataFrame(rows)
 
 
@@ -384,7 +359,7 @@ def qualifyContributions(contributions, config):
     referenceRows = contributions[
         (contributions.condition == "intact")
         & (contributions.kind == "uni")
-        & contributions.signalEligible
+        & contributions.cleanSignalUsable
         & (contributions.shapeError <= config["analysis"]["maximumShapeError"])
         & (contributions.signedCorrelation.abs() >= config["analysis"]["minimumAbsCorrelation"])
     ]
@@ -401,15 +376,16 @@ def qualifyContributions(contributions, config):
         & (contributions.signedCorrelation.abs() >= config["analysis"]["minimumAbsCorrelation"])
         & (contributions.shapeError <= config["analysis"]["maximumShapeError"])
         & (contributions.globalScaleError <= config["analysis"]["maximumGlobalScaleError"])
+        & np.isfinite(contributions.rawFov80ReconstructionMm)
     )
     contributions["fov80ReconstructionMm"] = contributions.rawFov80ReconstructionMm.where(
         contributions.fovEligible
     )
-    contributions["fov80NodeMm"] = contributions.rawFov80NodeMm.where(contributions.fovEligible)
-    contributions["eligibilityReason"] = np.where(
-        ~contributions.signalEligible,
-        "inactiveOrNegligibleCleanSignal",
-        np.where(contributions.fovEligible, "eligiblePilotEstimate", "recoveryMismatch"),
+    contributions["eligibilityReason"] = np.select(
+        [~contributions.physiologyPassed, ~contributions.cleanSignalUsable,
+         ~np.isfinite(contributions.globalSignedScale), ~contributions.fovEligible],
+        ["physiologyFailed", "negligibleOrInvalidSignal", "noValidIntactScale", "recoveryMismatch"],
+        default="eligiblePilotEstimate",
     )
     return contributions
 
@@ -418,7 +394,7 @@ def boundarySummary(measurements, config):
     """Descriptive plateau/contrast checks; overlapping rows are not independent replicates."""
     rows = []
     clean = measurements[measurements.noiseRepeat == 0]
-    for (condition, kind, gap), group in clean.groupby(["condition", "kind", "gapMm"]):
+    for (condition, kind, label, gap), group in clean.groupby(["condition", "kind", "label", "gapMm"]):
         far = group[group.distanceViableMm >= config["analysis"]["farRegionMm"]]
         # Collapse repeated recording positions before comparing spatial profiles.
         profile = far.groupby("distanceViableMm").ppMv.median()
@@ -432,6 +408,7 @@ def boundarySummary(measurements, config):
             dict(
                 condition=condition,
                 kind=kind,
+                label=label,
                 gapMm=gap,
                 farPositions=len(profile),
                 farMedianMv=median,
@@ -440,6 +417,9 @@ def boundarySummary(measurements, config):
                     len(profile) >= 3
                     and relativeRange <= config["analysis"]["maximumFarRelativeRange"]
                 ),
+                farStatus=("insufficientPositions" if len(profile) < 3 else
+                           "passed" if relativeRange <= config["analysis"]["maximumFarRelativeRange"]
+                           else "excessiveVariation"),
                 contrastFraction=contrast,
                 transitionObserved=bool(
                     condition == "lesion"
@@ -477,8 +457,7 @@ def saveExperimentResults(
     summary = boundarySummary(measurements, config)
     summary.to_csv(outputFolder / "boundaryChecks.csv", index=False)
     shapeGroups = (
-        contributions[contributions.signalEligible]
-        .groupby(["condition", "kind"])
+        contributions.groupby(["condition", "kind"])
         .fovEligible.mean()
     )
     filterPassed = all(
@@ -510,4 +489,6 @@ def saveExperimentResults(
             interpretation="Pilot estimates only. Inspect checks before interpreting spatial sensing; convergence is a separate experiment.",
         ),
     )
+    from boundary_clinical import analyseChangePoints
+    analyseChangePoints(runFolder, config, measurements, pilotPassed=passed)
     return combined, passed

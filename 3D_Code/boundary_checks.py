@@ -90,12 +90,15 @@ def checkCondition(runFolder, condition, config):
     if roiMask.sum() < 4:
         raise ValueError("No usable viable validation region")
     summaries, maps = [], []
+    nodeIds = np.flatnonzero(roiMask)
+    savedBeats, selectedNodes = [], set()
+    selectedNodes.add(int(np.argmin(np.linalg.norm(positions[nodeIds] - [0, 10, 0], axis=1))))
     previousTimes, previousAmplitude, previousApd = None, None, None
     windowEnd = config["analysis"]["beatWindowMs"][1]
     for beatIndex in range(finalBeat - 2, finalBeat + 1):
         beatStart = beatIndex * cycleLength
         frameStart = int(np.searchsorted(timeMs, beatStart))
-        frameEnd = int(np.searchsorted(timeMs, beatStart + cycleLength, side="right"))
+        frameEnd = int(np.searchsorted(timeMs, beatStart + cycleLength))
         localTime = timeMs[frameStart:frameEnd] - beatStart
         voltage = igb_io.read(simulationFolder / "vm.igb", slice(frameStart, frameEnd))
         times, counts = activationTimes(localTime, voltage, settings["activationThresholdMv"])
@@ -112,6 +115,7 @@ def checkCondition(runFolder, condition, config):
         latencyChange = np.nan
         amplitudeChange = np.nan
         apdChange = np.nan
+        changeDetails = {}
         if previousTimes is not None:
             if np.isfinite(roiTimes - previousTimes).any():
                 latencyChange = float(np.nanmax(np.abs(roiTimes - previousTimes)))
@@ -122,6 +126,20 @@ def checkCondition(runFolder, condition, config):
             )
             if np.isfinite(apd - previousApd).any():
                 apdChange = float(np.nanmax(np.abs(apd - previousApd)))
+            for name, values, limit in [
+                ("amplitude", np.abs(amplitudes - previousAmplitude) / np.maximum(previousAmplitude, 1e-12), settings["maximumBeatAmplitudeChange"]),
+                ("apd", np.abs(apd - previousApd), settings["maximumBeatApdChangeMs"]),
+            ]:
+                finite = np.isfinite(values)
+                if finite.any():
+                    worst = int(np.nanargmax(values))
+                    selectedNodes.add(worst)
+                    changeDetails.update({
+                        f"{name}ChangeMedian": float(np.nanmedian(values)),
+                        f"{name}Change95": float(np.nanpercentile(values, 95)),
+                        f"{name}FailFraction": float(np.mean((values > limit) | ~finite)),
+                        f"{name}WorstNode": int(nodeIds[worst]),
+                    })
         lesionCore = signedDistance(positions, config["boundary"]) > 2 * config["meshSpacingMm"]
         lesionCrossings = int(counts[lesionCore].sum()) if condition == "lesion" else 0
         covered = bool(
@@ -141,10 +159,13 @@ def checkCondition(runFolder, condition, config):
                 amplitudeRelativeChange=amplitudeChange,
                 apdChangeMs=apdChange,
                 apdComplete=bool(np.isfinite(apd).all()),
-                **plane
+                medianApd90Ms=float(np.nanmedian(apd)) if np.isfinite(apd).any() else np.nan,
+                medianAmplitudeMv=float(np.median(amplitudes)),
+                **plane, **changeDetails
             )
         )
         maps.append(times)
+        savedBeats.append((beatIndex + 1, localTime, roiVoltage))
         previousTimes, previousAmplitude, previousApd = roiTimes, amplitudes, apd
     table = pd.DataFrame(summaries)
     criteria = physiologyCriteria(table, settings)
@@ -155,6 +176,15 @@ def checkCondition(runFolder, condition, config):
         activationMs=np.asarray(maps),
         regionMask=roiMask,
     )
+    traceRows = []
+    for index in sorted(selectedNodes):
+        for beatNumber, localTime, voltage in savedBeats:
+            traceRows.extend(dict(nodeId=int(nodeIds[index]), beatNumber=beatNumber,
+                                  timeAfterStimulusMs=float(time), voltageMv=float(value),
+                                  xMm=positions[nodeIds[index], 0], yMm=positions[nodeIds[index], 1],
+                                  zMm=positions[nodeIds[index], 2])
+                             for time, value in zip(localTime, voltage[:, index]))
+    pd.DataFrame(traceRows).to_csv(Path(runFolder) / "results" / f"{condition}BeatTraces.csv", index=False)
     return table, passed
 
 

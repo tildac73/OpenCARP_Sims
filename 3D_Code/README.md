@@ -1,41 +1,53 @@
-# Active controlled-boundary pilot
+# Controlled active-boundary pilot V2
 
-Start with **[run.ipynb](run.ipynb)**. It follows the experiment from settings and electrode layout to matched simulations, physiological checks, signal measurements and contribution estimates. It is also the recommended reading order for colleagues.
+Start with [run.ipynb](run.ipynb). The notebook and terminal runner use the same ordinary Python functions. The revision is based on the October 19 serial pilot: capture and planarity passed, but adaptation, spatial coverage and the nodal contribution approximation needed correction.
 
-The scientific defaults remain in [configs/boundary_pilot.json](configs/boundary_pilot.json), with ionic model and conductivity settings in [3d_pilot.par](3d_pilot.par). This rewrite has not been executed or tested. Only static source and notebook checks were performed.
+## Run on the simulation computer
 
-## Read the code in this order
-
-| File | Question it answers |
-|---|---|
-| `boundary_setup.py` | How are the two meshes, stimulus nodes, recovery points and openCARP commands constructed? Start at `prepareExperiment`, then `simulateExperiment`. |
-| `boundary_checks.py` | Did we capture repeatable beats and measure the intended planar wave? |
-| `../Shared_Pipeline/egm.py` | How are unipolar, selected bipolar and omnipolar signals calculated? |
-| `boundary_analysis.py` | How do gain, filtering, noise, distances and contribution acceptance fit together? Start at `analyseExperiment`. |
-| `../Shared_Pipeline/ground_truth.py` | How is the tissue contribution approximation calculated? |
-| `../Shared_Pipeline/boundary_geometry.py` | How are finite electrodes and signed boundary distances defined? |
-| `boundary_figures.py` | How is each diagnostic figure drawn? |
-| `../Shared_Pipeline/igb_io.py` | How are selected frames read from the simulator files? |
-| `run_boundary.py` | How are the same steps run unattended from the terminal? |
-
-Functions and local variables use descriptive camelCase names. The `Recording` dataclass groups only four related values: kind, label, traces and weights. The specialised array operations are confined to the signal and contribution calculations, with dimensions and purposes explained alongside them. Historical NPZ keys retain their original spelling so saved raw exports remain readable.
-
-## Run on your simulation computer
-
-Keep `3D_Code` and `Shared_Pipeline` beside each other. Activate your openCARP/Python environment, then run from the parent project folder:
+Copy **both** `3D_Code` and `Shared_Pipeline`, keeping them beside each other. Activate the environment containing openCARP, mesher, bench, NumPy, SciPy, pandas and Matplotlib. From their parent directory:
 
 ```bash
 python3 3D_Code/run_boundary.py --check-config
-python3 3D_Code/run_boundary.py --prepare-only --output 3D_Code/runs/boundaryPilot
-NP=8 bash 3D_Code/efov_boundary.sh --output 3D_Code/runs/boundaryPilot
+python3 3D_Code/run_boundary.py --np 1 --output 3D_Code/runs/boundaryPilotV2
 ```
 
-Choose the process count to match your computer. For the interactive workflow, open `run.ipynb` instead. Full installation instructions, reprocessing commands, outputs and failure interpretation are in **[BOUNDARY_PILOT.md](BOUNDARY_PILOT.md)**.
+Use a **new** output folder. The default run conditions one cell, simulates both slabs, checks the last three beats, reconstructs contributions, and exports clinical-style change-point results. Allow at least **40 GB free disk**, preferably **16 GB RAM**. The two uncompressed Vm files alone are approximately 28 GB.
 
-## Scope of the readability rewrite
+If executables are not on PATH, set `OPENCARP_BIN`, `MESHER_BIN`, and `BENCH_BIN` to their full paths. Parallel runs additionally require an explicit, compatible `MPIEXEC_BIN`; start serially until that installation is verified.
 
-The pilot still uses the same settings, model, finite-electrode construction, recording definitions and acceptance thresholds. Unused legacy sweeps, clinical exports and general-purpose configuration layers have been removed from the shared modules. Those modules now implement this 3D pilot, not the old 2D/reentry command-line workflows.
+## What changed
 
-Saved simulation settings and the parameter template are compared directly before reuse; source snapshots are retained. Source-code hashes are no longer used. Use a new run folder after editing simulation-generation code. Analysis reruns archive previous derived outputs. Physiological and overall pilot status files now include individually named acceptance criteria.
+- 1000 single-cell conditioning beats, followed by 16 matched tissue beats at BCL 500 ms.
+- Vm/recovery saved every 0.2 ms; solver timestep remains 20 microseconds.
+- Slab extended only across y to 60 mm; catheter centres span -16 to +16 mm at 0.5 mm spacing.
+- Four fixed recording geometries, with mirrored omnipolar triangles analysed separately.
+- Contributions calculated per tetrahedron, with sparse ring sums instead of conductivity averaging across the interface.
+- Automatic clinical-style voltage change-point analysis, with intact controls, noise-repeat fits, detection/trimming sensitivities and a bipolar distance-convention comparison.
 
-The contribution reader requires explicit conductivity values for every tissue tag and x-aligned fibres. This prevents an incomplete parameter file from silently supplying an assumed conductivity. The filter-history check also requires the full doubled history to be available. Configuration checks reject invalid integer counts and missing calibration placements before running. Numerical equivalence and remote execution remain unverified until you run them.
+Read [BOUNDARY_PILOT.md](BOUNDARY_PILOT.md) for the reasoning and detailed output definitions. The acceptance thresholds are unchanged. A passing next run is not guaranteed; this revision has had **static review only, no local execution or numerical tests**.
+
+## Reading order
+
+| File | Role |
+|---|---|
+| `configs/boundary_pilot.json` | All scientific settings |
+| `boundary_setup.py` | Mesh, geometry, bench conditioning and matched simulations |
+| `boundary_checks.py` | Capture, plane fit and final three-beat stability |
+| `../Shared_Pipeline/egm.py` | Existing unipolar, selected bipolar and omnipolar definitions |
+| `boundary_analysis.py` | One gain, filtering/noise, contribution eligibility and pilot decision |
+| `../Shared_Pipeline/ground_truth.py` | Tetrahedron gradients, finite lead fields and persistent reconstruction radius |
+| `boundary_clinical.py` | Automatic representative Python change-point workflow |
+| `pilot_change_points.R` | Optional original Bayesian `mcp` specification |
+| `boundary_figures.py` | Geometry-specific profiles and diagnostic figures |
+
+## Clinical analysis
+
+After the run, inspect `results/clinical/changePointFits.csv` and its figure. Python preserves the clinical voltage transformations and model family but uses OLS/profile least squares for a single slab. It does not invent patient random effects or Bayesian intervals.
+
+For the Bayesian companion, install JAGS and R packages `mcp` and `ggdist`, then run:
+
+```bash
+Rscript 3D_Code/pilot_change_points.R 3D_Code/runs/boundaryPilotV2
+```
+
+The original `../EFOV_analysis_pipeline.Rmd` remains unchanged. Its multi-patient models cannot be applied unchanged to one simulated slab. The companion reads exactly the prepared pilot profiles and uses the same `mcp` equation, chains, iterations, adaptation and seed.
