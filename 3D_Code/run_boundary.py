@@ -57,7 +57,6 @@ def main():
             "Physiological checks failed. Inspect physiologyChecks.csv and figures/01_activation.png.\n"
             "No accepted EFOV estimates were produced. Use --process-only --diagnostic for diagnostic signal exports."
         )
-        return 2
     # 4. Measure signals, estimate contributions, and draw the results.
     _, pilotPassed = analyseExperiment(runFolder, config, physiologyPassed)
     makeFigures(runFolder, config)

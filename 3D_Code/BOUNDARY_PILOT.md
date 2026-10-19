@@ -37,7 +37,7 @@ The initial configuration is `configs/boundary_pilot.json`:
 
 Pacing interval, stimulus strength, beat count and acceptance tolerances are starting choices, not already validated physiology. The final three beats are checked for one-to-one capture, complete APD90, adaptation, propagation direction and planarity. If eight beats are insufficient, increase `beatCount` in a copied configuration and use a new run folder. Do not relax tolerances merely to obtain a passing status.
 
-The 0.5 mm mesh has 59,049 nodes and about 307,200 tetrahedra. Two complete 4-second Vm records at 1 ms spacing require roughly 1.9 GB before other outputs. Keep at least 8 GB free and preferably 8–16 GB RAM. Source reconstruction temporarily holds several large arrays. The later 0.25 mm comparison is substantially more expensive. Runtime depends on your machine; no live openCARP timing has been measured for this pilot.
+The 0.5 mm mesh has 59,049 nodes and 256,000 tetrahedra with the mesher used in the first remote run. Two complete 4-second Vm records at 1 ms spacing require roughly 1.9 GB before other outputs. Keep at least 8 GB free and preferably 8–16 GB RAM. Source reconstruction temporarily holds several large arrays. The later 0.25 mm comparison is substantially more expensive. Runtime depends on your machine; no live openCARP timing has been measured for this pilot.
 
 ## Set up on the simulation computer
 
@@ -66,7 +66,7 @@ export MESHER_BIN=/absolute/path/to/mesher
 export MPIEXEC_BIN=/absolute/path/to/mpiexec
 ```
 
-`MPIEXEC_BIN` is needed only for more than one process. Set `PYTHON` if your Python command is not `python3`. On a cluster, run inside an allocated compute job with the appropriate MPI launcher. The supplied launcher uses `mpiexec -n`; adapt that short command in `simulateExperiment()` if your cluster requires another form. Do not run a multi-hour simulation on a login node.
+`MPIEXEC_BIN` must be explicitly set for more than one process. Set `PYTHON` if your Python command is not `python3`. On a cluster, run inside an allocated compute job with the appropriate MPI launcher. The supplied launcher uses `mpiexec -n`; adapt that short command in `simulateExperiment()` if your cluster requires another form. Do not run a multi-hour simulation on a login node.
 
 The parameter syntax follows the current stimulus interface used by your existing project (`stim[0].crct`, `pulse`, `ptcl`, `elec`). Vertex files use input-mesh indices and the `extra` header, as specified by the [official electrode documentation](https://opencarp.org/documentation/examples/02_ep_tissue/24_electrode_definition). Use an openCARP version supporting that interface.
 
@@ -87,10 +87,10 @@ python3 3D_Code/run_boundary.py --prepare-only --output 3D_Code/runs/boundaryPil
 Then run both conditions and the complete analysis:
 
 ```bash
-NP=8 bash 3D_Code/efov_boundary.sh --output 3D_Code/runs/boundaryPilot
+NP=1 bash 3D_Code/efov_boundary.sh --output 3D_Code/runs/boundaryPilot
 ```
 
-Choose the process count for your allocated resources. The pilot writes the exact commands and simulator output to `intact.log` and `lesion.log` in the run folder. While a simulation is running, follow its log with:
+Start with one process. Before increasing the process count, explicitly set `MPIEXEC_BIN` to the launcher matching your openCARP installation; the runner now requires this for parallel runs. The system `/usr/bin/mpiexec` is not assumed compatible. The pilot writes the exact commands and simulator output to `intact.log` and `lesion.log` in the run folder. While a simulation is running, follow its log with:
 
 ```bash
 tail -f 3D_Code/runs/boundaryPilot/intact.log
@@ -99,13 +99,13 @@ tail -f 3D_Code/runs/boundaryPilot/intact.log
 For an unattended run:
 
 ```bash
-NP=8 nohup bash 3D_Code/efov_boundary.sh --output 3D_Code/runs/boundaryPilot > boundaryPilot.out 2>&1 < /dev/null &
+NP=1 nohup bash 3D_Code/efov_boundary.sh --output 3D_Code/runs/boundaryPilot > boundaryPilot.out 2>&1 < /dev/null &
 ```
 
 To simulate now and analyse later:
 
 ```bash
-NP=8 bash 3D_Code/efov_boundary.sh --simulate-only --output 3D_Code/runs/boundaryPilot
+NP=1 bash 3D_Code/efov_boundary.sh --simulate-only --output 3D_Code/runs/boundaryPilot
 python3 3D_Code/run_boundary.py --process-only --output 3D_Code/runs/boundaryPilot
 ```
 

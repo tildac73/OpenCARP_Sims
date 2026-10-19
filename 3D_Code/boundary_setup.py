@@ -68,6 +68,11 @@ def simulateExperiment(runFolder, config, processCount=1):
     simulator = findExecutable("openCARP", "OPENCARP_BIN")
     commandPrefix = [simulator]
     if processCount > 1:
+        if not os.environ.get("MPIEXEC_BIN"):
+            raise RuntimeError(
+                "For parallel runs, set MPIEXEC_BIN to the launcher matching your openCARP installation. "
+                "Do not assume /usr/bin/mpiexec is compatible. Use --np 1 until MPI is configured."
+            )
         commandPrefix = [findExecutable("mpiexec", "MPIEXEC_BIN"), "-n", processCount, simulator]
     if processCount < 1:
         raise ValueError("Process count must be positive")
@@ -76,6 +81,7 @@ def simulateExperiment(runFolder, config, processCount=1):
         simulationFolder = runFolder / condition
         completedPath = simulationFolder / "meta.json"
         if completedPath.exists():
+            checkSimulationLog(runFolder / f"{condition}.log")
             if not json.loads(completedPath.read_text()).get("complete"):
                 raise ValueError(f"{condition} has incomplete completion metadata")
             for name in ["vm.igb", "phie_recovery.igb", "parameters.par", "egm.npz"]:
@@ -90,6 +96,7 @@ def simulateExperiment(runFolder, config, processCount=1):
         runCommand(
             commandPrefix + ["+F", runFolder / f"{condition}.par"], runFolder / f"{condition}.log"
         )
+        checkSimulationLog(runFolder / f"{condition}.log")
         for name in ["vm.igb", "phie_recovery.igb", "parameters.par"]:
             if not (simulationFolder / name).is_file():
                 raise FileNotFoundError(f"{condition}: simulator did not write {name}")
@@ -288,6 +295,7 @@ def checkCompletedSimulations(runFolder):
     """Require both raw recordings and completed finite-electrode exports."""
     runFolder = Path(runFolder)
     for condition in ["intact", "lesion"]:
+        checkSimulationLog(runFolder / f"{condition}.log")
         simulationFolder = runFolder / condition
         for filename in ["meta.json", "vm.igb", "phie_recovery.igb", "parameters.par", "egm.npz"]:
             if not (simulationFolder / filename).is_file():
@@ -306,6 +314,13 @@ def checkSimulationSettings(runFolder, config):
     """
     runFolder = Path(runFolder)
     savedConfig = json.loads((runFolder / "config.json").read_text())
+    rawElements = readElements(runFolder / "mesh/slabRaw")
+    for condition in ["intact", "lesion"]:
+        if not np.array_equal(readElements(runFolder / "mesh" / condition), rawElements):
+            raise ValueError(
+                f"{condition}: connectivity differs from the raw mesh. "
+                "Regenerate in a new run folder; changing an old mesh invalidates its simulation."
+            )
     for name, value in config.items():
         if name not in ["analysis", "acceptance"] and savedConfig.get(name) != value:
             raise ValueError(f"Simulation setting {name} changed. Use a new run folder.")
@@ -318,12 +333,26 @@ def checkSimulationSettings(runFolder, config):
 
 
 def readNodePositions(meshBase):
-    """Mesh coordinates are stored in micrometres; return millimetres."""
-    return np.loadtxt(str(meshBase) + ".pts", skiprows=1, ndmin=2) / 1000
+    """Read the declared node count, converting mesh micrometres to millimetres."""
+    with open(str(meshBase) + ".pts") as meshFile:
+        expectedCount = int(meshFile.readline().strip())
+        positions = np.loadtxt(meshFile, ndmin=2) / 1000
+    if positions.shape != (expectedCount, 3) or not np.isfinite(positions).all():
+        raise ValueError(f"{meshBase}: invalid node coordinates or node count")
+    return positions
 
 
 def readElements(meshBase):
-    elementRows = np.loadtxt(str(meshBase) + ".elem", skiprows=1, dtype=str, ndmin=2)
+    """Read every tetrahedron and check the count declared in the mesh header.
+
+    Consume the header ourselves: NumPy 2.1.3 can repeat skiprows at each
+    50,000-row string-reading chunk and silently remove real elements.
+    """
+    with open(str(meshBase) + ".elem") as meshFile:
+        expectedCount = int(meshFile.readline().strip())
+        elementRows = np.loadtxt(meshFile, dtype=str, ndmin=2)
+    if len(elementRows) != expectedCount:
+        raise ValueError(f"{meshBase}: expected {expectedCount} elements, read {len(elementRows)}")
     if elementRows.shape[1] != 6 or not np.all(elementRows[:, 0] == "Tt"):
         raise ValueError("Expected tagged tetrahedra")
     return elementRows[:, 1:5].astype(int)
@@ -458,3 +487,18 @@ def validateConfig(config):
     if analysis["targetBipolarMv"] <= 0:
         raise ValueError("Calibration target must be positive")
     return config
+
+
+def checkSimulationLog(logPath):
+    """Reject repeated rank-zero launches before using a completed recording.
+
+    This is a post-run safeguard, not a full MPI compatibility check. A proper
+    launcher must still be selected before running with multiple processes.
+    """
+    logPath = Path(logPath)
+    launchCount = logPath.read_text(errors="replace").count("*** Launching simulation ***")
+    if launchCount != 1:
+        raise RuntimeError(
+            f"{logPath.name}: found {launchCount} simulation launch messages; expected one. "
+            "Check MPI compatibility and rerun in a new folder. Existing outputs are not accepted."
+        )
