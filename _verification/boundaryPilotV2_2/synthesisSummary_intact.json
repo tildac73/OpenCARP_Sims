@@ -1,0 +1,31 @@
+{
+  "condition": "intact",
+  "pointsChecked": 4304,
+  "pointsTotal": 4304,
+  "correlationMin": 0.9997849319276328,
+  "correlationP01": 0.9997972673623416,
+  "relativeRmsErrorMax": 0.0206905648838329,
+  "relativeRmsErrorMedian": 0.0048698668059118,
+  "amplitudeRatioMin": 0.970711270429186,
+  "amplitudeRatioMedian": 1.004557973334268,
+  "amplitudeRatioMax": 1.0140265907461716,
+  "byHeightAboveTissueMm": {
+    "(2.0, 2.5]": {
+      "n": 712,
+      "correlationMin": 0.9997849319276328,
+      "relativeRmsErrorMax": 0.0206905648838329
+    },
+    "(2.5, 3.0]": {
+      "n": 1440,
+      "correlationMin": 0.9999784468092646,
+      "relativeRmsErrorMax": 0.0070181873036616
+    },
+    "(3.0, 4.01]": {
+      "n": 2152,
+      "correlationMin": 0.999992354489328,
+      "relativeRmsErrorMax": 0.0046901262874044
+    }
+  },
+  "gateMinCorrelationProposed": 0.999,
+  "gatePassed": true
+}

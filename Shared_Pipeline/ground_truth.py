@@ -6,6 +6,12 @@ lead field is evaluated at each tetrahedron's centroid, a quadrature approximati
 checked against openCARP recovery before reporting FOV. The common prefactor is
 omitted and one signed scale is estimated from intact unipoles.
 
+Source conductivity (28 Oct 2026, DL-2026-10-28-01): the monodomain conductivity
+G_i G_e / (G_i + G_e), which verify_synthesis.py showed reproduces openCARP phie recovery
+in amplitude as well as shape. Before this change the intracellular conductivity was used;
+that differs only by a constant when G_i and G_e have equal anisotropy ratios (true in
+boundaryPilotV2), so pilot FOV80 values are unchanged, but not otherwise.
+
 The primary radius is the persistent 80% waveform-reconstruction radius of a
 full-thickness cylinder. Version 1's node-energy radius is removed: it is not
 interchangeable with an element-energy definition.
@@ -15,6 +21,7 @@ from pathlib import Path
 import numpy as np
 from scipy import sparse
 import egm
+import electrode_synthesis
 import igb_io
 
 
@@ -26,6 +33,7 @@ class ElementGeometry:
     gradients: np.ndarray           # element, xyz, four shape functions; 1/mm
     volumes: np.ndarray             # element; mm^3
     conductivity: np.ndarray        # element, xyz; S/m, fibres along x
+    extracellularConductivity: np.ndarray = None  # element, xyz; S/m (for monodomain source term)
 
 
 def readParameters(parameterPath):
@@ -62,15 +70,18 @@ def readElementGeometry(runFolder, condition):
     if len(fibres) != elementCount or not np.allclose(np.abs(fibres[:, :3]), [1, 0, 0]):
         raise ValueError("This pilot implementation requires x-aligned fibres")
     parameters = readParameters(runFolder / condition / "parameters.par")
-    conductivityByTag = {}
+    conductivityByTag, extracellularByTag = {}, {}
     for region in range(int(parameters["num_gregions"])):
         prefix = f"gregion[{region}]"
         values = [float(parameters[f"{prefix}.g_i{axis}"]) for axis in "ltn"]
+        extracellular = [float(parameters[f"{prefix}.g_e{axis}"]) for axis in "ltn"]
         for index in range(int(parameters[f"{prefix}.num_IDs"])):
             conductivityByTag[int(parameters[f"{prefix}.ID[{index}]"])] = values
+            extracellularByTag[int(parameters[f"{prefix}.ID[{index}]"])] = extracellular
     if set(tags) - conductivityByTag.keys():
         raise ValueError("Missing intracellular conductivity for an element tag")
     conductivity = np.asarray([conductivityByTag[tag] for tag in tags])
+    extracellularConductivity = np.asarray([extracellularByTag[tag] for tag in tags])
     vertices = positions[elements]
     # V = a + bx + cy + dz in each tetrahedron. Rows are its four vertices.
     matrices = np.concatenate([np.ones((elementCount, 4, 1)), vertices], axis=2)
@@ -79,7 +90,7 @@ def readElementGeometry(runFolder, condition):
         raise ValueError("Invalid tetrahedron volume")
     gradients = np.linalg.inv(matrices)[:, 1:, :]
     return ElementGeometry(positions, elements, vertices.mean(axis=1), gradients,
-                           volumes, conductivity)
+                           volumes, conductivity, extracellularConductivity)
 
 
 def finiteRecordingField(samplePositions, weights, elementCentres):
@@ -96,7 +107,7 @@ def finiteRecordingField(samplePositions, weights, elementCentres):
     return field
 
 
-def ringOperator(geometry, samplePositions, weights, anchor, ringStepMm):
+def ringOperator(geometry, samplePositions, weights, anchor, ringStepMm, source="monodomain"):
     """Map nodal Vm to a trace for each cylindrical tissue ring using sparse weights.
 
     This sums conductivity * grad(Vm) * lead field * volume over tetrahedra.
@@ -105,7 +116,7 @@ def ringOperator(geometry, samplePositions, weights, anchor, ringStepMm):
     """
     field = finiteRecordingField(samplePositions, weights, geometry.centres)
     coefficients = np.einsum(
-        "ec,ec,ecj,e->ej", field, geometry.conductivity,
+        "ec,ec,ecj,e->ej", field, electrode_synthesis.sourceConductivity(geometry, source),
         geometry.gradients, geometry.volumes,
     )
     distance = np.linalg.norm(geometry.centres[:, :2] - anchor[:2], axis=1)

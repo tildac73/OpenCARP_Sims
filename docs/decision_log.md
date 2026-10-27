@@ -40,3 +40,15 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
 ## DL-2026-10-27-06 - Adopt the model readiness plan
 - **Status:** Decided. **Irreversible:** No.
 - **Decision:** Steps 1-9 of the "Model readiness plan" doc are completed, gate by gate, before any parameter sweep. Tolerances marked "proposed" await sign-off.
+
+## DL-2026-10-28-01 - Monodomain source conductivity for synthesis and ground truth
+- **Status:** Decided. **Irreversible:** No.
+- **Context:** Part 1 ground truth used the intracellular conductivity G_i and absorbed the scale with one fitted factor (-0.0621). That factor matches (1/4 pi sigma_b) x G_e/(G_i+G_e) = 0.0622 for sigma_b = 1 S/m, i.e. openCARP recovery behaves as a monodomain source G_m = G_i G_e/(G_i+G_e).
+- **Decision:** `electrode_synthesis` and `ground_truth.ringOperator` use G_m (option `source="intracellular"` kept for comparison).
+- **Evidence:** VL-2026-10-28-02 (amplitude ratio median 1.002-1.005 with G_m; 1.24-1.30 with G_i).
+- **Consequence:** Pilot FOV80 unchanged (equal anisotropy ratios make G_m/G_i constant; regression test passes). Required before conductivities with unequal anisotropy (e.g. Roberts and Scher 1982) are introduced, where a single fitted scale could not absorb the difference.
+- **Open:** confirm sigma_b and the recovery formula against the openCARP manual or source for build 9accae05 (manual PDF not readable here); the numerical agreement is the current evidence.
+
+## DL-2026-10-28-02 - Step 2 equivalence test on a reduced slab
+- **Status:** Decided. **Irreversible:** No.
+- **Decision:** serial vs MPI equivalence tested with `3D_Code/configs/mpi_equivalence.json` (20 x 30 x 4 mm, 3 beats; all physics, solver and output settings as boundary_pilot.json). Equivalence of the parallel solver does not depend on domain size; a smaller run keeps the test short.

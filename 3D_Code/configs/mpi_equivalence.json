@@ -1,0 +1,117 @@
+{
+  "slabSizeMm": [
+    20.0,
+    30.0,
+    4.0
+  ],
+  "meshSpacingMm": 0.5,
+  "timeStepUs": 20.0,
+  "sampleStepMs": 0.2,
+  "boundary": {
+    "shape": "straight",
+    "positionMm": 0.0
+  },
+  "pacing": {
+    "cycleLengthMs": 500.0,
+    "beatCount": 3,
+    "durationMs": 2.0,
+    "strength": 50.0,
+    "stripWidthMm": 0.5
+  },
+  "electrodes": {
+    "gridOffsetsMm": [
+      -6.0,
+      -2.0,
+      2.0,
+      6.0
+    ],
+    "centreXmm": 0.0,
+    "centreYmm": [
+      -4.0,
+      0.0,
+      4.0
+    ],
+    "gapsMm": [
+      0.25,
+      1.0
+    ],
+    "radiusMm": 0.5,
+    "lengthMm": 1.0,
+    "axialSamples": 2,
+    "angularSamples": 4
+  },
+  "analysis": {
+    "beatWindowMs": [
+      0.0,
+      400.0
+    ],
+    "filterHistoryMs": 200.0,
+    "differentialBandHz": [
+      30.0,
+      450.0
+    ],
+    "filterOrder": 2,
+    "omniAngleStepDeg": 2,
+    "targetBipolarMv": 1.44,
+    "referenceGapMm": 0.25,
+    "referenceCentreYmm": 0.0,
+    "noiseSdMv": 0.005,
+    "noiseRepeats": 3,
+    "noiseSeed": 1701,
+    "groundTruthCentreYmm": [
+      0.0
+    ],
+    "minimumCleanPpMv": 0.001,
+    "minimumAbsCorrelation": 0.95,
+    "maximumShapeError": 0.2,
+    "maximumGlobalScaleError": 0.3,
+    "farRegionMm": 10.0,
+    "maximumFarRelativeRange": 0.15,
+    "minimumTransitionFraction": 0.2,
+    "maximumFilterHistoryError": 0.001,
+    "recordingLabels": {
+      "uni": [
+        "E5"
+      ],
+      "bi": [
+        "E5-E6|E9"
+      ],
+      "omni": [
+        "E5-E6-E9",
+        "E9-E10-E5"
+      ]
+    },
+    "contributionRingStepMm": 0.5
+  },
+  "acceptance": {
+    "activationThresholdMv": -20.0,
+    "regionXmm": [
+      -8.0,
+      8.0
+    ],
+    "viableRegionYmm": [
+      1.0,
+      10.0
+    ],
+    "maximumPlaneResidualMs": 2.0,
+    "maximumDirectionErrorDeg": 5.0,
+    "maximumBeatLatencyChangeMs": 2.0,
+    "maximumBeatAmplitudeChange": 0.05,
+    "maximumBeatApdChangeMs": 5.0
+  },
+  "conditioning": {
+    "enabled": true,
+    "beatCount": 1000
+  },
+  "clinical": {
+    "detectionLimitMv": 0.01,
+    "lesionRoiMm": 15.0,
+    "healthyRoiMm": 10.0,
+    "trimQuantile": 0.999,
+    "minimumFitPoints": 10,
+    "minimumSegmentPoints": 3,
+    "changePointStepMm": 0.05,
+    "minimumImprovementAic": 2.0
+  },
+  "_purpose": "Step 2 serial-vs-MPI equivalence test only. Smaller slab and 3 beats to keep runtime short; all physics, solver and output settings identical to boundary_pilot.json. Not for scientific results."
+}

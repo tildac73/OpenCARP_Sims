@@ -40,3 +40,25 @@ numerical verification and physiological validation. Newest last.
 - **Type:** Reproduction (automated, clean worktree). **Result:** Pass.
 - **How:** `git worktree add` at tag `v2-pilot`; only the raw Vm/egm/mesh folders linked in (untracked by design); `EFOV_RUN_SLOW=1 python3 -m unittest tests.test_v2_reference -v`.
 - **Result:** 5/5 tests pass (77 s). First attempt found `results/calibration.json` and `results/pilotStatus.json` untracked; both now tracked (commit 27fd8d3, tag moved before any push).
+
+## VL-2026-10-28-01 - compare_runs.py behaves as intended (synthetic)
+- **Type:** Unit tests (synthetic run folders). **Result:** Pass, 6/6 (`tests/test_compare_runs.py`).
+- **Covers:** identical runs pass; differences inside proposed tolerance pass; Vm offset 0.5 mV, activation shift 0.1 ms, phi_e amplitude +1 % and mismatched inputs each fail.
+
+## VL-2026-10-28-02 - Step 2 gate: electrode signals synthesised from saved Vm reproduce openCARP recovery
+- **Type:** Numerical (independent code path vs openCARP). **Result:** Pass (proposed gate: correlation >= 0.999 at every point).
+- **How:** `3D_Code/numerics/verify_synthesis.py` on boundaryPilotV2, all 4,304 recovery points x 2 conditions, frames 7500-7600 ms (beat 16 incl. stimulus far-field and local activation). Monodomain source, sigma_b = 1 S/m.
+- **Result:** intact corr min 0.99978, rel RMS median 0.49 % / max 2.1 %, amplitude ratio 0.971-1.014 (median 1.005); lesion corr min 0.99947, rel RMS median 0.34 % / max 3.2 %, amplitude ratio 0.956-1.016 (median 1.002).
+- **Height dependence:** worst points all 0.25-0.5 mm above tissue (rel RMS <= 3.2 %); above 1 mm rel RMS <= 0.5 %. Consistent with one-point element quadrature error near the surface (target of Step 4). Which code is closer to the exact integral is not established here.
+- **Control:** intracellular source gives identical correlation but amplitude ratio 1.24-1.30 (= 1/0.782), so the amplitude test discriminates the source conductivity.
+- Results: `_verification/boundaryPilotV2_2/`.
+
+## VL-2026-10-28-03 - electrode_synthesis unit tests
+- **Type:** Implementation check. **Result:** Pass, 5/5 (`tests/test_electrode_synthesis.py`).
+- **Covers:** series conductivity; single-tetrahedron uniform-gradient potential equals the closed-form dipole expression (implementation check, not discretisation accuracy); source-conductivity scaling; electrode averaging; input validation.
+
+## VL-2026-10-28-04 - Regression after the source-conductivity change
+- **Type:** Reproduction. **Result:** Pass, 5/5 incl. FOV80 (`EFOV_RUN_SLOW=1 python3 -m unittest tests.test_v2_reference`).
+
+## Pending - Step 2 MPI equivalence
+- Awaiting workstation runs (`3D_Code/numerics/README.md`).

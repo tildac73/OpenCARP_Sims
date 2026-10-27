@@ -1,0 +1,31 @@
+{
+  "condition": "lesion",
+  "pointsChecked": 4304,
+  "pointsTotal": 4304,
+  "correlationMin": 0.999470067025051,
+  "correlationP01": 0.9997423141115058,
+  "relativeRmsErrorMax": 0.0321569842153447,
+  "relativeRmsErrorMedian": 0.0034054631970905497,
+  "amplitudeRatioMin": 0.9557008061343828,
+  "amplitudeRatioMedian": 1.0021264739554754,
+  "amplitudeRatioMax": 1.0156003679546952,
+  "byHeightAboveTissueMm": {
+    "(2.0, 2.5]": {
+      "n": 712,
+      "correlationMin": 0.999470067025051,
+      "relativeRmsErrorMax": 0.0321569842153447
+    },
+    "(2.5, 3.0]": {
+      "n": 1440,
+      "correlationMin": 0.9999528015829584,
+      "relativeRmsErrorMax": 0.0098748486816318
+    },
+    "(3.0, 4.01]": {
+      "n": 2152,
+      "correlationMin": 0.9999897247200136,
+      "relativeRmsErrorMax": 0.0051510990615334
+    }
+  },
+  "gateMinCorrelationProposed": 0.999,
+  "gatePassed": true
+}
