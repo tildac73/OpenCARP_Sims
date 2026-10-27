@@ -2,13 +2,14 @@
 
 Status: Sourced = value read from the primary paper; Open = no primary value retrieved yet.
 Only papers whose text was actually read are cited. Values are as reported; units converted where noted.
-Last updated 27 Oct 2026.
+Last updated 28 Oct 2026.
 
 | Quantity | Current model (v2-pilot) | Sourced value | Source | Status | Notes |
 | --- | --- | --- | --- | --- | --- |
 | LA conduction velocity, sinus rhythm, normal-voltage tissue | 0.35 m/s (planar, along fibres) | 1.25 +/- 0.38 m/s (patients without fibrotic cardiomyopathy, n = 25); anterior 1.11 +/- 0.34, posterior 1.38 +/- 0.37 m/s | Heil et al. 2023, doi:10.1007/s00380-023-02282-5 (Table 2) | Sourced | Persistent-AF cohort mapped in sinus rhythm (>1000 points). EAM CV mixes wavefront directions, so it is not a pure longitudinal CV. Text and table differ for some values; Table 2 used. The model's 0.35 m/s is about 3.5x slower: must be resolved in Step 3. |
-| Longitudinal / transverse CV and anisotropy ratio, human atria | gi 0.174 / 0.094 S/m (ratio 1.85) | - | Candidates: Roney et al. 2019, doi:10.1016/j.compbiomed.2018.10.019 (clinical results section not yet read; simulation inputs 1.10 / 0.55 m/s are NOT human data) | Open | Needs a primary human measurement. |
-| Intracellular / extracellular conductivities | gi 0.174 / 0.094, ge 0.625 / 0.338 S/m | - | Candidates: Clerc 1976 (J Physiol 255:335); Roberts and Scher 1982 | Open | Primary papers not retrievable here (not open access). Current values' source is unrecorded. |
+| Longitudinal / transverse CV and anisotropy ratio, human atrial body | gi 0.174 / 0.094 S/m (ratio 1.85) | No numerical human atrial-body value found. Reviews: anisotropy ratio ~10 in crista terminalis, ~2 in ventricle; atrial-body ratio lower than crista terminalis and Bachmann's bundle | Valderrabano 2007, Prog Biophys Mol Biol 94:144-168; Kotadia et al. 2020, Arrhythm Electrophysiol Rev 9(4):202-10, doi:10.15420/aer.2020.04 | Open (bounded) | Primary candidates cited by Kotadia: Maesen et al. (Circ Arrhythm Electrophysiol, goat AF model); Morton et al. 2003 Circulation (human RA, atrial septal defect). Roney et al. 2019 clinical results still unread. |
+| Longitudinal / transverse CV, canine ventricle (reference only) | - | 57 +/- 6 / 24 +/- 3 cm/s (ratio 2.4) | Roberts and Scher 1982, Circ Res 50:342-351 | Sourced | Canine LV epicardium in situ; not atrial. |
+| Intracellular / extracellular conductivities | gi 0.174 / 0.094, ge 0.625 / 0.338 S/m (source unrecorded) | Resistivities (ohm cm): r_il 291 +/- 38, r_it 1677 +/- 331, r_el 852 +/- 232, r_et 1247 +/- 210, i.e. sigma_il 0.344, sigma_it 0.060, sigma_el 0.117, sigma_et 0.080 S/m; gross tissue 213 / 705 ohm cm | Roberts and Scher 1982, Circ Res 50:342-351 | Sourced (canine ventricle) | Best-fit bidomain values for canine LV in situ; no atrial-specific bidomain measurements found. Intracellular anisotropy 5.8, extracellular 1.5 (unequal). Current model values differ in both magnitude and ratio. Clerc 1976 still not read. |
 | Blood conductivity | not modelled (unbounded homogeneous medium) | resistivity 135 ohm cm in vivo, normal haematocrit (= 0.74 S/m) | Traugott, Quail and White 1981, doi:10.1007/BF02442767 (abstract) | Sourced | Man, dog, rabbit; man Hct 31-48%. Temperature not stated in abstract. |
 | Atrial wall thickness, ex vivo | 4 mm | mean 2.73 mm (5-95%: 0.98-4.38 mm), 8 human atria | Pashakhanloo et al. 2016, doi:10.1161/CIRCEP.116.004133 | Sourced | Sub-millimetre DT-MRI; walls < 0.5 mm not resolvable. |
 | LA posterior wall thickness, CT | 4 mm | 1.48 +/- 0.21 mm, 61 AF patients | Li et al. 2024, doi:10.1186/s13019-024-02658-2 | Sourced | Non-gated 64-slice CT; resolution limits thin-wall accuracy. |
@@ -21,5 +22,8 @@ Last updated 27 Oct 2026.
 2. The 4 mm wall sits at the upper end of reported values (ex vivo 0.98-4.38 mm; CT posterior wall ~1.5 mm). A thinner reference wall needs more elements through it (Step 3/7).
 3. Fibre architecture is regionally heterogeneous; the reference choice (R11) should name the atrial region it represents.
 
+## Conductivity strategy (decision needed, R4)
+No atrial bidomain conductivities were found. Common practice is to take the anisotropy ratios from a measured set (here Roberts and Scher 1982) and scale magnitudes to reach a sourced CV at the production mesh (openCARP CV tuning). This keeps unequal anisotropy, which matters for extracellular fields. The scaling must be recorded as a calibration, not a measurement.
+
 ## Access needed
-Scite access lapsed and several primary papers are paywalled. Library PDFs of Clerc 1976, Roberts and Scher 1982, and a primary human atrial anisotropy study would close the open rows.
+Scite access lapsed and several primary papers are paywalled. Received 28 Oct: Roberts and Scher 1982; Kotadia et al. 2020; Valderrabano 2007. Still needed: a primary human atrial-body anisotropy measurement (e.g. Morton et al. 2003), Clerc 1976.
