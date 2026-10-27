@@ -1,0 +1,9 @@
+{
+  "gain": 0.461584160592266,
+  "rawReferenceMedianMv": 3.1196911049814036,
+  "targetBipolarMv": 1.44,
+  "condition": "intact",
+  "centreYmm": 0.0,
+  "gapMm": 0.25,
+  "interpretation": "Imposed amplitude calibration, not an independent physiological validation"
+}

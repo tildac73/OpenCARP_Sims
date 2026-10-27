@@ -1,0 +1,20 @@
+{
+  "pipelineCompleted": true,
+  "pilotAcceptancePassed": true,
+  "criteria": {
+    "physiology": true,
+    "filterHistory": true,
+    "stableFarRegion": true,
+    "lesionTransition": true,
+    "validContributions": true
+  },
+  "physiologyPassed": true,
+  "filterHistoryPassed": true,
+  "eligibleContributionCount": 48,
+  "contributionCount": 48,
+  "noiseReplicatesAreBiologicalReplicates": false,
+  "noiseReplicateContributionsComputed": false,
+  "meshConvergenceVerified": false,
+  "domainConvergenceVerified": false,
+  "interpretation": "Pilot estimates only. Inspect checks before interpreting spatial sensing; convergence is a separate experiment."
+}

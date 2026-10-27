@@ -10,6 +10,10 @@ boundaryPilotV2 2/*
 !boundaryPilotV2 2/config.json
 !boundaryPilotV2 2/manifest.json
 !boundaryPilotV2 2/physiologyChecks.csv
+!boundaryPilotV2 2/results/
+boundaryPilotV2 2/results/*
+!boundaryPilotV2 2/results/calibration.json
+!boundaryPilotV2 2/results/pilotStatus.json
 
 # Refinement work: keep code, configs and small summaries; drop data slices and regenerable outputs
 _refinement_work/*.npy
