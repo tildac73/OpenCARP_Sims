@@ -22,6 +22,7 @@ import boundary_checks as checks
 import boundary_analysis as analysis
 import boundary_figures as figures
 import ground_truth as groundTruth
+import electrode_synthesis as synthesis
 
 
 def testConfig():
@@ -64,10 +65,10 @@ def writeTestMesh(meshBase, config):
         np.savetxt(stream, np.tile([1., 0., 0.], (len(elements), 1)))
 
 
-def writeIgb(path, values):
+def writeIgb(path, values, stepMs=1.0):
     values = np.asarray(values, dtype='<f4')
     frames, nodes = values.shape
-    header = f'x:{nodes} y:1 z:1 t:{frames} type:float systeme:little.endian org_t:0 inc_t:1 '
+    header = f'x:{nodes} y:1 z:1 t:{frames} type:float systeme:little.endian org_t:0 inc_t:{stepMs} '
     with open(path, 'wb') as stream:
         stream.write(header.encode().ljust(1023, b' ') + b'\x0c')
         stream.write(values.tobytes())
@@ -85,7 +86,9 @@ def addSyntheticRecordings(runFolder, config):
     """Prescribed travelling voltage and matching source projection, with known negative scale."""
     runFolder = Path(runFolder)
     layout = dict(np.load(runFolder / 'electrodes/layout.npz'))
-    timeMs = np.arange(config['pacing']['beatCount'] * config['pacing']['cycleLengthMs'] + 1)
+    stepMs = config['sampleStepMs']   # fixture frames must match the configured output interval
+    durationMs = config['pacing']['beatCount'] * config['pacing']['cycleLengthMs']
+    timeMs = np.arange(round(durationMs / stepMs) + 1) * stepMs
     for condition in ['intact', 'lesion']:
         folder = runFolder / condition
         folder.mkdir(exist_ok=True)
@@ -97,15 +100,16 @@ def addSyntheticRecordings(runFolder, config):
         voltage = -80 + 100 * (rise - fall)
         if condition == 'lesion':
             voltage[:, positions[:, 1] < 0] = -80
-        writeIgb(folder / 'vm.igb', voltage)
+        writeIgb(folder / 'vm.igb', voltage, stepMs)
         (folder / 'meshname.txt').write_text(str(meshBase))
         (folder / 'parameters.par').write_text((runFolder / f'{condition}.par').read_text())
-        sourceDensity, nodePositions, _ = groundTruth.sourceDensity(folder)
-        projections = []
-        for point in layout['recoveryPoints']:
-            field = groundTruth.pointLeadField(point, nodePositions)
-            projections.append(-.07 * np.einsum('cn,cnt->t', field, sourceDensity))
-        writeIgb(folder / 'phie_recovery.igb', np.array(projections).T)
+        # Recovery = -0.07 x (monodomain source projected on the point lead field), i.e. the
+        # electrode_synthesis operator with sigma_b chosen so its prefactor is exactly -0.07.
+        # The ground truth omits that prefactor, so its fitted scale must come out as -0.07.
+        elementGeometry = groundTruth.readElementGeometry(runFolder, condition)
+        operator = synthesis.pointOperator(elementGeometry, layout['recoveryPoints'],
+                                           sigmaBathSPerM=1 / (4 * np.pi * .07))
+        writeIgb(folder / 'phie_recovery.igb', (operator @ voltage.T).T, stepMs)
         setup.buildEGMs(folder, runFolder, config)
         setup.saveJson(folder / 'meta.json', dict(complete=True, syntheticTestFixture=True))
 
@@ -138,9 +142,13 @@ class BoundaryGeometryTests(unittest.TestCase):
         config = testConfig()
         config['analysis']['beatWindowMs'] = [0,101]
         with self.assertRaises(ValueError): setup.validateConfig(config)
+        nyquistHz = 1000 / (2 * testConfig()['sampleStepMs'])   # band limits follow the output rate
         config = testConfig()
-        config['analysis']['differentialBandHz'][1] = 500
+        config['analysis']['differentialBandHz'][1] = nyquistHz
         with self.assertRaises(ValueError): setup.validateConfig(config)
+        config = testConfig()
+        config['analysis']['differentialBandHz'][1] = nyquistHz - 1
+        setup.validateConfig(config)
 
     def testSeedIndependentOfCallOrder(self):
         seed = analysis.stableSeed(1701, 'lesion', 2)
@@ -189,9 +197,13 @@ class BoundaryIntegrationTests(unittest.TestCase):
             config = testConfig()
             prepareFixture(runFolder, config)
             addSyntheticRecordings(runFolder, config)
+            setup.startAnalysis(runFolder, config)   # as run_boundary.py does before checks
             self.assertTrue(checks.checkExperiment(runFolder, config))
             table, _ = analysis.analyseExperiment(runFolder, config, True)
-            self.assertEqual(len(table), 2*2*6*61)
+            declared = sum(len(labels) for labels in config['analysis']['recordingLabels'].values())
+            placements = len(config['electrodes']['centreYmm']) * len(config['electrodes']['gapsMm'])
+            conditions, noiseRuns = 2, config['analysis']['noiseRepeats'] + 1
+            self.assertEqual(len(table), conditions*noiseRuns*placements*declared)  # V2 keeps declared labels only
             self.assertEqual(table.recordingId.nunique(), len(table))
             computed = table[table.groundTruthComputed]
             self.assertTrue((computed.noiseRepeat == 0).all())
@@ -204,13 +216,16 @@ class BoundaryIntegrationTests(unittest.TestCase):
             rawSlice, measureSlice = analysis.measurementSlices(source['t_ms'], config)
             gain = json.loads((runFolder/'results/calibration.json').read_text())['gain']
             clean = gain * source['uni'][...,rawSlice]
-            differential = analysis.filterElectrodes(clean,1000,config)[...,measureSlice]
+            differential = analysis.filterElectrodes(clean,1000/config['sampleStepMs'],config)[...,measureSlice]
             for row in table[(table.condition=='intact') & (table.kind=='bi')].iloc[::17].to_dict('records'):
                 weights = np.array([row[f'weightE{i}'] for i in range(16)])
                 expected = weights @ differential[row['placement']]
                 np.testing.assert_allclose(expected, archive['cleanAtSelectedWeightsMv'][row['traceIndex']], atol=1e-6)
             figures.makeFigures(runFolder, config)
-            self.assertEqual(len(list((runFolder/'figures').glob('*.png'))), 5)
+            expectedFigures = {'01_activation.png', '02_clean_voltage_distance.png', '03_contribution_radii.png',
+                               '04_example_traces.png', '05_reconstruction_checks.png',
+                               '06_intact_beat_stability.png', '06_lesion_beat_stability.png'}
+            self.assertEqual({path.name for path in (runFolder/'figures').glob('*.png')}, expectedFigures)
 
     def testNoCaptureCannotPass(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -221,7 +236,9 @@ class BoundaryIntegrationTests(unittest.TestCase):
                 folder = runFolder/condition
                 folder.mkdir()
                 nodes = len(setup.readNodePositions(runFolder/'mesh'/condition))
-                writeIgb(folder/'vm.igb',np.full((301,nodes),-80.))
+                frames = round(config['pacing']['beatCount']*config['pacing']['cycleLengthMs']/config['sampleStepMs']) + 1
+                writeIgb(folder/'vm.igb',np.full((frames,nodes),-80.),config['sampleStepMs'])
+            setup.startAnalysis(runFolder, config)   # as run_boundary.py does before checks
             self.assertFalse(checks.checkExperiment(runFolder, config))
             result = json.loads((runFolder/'physiologyStatus.json').read_text())
             self.assertFalse(result['passed'])

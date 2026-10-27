@@ -29,8 +29,8 @@ numerical verification and physiological validation. Newest last.
 - **Finding:** 25 tests run; 12 errors, 1 failure, 1 skipped. Pipeline code is unchanged from commit a8087c3.
   - `tests/test_pipeline.py` (11 errors, ShellIntegration 1): written for the pre-rework API (17 Oct); calls `3D_Code/run.py` and `ground_truth.source_density`, removed in the 19 Oct rework.
   - `test_boundary_pilot.BoundaryIntegrationTests` (2 errors): `ground_truth.sourceDensity` no longer exists; fixture does not create `results/` before `checkExperiment` writes to it.
-  - `test_boundary_pilot.testRejectInvalidWindowAndNyquist` (1 failure): `validateConfig` does not check the beat window or the filter band against Nyquist.
-- **Action:** Repair or retire stale tests and add the two missing validations in Step 1/2 work. Until then these tests give no protection.
+  - `test_boundary_pilot.testRejectInvalidWindowAndNyquist` (1 failure): ~~`validateConfig` does not check the beat window or the filter band against Nyquist.~~ **Corrected 28 Oct:** `validateConfig` does reject both. The test hard-coded a 500 Hz band, which hit Nyquist only at the old 1 ms output interval; at 0.2 ms Nyquist is 2,500 Hz. The test expectation was stale, not the code.
+- **Action:** resolved in VL-2026-10-28-05.
 
 ## VL-2026-10-27-06 - Bayesian refit convergence
 - **Type:** Numerical (sampler). **Result:** Pass for lesion fits.
@@ -62,3 +62,14 @@ numerical verification and physiological validation. Newest last.
 
 ## Pending - Step 2 MPI equivalence
 - Awaiting workstation runs (`3D_Code/numerics/README.md`).
+
+## VL-2026-10-28-05 - Stale tests repaired or retired; full suite passes
+- **Type:** Execution. **Result:** Pass, 31 tests (1 opt-in slow test skipped).
+- **test_boundary_pilot.py (10/10):** no pipeline code changed. Fixes were to stale test assumptions from before the V2 rework:
+  - synthetic recovery now built with `electrode_synthesis.pointOperator` (removed `sourceDensity`/`pointLeadField`); the end-to-end test still recovers the known -0.07 scale (rtol 1e-3);
+  - fixture frames follow `sampleStepMs` (were hard-coded 1 ms); filter rate derived from config;
+  - `startAnalysis` called before `checkExperiment`, as `run_boundary.py` does;
+  - Nyquist limit derived from config (rejects at Nyquist, accepts just below);
+  - expected record count derived from declared recording labels (V2 keeps 4 per placement, not 61); figures checked by name (7, incl. two beat-stability figures).
+- **test_pipeline.py retired** (deleted; in git history): tested the pre-rework carputils pipeline (`3D_Code/run.py`, `make_electrodes.py`, old `egm`/`ground_truth` API) removed in commit 1a71aa5. Four behaviours that still exist were ported to `tests/test_shared_pipeline.py` (IGB offset/endian/truncation and frame selection; recording weights reconstruct all 61 recordings; filter rejects invalid bands; quiescent tissue gives no FOV).
+- **Run:** `python3 -m unittest discover -s tests -v` (scipy installed) or with `PYTHONPATH=_refinement_work/shim` on the analysis VM.
