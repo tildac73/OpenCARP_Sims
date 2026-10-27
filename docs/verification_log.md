@@ -84,3 +84,22 @@ numerical verification and physiological validation. Newest last.
 - **Conclusion:** 8 surface samples per electrode is adequate at 0.5 mm mesh. Re-test at the production mesh, where the electrode sits relatively closer to more elements.
 - **Note:** with synthesised signals the reconstruction check is not independent (same operator as ground truth; shape error ~1e-7).
 - **Bugs found and fixed during this check:** cached frames missed the 7600 ms end frame; truncated egm time axis misaligned the Vm frame indices used by contributions (fixed by keeping the full axis, NaN outside the synthesised interval); numpy filter stand-in now accepts a sampling rate within 1e-9 relative of 5 kHz (float error from a time axis starting at 7125 ms).
+
+## VL-2026-10-28-07 - Step 4: lead-field quadrature against a closed-form solution
+- **Type:** Numerical verification (analytic). **Result:** Pass.
+- **Reference:** uniformly polarised tissue box; potential reduced to face integrals of 1/r (closed form, `Shared_Pipeline/analytic_fields.py`; checked against brute-force integration to 6e-8). Mesh: regular 6-tet decomposition at 0.5 mm; linear Vm is exact on linear elements, so quadrature is the only error.
+- **Result** (`3D_Code/numerics/quadrature_study.py`; error / far-field scale, worst of 3 lateral positions, near radius 1.5 mm), localised 1 x 1 x 0.5 mm source:
+
+  | Height | Level 0 (centroid) | Level 1 | Level 2 | Level 3 |
+  | --- | --- | --- | --- | --- |
+  | 0.05 mm | 7.3 % | 2.7 % | 0.44 % | 0.08 % |
+  | 0.25 mm | 0.86 % | 0.19 % | 0.045 % | 0.011 % |
+  | 1 mm | 0.08 % | 0.03 % | 0.014 % | 0.011 % |
+
+  Whole-slab (far-field dominated) errors are smaller. Near radius 3 mm vs 1.5 mm: < 0.02 % difference at >= 1 mm.
+- **Tests:** `tests/test_lead_field.py` (8 tests, incl. infinite-slab limit -J t / 2 sigma_b, equal-volume subdivision, default unchanged).
+
+## VL-2026-10-28-08 - Step 4: effect of refined quadrature on the pilot
+- **Type:** Numerical. **Result:** No material change at pilot geometry.
+- **Synthesis vs openCARP** (all 4,304 points x 2 conditions): unchanged by subdivision (rel RMS median at 0.25-0.5 mm: 1.88 -> 1.99 % intact, 1.76 -> 1.73 % lesion; >= 0.5 mm identical). The residual near-surface difference is therefore not from synthesis quadrature (accurate to < 0.05 % there); it lies in openCARP's recovery discretisation, which Step 6 replaces.
+- **Ground truth** (25-100 ms, `run_window.py --quadrature 1.5 2`): FOV80 unchanged for 48/48; max reconstruction shape error 0.0175 -> 0.0163; 48/48 eligible; pilot acceptance passed.

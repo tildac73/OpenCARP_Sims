@@ -67,3 +67,9 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
 ## DL-2026-10-28-05 - Convergence tolerances adopted (Step 3)
 - **Status:** Decided. **Irreversible:** No.
 - **Decision:** between the two finest settings: CV <= 2 %, PP <= 5 %, FOV80 <= one ring (0.5 mm), change point <= 0.5 mm. Step 2 MPI tolerances also adopted (activation <= 0.02 ms, Vm <= 0.1 mV, phi_e peak-to-peak <= 0.1 %).
+
+## DL-2026-10-28-06 - Near-field lead-field quadrature for the reference model
+- **Status:** Decided. **Irreversible:** No.
+- **Decision:** ground truth and electrode synthesis use recursive midpoint subdivision (level 2) for elements within 3 mesh spacings of each field point (1.5 mm at 0.5 mm mesh); set via `analysis.leadFieldQuadrature`. The v2-pilot results keep the centroid rule (option absent) so they still reproduce exactly.
+- **Evidence:** VL-2026-10-28-07/08. Analytic box: level 2 error <= 0.44 % of the potential scale at 0.05 mm, <= 0.05 % at >= 0.25 mm; centroid rule 7.3 % at 0.05 mm.
+- **Why adopt although the pilot is unaffected:** the production mesh, thinner walls and smaller standoffs move field points closer to elements in mesh units; the cost is small (~340 subdivided elements per point).

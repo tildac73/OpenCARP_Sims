@@ -43,7 +43,7 @@ from boundary_clinical import analyseChangePoints  # noqa: E402
 SOURCE_RUN = ROOT / "boundaryPilotV2 2"
 
 
-def prepareFolder(out, window, noiseSd, egmSource=None, electrodeSamples=None):
+def prepareFolder(out, window, noiseSd, egmSource=None, electrodeSamples=None, quadrature=None):
     """egmSource: folder holding <condition>/egm.npz to use instead of the run's own electrode
     signals (e.g. re-synthesised with more surface samples); all other inputs stay linked."""
     out.mkdir(parents=True, exist_ok=True)
@@ -69,6 +69,8 @@ def prepareFolder(out, window, noiseSd, egmSource=None, electrodeSamples=None):
         config["analysis"]["noiseSdMv"] = noiseSd
     if electrodeSamples is not None:
         config["electrodes"]["axialSamples"], config["electrodes"]["angularSamples"] = electrodeSamples
+    if quadrature is not None:
+        config["analysis"]["leadFieldQuadrature"] = dict(nearRadiusMm=quadrature[0], subdivisionLevel=int(quadrature[1]))
     original = json.loads((SOURCE_RUN / "results/calibration.json").read_text())
     (out / "refinement.json").write_text(json.dumps(dict(
         sourceRun=str(SOURCE_RUN.name),
@@ -79,6 +81,7 @@ def prepareFolder(out, window, noiseSd, egmSource=None, electrodeSamples=None):
         physiologyPassedOriginal=json.loads((SOURCE_RUN / "results/pilotStatus.json").read_text())["physiologyPassed"],
         egmSource=None if egmSource is None else str(egmSource),
         electrodeSamples=electrodeSamples,
+        leadFieldQuadrature=None if quadrature is None else dict(nearRadiusMm=quadrature[0], subdivisionLevel=int(quadrature[1])),
     ), indent=2))
     (out / "config.json").write_text(json.dumps(config, indent=2))
     return config, original["gain"]
@@ -109,10 +112,12 @@ def main():
     parser.add_argument("--egm-source", type=Path, default=None,
                         help="folder with <condition>/egm.npz replacing the run's electrode signals")
     parser.add_argument("--electrode-samples", type=int, nargs=2, default=None, metavar=("AXIAL", "ANGULAR"))
+    parser.add_argument("--quadrature", type=float, nargs=2, default=None, metavar=("NEAR_RADIUS_MM", "LEVEL"),
+                        help="near-field lead-field subdivision for ground truth (Step 4)")
     arguments = parser.parse_args()
     out = arguments.out.resolve()
     config, gain = prepareFolder(out, arguments.window, arguments.noise_sd, arguments.egm_source,
-                                 arguments.electrode_samples)
+                                 arguments.electrode_samples, arguments.quadrature)
     physiologyPassed = json.loads((out / "refinement.json").read_text())["physiologyPassedOriginal"]
     analysis.calibrateGain = fixedGain(gain, out)
 

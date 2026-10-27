@@ -22,6 +22,7 @@ import numpy as np
 from scipy import sparse
 import egm
 import electrode_synthesis
+import lead_field
 import igb_io
 
 
@@ -93,28 +94,31 @@ def readElementGeometry(runFolder, condition):
                            volumes, conductivity, extracellularConductivity)
 
 
-def finiteRecordingField(samplePositions, weights, elementCentres):
-    """Average cylinder-surface samples and apply the actual recording weights."""
+def finiteRecordingField(samplePositions, weights, elementCentres, vertices=None, quadrature=None):
+    """Average cylinder-surface samples and apply the actual recording weights.
+
+    quadrature: optional {"nearRadiusMm": r, "subdivisionLevel": k} (lead_field.py, Step 4).
+    None keeps the one-point centroid rule used for the v2-pilot results.
+    """
+    quadrature = quadrature or {}
+    near, level = quadrature.get("nearRadiusMm", 0.0), quadrature.get("subdivisionLevel", 0)
     field = np.zeros_like(elementCentres)
     for electrode in np.flatnonzero(np.abs(weights) > 1e-12):
         samples = samplePositions[electrode]
-        for sample in samples:
-            displacement = sample - elementCentres
-            distance = np.linalg.norm(displacement, axis=1)
-            if np.any(distance == 0):
-                raise ValueError("A recovery point coincides with an element centroid")
-            field += weights[electrode] * displacement / distance[:, None]**3 / len(samples)
+        sampleFields = lead_field.averageLeadField(samples, vertices, elementCentres, near, level)
+        field += weights[electrode] * sampleFields.mean(axis=0)
     return field
 
 
-def ringOperator(geometry, samplePositions, weights, anchor, ringStepMm, source="monodomain"):
+def ringOperator(geometry, samplePositions, weights, anchor, ringStepMm, source="monodomain", quadrature=None):
     """Map nodal Vm to a trace for each cylindrical tissue ring using sparse weights.
 
     This sums conductivity * grad(Vm) * lead field * volume over tetrahedra.
     Constructing the map once avoids a huge element-by-time source array.
     Ring membership uses element centroids and includes the full thickness.
     """
-    field = finiteRecordingField(samplePositions, weights, geometry.centres)
+    vertices = geometry.nodePositions[geometry.elementNodes] if quadrature else None
+    field = finiteRecordingField(samplePositions, weights, geometry.centres, vertices, quadrature)
     coefficients = np.einsum(
         "ec,ec,ecj,e->ej", field, electrode_synthesis.sourceConductivity(geometry, source),
         geometry.gradients, geometry.volumes,
@@ -139,8 +143,8 @@ def readFilteredVoltage(simulationFolder, frames, bandHz, sampleRateHz, filterOr
     return voltage
 
 
-def reconstructRecording(geometry, voltage, samplePositions, weights, anchor, ringStepMm):
-    operator, radii = ringOperator(geometry, samplePositions, weights, anchor, ringStepMm)
+def reconstructRecording(geometry, voltage, samplePositions, weights, anchor, ringStepMm, quadrature=None):
+    operator, radii = ringOperator(geometry, samplePositions, weights, anchor, ringStepMm, quadrature=quadrature)
     ringTraces = operator @ voltage
     fullTrace = ringTraces.sum(axis=0)
     energy = float(fullTrace @ fullTrace)

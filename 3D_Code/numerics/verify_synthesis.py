@@ -40,7 +40,7 @@ def frameSlice(path, startMs, endMs):
     return slice(first, stop)
 
 
-def runChunk(run, condition, start, count, startMs, endMs, outFolder, sigmaBath, source):
+def runChunk(run, condition, start, count, startMs, endMs, outFolder, sigmaBath, source, nearRadius=0.0, level=0):
     began = time.time()
     geometry = ground_truth.readElementGeometry(run, condition)
     points = np.loadtxt(run / "electrodes" / "recoveryPoints.pts", skiprows=1, ndmin=2) / 1000.0
@@ -52,7 +52,8 @@ def runChunk(run, condition, start, count, startMs, endMs, outFolder, sigmaBath,
     voltage = igb_io.read(vmPath, frames).T.astype(np.float64)              # (nodes, time)
     recovered = igb_io.read(phiePath, frames)[:, start:stop].T.astype(np.float64)
     synthesised = synthesis.pointOperator(geometry, points[start:stop], sigmaBathSPerM=sigmaBath,
-                                          source=source) @ voltage
+                                          source=source, nearRadiusMm=nearRadius,
+                                          subdivisionLevel=level) @ voltage
     rows = []
     for offset, (a, b) in enumerate(zip(synthesised, recovered)):
         ac, bc = a - a.mean(), b - b.mean()
@@ -102,15 +103,19 @@ def main():
     parser.add_argument("--sigma-bath", type=float, default=1.0, help="S/m; openCARP g_bath default")
     parser.add_argument("--source", choices=["monodomain", "intracellular"], default="monodomain")
     parser.add_argument("--summarise", action="store_true")
+    parser.add_argument("--near-radius", type=float, default=0.0, help="mm; near-field subdivision radius")
+    parser.add_argument("--level", type=int, default=0, help="near-field subdivision level")
     arguments = parser.parse_args()
     run = arguments.run.resolve()
     outFolder = ROOT / "_verification" / run.name.replace(" ", "_")
+    if arguments.level > 0:
+        outFolder = outFolder / f"quadrature_r{arguments.near_radius}_L{arguments.level}"
     total = len(np.loadtxt(run / "electrodes" / "recoveryPoints.pts", skiprows=1, ndmin=2))
     if arguments.summarise:
         summarise(arguments.condition, outFolder, total)
     else:
         runChunk(run, arguments.condition, arguments.start, arguments.count, *arguments.window,
-                 outFolder, arguments.sigma_bath, arguments.source)
+                 outFolder, arguments.sigma_bath, arguments.source, arguments.near_radius, arguments.level)
 
 
 if __name__ == "__main__":

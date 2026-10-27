@@ -24,6 +24,8 @@ Units: positions mm, Vm mV, conductivity S/m -> potential mV.
 """
 import numpy as np
 
+import lead_field
+
 
 def monodomainConductivity(intracellular, extracellular):
     """Per-axis series combination G_i G_e / (G_i + G_e); valid for coaxial diagonal tensors."""
@@ -46,11 +48,14 @@ def sourceConductivity(geometry, source="monodomain"):
     raise ValueError("source must be 'monodomain' or 'intracellular'")
 
 
-def pointOperator(geometry, points, sigmaBathSPerM=1.0, source="monodomain", batch=8):
+def pointOperator(geometry, points, sigmaBathSPerM=1.0, source="monodomain", batch=8,
+                  nearRadiusMm=0.0, subdivisionLevel=0):
     """Dense (points, nodes) matrix mapping nodal Vm (mV) to potential (mV) at each point.
 
     Fibres must be x-aligned (checked by readElementGeometry), so the diagonal conductivity
-    is expressed in mesh axes.
+    is expressed in mesh axes. nearRadiusMm / subdivisionLevel enable near-field subdivision
+    (lead_field.py; Step 4 setting: radius = 3 mesh spacings, level 2). Defaults keep the
+    one-point centroid rule verified in VL-2026-10-28-02.
     """
     points = np.atleast_2d(np.asarray(points, float))
     if points.shape[1] != 3 or not np.isfinite(points).all():
@@ -65,13 +70,11 @@ def pointOperator(geometry, points, sigmaBathSPerM=1.0, source="monodomain", bat
     flatNodes = geometry.elementNodes.ravel()
     operator = np.empty((len(points), nodeCount))
     prefactor = -1.0 / (4.0 * np.pi * sigmaBathSPerM)
+    vertices = geometry.nodePositions[geometry.elementNodes] if subdivisionLevel > 0 else None
     for first in range(0, len(points), batch):
         chunk = points[first:first + batch]
-        displacement = chunk[:, None, :] - geometry.centres[None, :, :]
-        distance = np.linalg.norm(displacement, axis=2)
-        if np.any(distance < 1e-9):
-            raise ValueError("A field point coincides with an element centroid")
-        leadField = displacement / distance[..., None] ** 3            # (p, e, 3) 1/mm^2
+        leadField = lead_field.averageLeadField(chunk, vertices, geometry.centres,
+                                                nearRadiusMm, subdivisionLevel)   # (p, e, 3) 1/mm^2
         elementWeights = np.einsum("pec,ecj->pej", leadField, weightedGradients)
         for row, weights in enumerate(elementWeights):
             operator[first + row] = np.bincount(flatNodes, weights=weights.ravel(), minlength=nodeCount)

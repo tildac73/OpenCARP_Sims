@@ -297,6 +297,7 @@ def computeContributions(runFolder, condition, config, measurements, gain, physi
             fullTrace, radius, radii, curve = groundTruth.reconstructRecording(
                 geometry, selectedVoltage, source["uni_sample_xyz"][record["placement"]],
                 weights, anchor, config["analysis"].get("contributionRingStepMm", config["meshSpacingMm"]),
+                quadrature=config["analysis"].get("leadFieldQuadrature"),
             )
             recovered = measuredTraces[record["traceIndex"]].astype(float) / gain
             agreement = waveformAgreement(fullTrace, recovered)
