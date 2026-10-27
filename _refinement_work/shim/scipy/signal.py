@@ -9,9 +9,10 @@ _SOS_2_30_450_5000 = np.array([
 
 
 def butter(order, band, btype="low", fs=None, output="ba"):
-    if (order, tuple(float(b) for b in band), btype, float(fs), output) != (
-        2, (30.0, 450.0), "bandpass", 5000.0, "sos"
-    ):
+    # fs is compared with a 1e-9 relative tolerance: a sampling rate derived from a time axis that
+    # starts far from zero (e.g. 7125 ms) carries ~4e-12 relative float error; scipy would accept it.
+    if (order, tuple(float(b) for b in band), btype, output) != (2, (30.0, 450.0), "bandpass", "sos") \
+            or abs(float(fs) / 5000.0 - 1.0) > 1e-9:
         raise NotImplementedError("shim only supports the pipeline's declared filter")
     return _SOS_2_30_450_5000.copy()
 

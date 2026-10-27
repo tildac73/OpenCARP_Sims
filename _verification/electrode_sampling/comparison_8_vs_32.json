@@ -1,0 +1,29 @@
+{
+  "label": "8_vs_32",
+  "coarse": "_verification/electrode_sampling/run_s2x4",
+  "fine": "_verification/electrode_sampling/run_s4x8",
+  "tolerances": {
+    "ppRelative": 0.05,
+    "fov80Mm": 0.5,
+    "changePointMm": 0.5
+  },
+  "ppRelativeMaxAll": 0.029944989614241805,
+  "ppRelativeMaxWithin10mm": 0.029944989614241805,
+  "ppRelativeMedian": 0.006581182398625256,
+  "ppWorst": {
+    "recordingId": "lesion:0:37:bi:E5-E6|E9",
+    "kindC": "bi",
+    "gapMmC": 0.25,
+    "distanceInsideMmC": -0.5,
+    "ppMvC": 0.851288968064786,
+    "ppMvF": 0.8265382876260507
+  },
+  "fov80MaxAbsMm": 0.0,
+  "fov80Changed": 0,
+  "fov80Count": 48,
+  "changePointMaxAbsMmAllPrimary": 10.499999999999996,
+  "changePointMaxAbsMmSupported": 0.049999999999998934,
+  "primaryFits": 62,
+  "fitStatusChanges": 4,
+  "passed": false
+}

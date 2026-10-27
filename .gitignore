@@ -28,3 +28,7 @@ _refinement_work/bayes_*/*.rds
 R_results/cache/
 R_results/**/*.rds
 R_results/**/*.tiff
+
+# Electrode-sampling convergence intermediates (regenerable, ~GB); keep comparison summaries
+_verification/electrode_sampling/s*/
+_verification/electrode_sampling/run_*/
