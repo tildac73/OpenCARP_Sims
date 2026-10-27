@@ -52,3 +52,18 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
 ## DL-2026-10-28-02 - Step 2 equivalence test on a reduced slab
 - **Status:** Decided. **Irreversible:** No.
 - **Decision:** serial vs MPI equivalence tested with `3D_Code/configs/mpi_equivalence.json` (20 x 30 x 4 mm, 3 beats; all physics, solver and output settings as boundary_pilot.json). Equivalence of the parallel solver does not depend on domain size; a smaller run keeps the test short.
+
+## DL-2026-10-28-03 - Conduction velocity target: 0.90 m/s along fibres, sensitivity 0.70 and 1.25 m/s
+- **Status:** Decided (provisional until Step 3 tuning shows it is reachable at the production mesh). **Irreversible:** Yes, once production runs start.
+- **Evidence:** human sinus-rhythm CV 89.6 cm/s LA median, 412 patients (van Schie 2021); 90-92 cm/s biatrial (Heida 2021); 88 +/- 9 cm/s RA (Hansson 1998); 1.25 +/- 0.38 m/s endocardial EAM normal-voltage (Heil 2023); 70 +/- 10 cm/s LA controls (Zheng, via Heida). No fibre-resolved human atrial-body value found; Hansson 1998 found no group-level direction dependence (directions not fibre-referenced).
+- **Decision:** tune longitudinal planar CV to 0.90 m/s; transverse follows the Roberts and Scher anisotropy (DL-2026-10-28-04). Sensitivity runs at 0.70 and 1.25 m/s.
+- **Limitation (state in thesis):** clinical values are direction-mixed local estimates, so the longitudinal target is conservative; the pilot's 0.35 m/s is outside every reported value.
+
+## DL-2026-10-28-04 - Conductivity strategy (R4): Roberts and Scher anisotropy, magnitudes scaled to the CV target
+- **Status:** Decided. **Irreversible:** Yes, once production runs start.
+- **Decision:** keep the intracellular and extracellular along/across ratios of Roberts and Scher 1982 (canine LV in situ; 5.8 intracellular, 1.5 extracellular); scale magnitudes to reach DL-2026-10-28-03 at the production mesh using openCARP CV tuning. Record the scale factors as a calibration, not a measurement.
+- **Limitation:** ventricular, canine anisotropy applied to human atrium; no atrial bidomain conductivities were found.
+
+## DL-2026-10-28-05 - Convergence tolerances adopted (Step 3)
+- **Status:** Decided. **Irreversible:** No.
+- **Decision:** between the two finest settings: CV <= 2 %, PP <= 5 %, FOV80 <= one ring (0.5 mm), change point <= 0.5 mm. Step 2 MPI tolerances also adopted (activation <= 0.02 ms, Vm <= 0.1 mV, phi_e peak-to-peak <= 0.1 %).
