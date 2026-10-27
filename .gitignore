@@ -32,3 +32,8 @@ R_results/**/*.tiff
 # Electrode-sampling convergence intermediates (regenerable, ~GB); keep comparison summaries
 _verification/electrode_sampling/s*/
 _verification/electrode_sampling/run_*/
+# Step 4 intermediates (regenerable with removal_prediction.py cache / run_window.py --quadrature)
+_verification/ground_truth_metrics/removal_cache/
+_verification/quadrature/run_w25_100_L2/*
+!_verification/quadrature/run_w25_100_L2/config.json
+!_verification/quadrature/run_w25_100_L2/refinement.json

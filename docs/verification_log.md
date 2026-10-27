@@ -103,3 +103,34 @@ numerical verification and physiological validation. Newest last.
 - **Type:** Numerical. **Result:** No material change at pilot geometry.
 - **Synthesis vs openCARP** (all 4,304 points x 2 conditions): unchanged by subdivision (rel RMS median at 0.25-0.5 mm: 1.88 -> 1.99 % intact, 1.76 -> 1.73 % lesion; >= 0.5 mm identical). The residual near-surface difference is therefore not from synthesis quadrature (accurate to < 0.05 % there); it lies in openCARP's recovery discretisation, which Step 6 replaces.
 - **Ground truth** (25-100 ms, `run_window.py --quadrature 1.5 2`): FOV80 unchanged for 48/48; max reconstruction shape error 0.0175 -> 0.0163; 48/48 eligible; pilot acceptance passed.
+
+## VL-2026-10-28-09 - Step 4: extended ground-truth descriptors on the pilot
+- **Type:** Implementation check plus descriptive output. **Result:** Pass (cylinder family reproduces stored FOV80 for 8/8).
+- **How:** `Shared_Pipeline/contribution_metrics.py` (nested-region fractions f(k) = 1 - ||s - S_k||^2/||s||^2, persistent X % extents, energy footprint); driver `3D_Code/numerics/ground_truth_metrics.py`. Intact recordings, catheter centre y = 0, both standoffs, 4 declared configurations, 25-100 ms, level-2 near-field quadrature (DL-2026-10-28-06). Outputs `_verification/ground_truth_metrics/{metrics,curves,halfPlaneProfiles}.csv`.
+- **Check:** cylinder 80 % extent = stored `fov80ReconstructionMm` for 8/8 (7.5, 8.5, 3.0, 3.5, 3.5 x 4 mm). Reconstruction |corr| >= 0.99996.
+- **Results (0.25 / 1.0 mm gap):**
+
+  | Recording | Sphere 50 / 80 / 95 % (mm) | Volume in 80 % sphere (mm^3) | Depth 50 / 80 / 95 % (mm) | Energy ellipse sigma major x minor (mm), axis | Energy-weighted depth (mm) |
+  | --- | --- | --- | --- | --- | --- |
+  | Unipolar E5 | 5.0/8.0/13.5 ; 6.0/9.5/15.0 | 693 ; 966 | 1.0/1.75/2.75 ; 1.0/2.0/3.0 | 3.31 x 2.21 ; 4.52 x 3.11, along fibres | 0.87 ; 1.13 |
+  | Bipole E5-E6|E9 | 2.5/4.0/6.0 ; 3.5/5.0/7.0 | 97 ; 148 | 0.5/1.25/2.0 ; 0.5/1.25/2.25 | 2.29 x 1.45 ; 2.57 x 2.01, along fibres | 0.70 ; 0.87 |
+  | Omnipolar cliques | as bipole (centroid offset +-1.33 mm in y toward the clique's third electrode) | 97 ; 148 | as bipole | as bipole | as bipole |
+
+- **Observations (numerical, this geometry only):** footprints are elongated along the fibre axis (aspect 1.3-1.6). The 95 % depth extent (2.0-3.0 mm) is close to the 4 mm wall, so wall thickness sweeps will reach a regime where the far wall truncates the field of view. The two omnipolar cliques sense the same tissue volume but are centred 1.33 mm either side of the anchor; anchor choice therefore matters for omnipolar distance conventions.
+- **Tests:** `tests/test_contribution_metrics.py` (8 synthetic tests: known radial split, non-monotone cancellation, zero signal, bin closure, anisotropic footprint axes/angle/depth, sphere volume). Full suite: 47 pass, 1 slow test skipped by design.
+
+## VL-2026-10-28-10 - Step 4: tissue-removal (boundary-matched) prediction of the lesion profiles
+- **Type:** Numerical decomposition. **Result:** removal of tissue alone explains the measured lesion PP within 0-9 %.
+- **How:** `3D_Code/numerics/removal_prediction.py` (stages `cache`, `assemble`). For every clean lesion recording (520 = 65 placements x 2 gaps x 4 configurations): its own placement, sample positions and selected weights; intact Vm; source summed only over elements that remain viable (signed distance < 0; the lesion half-space has zero conductivity in the lesion mesh). Fixed model-to-mV scale from the matching intact recording (-0.0367 for all configurations and gaps, i.e. the held gain). Output `_verification/ground_truth_metrics/removalPrediction.csv`.
+- **Result (median measured / predicted PP; distance inside lesion; 89 rows with measured PP < 0.01 mV excluded as ill-conditioned):**
+
+  | Configuration | Viable side (< -2 mm) | -2 to 0 | 0 to 2 | 2 to 5 | 5 to 10 |
+  | --- | --- | --- | --- | --- | --- |
+  | Unipolar E5 | 1.00 | 0.99 | 1.00 | 1.00 | 1.00 |
+  | Bipole E5-E6|E9 | 1.00 | 0.95-0.96 | 0.94-0.97 | 0.95-0.96 | 0.95-0.96 |
+  | Omnipolar E5-E6-E9 | 1.00 | 0.93-0.97 | 0.96-0.97 | 0.95-0.96 | 0.95 |
+  | Omnipolar E9-E10-E5 | 1.00-1.01 | 0.94-0.96 | 0.91-0.94 | 0.93-0.94 | 0.94-0.95 |
+
+- **Interpretation:** the residual 3-9 % reduction for differential recordings over and near the lesion is the effect of the lesion on activation and on the source field next to the boundary (plus the ~2 % openCARP-vs-synthesis near-surface difference, VL-2026-10-28-08). It is not tissue removal.
+- **Earlier unmatched half-plane prediction:** with intact weights held fixed (`halfPlaneProfiles.csv`), unipolar matched (median ratio 0.97) but bipole and omnipolar did not (ratios 0.32-0.92). Cause: lesion recordings re-select bipole/omnipolar direction (only 17-29 of 65 rows keep the intact weights). The matched prediction is the valid boundary-matched ground truth.
+- **Limitations:** straight boundary, so translation invariance holds by construction; a curved or patchy lesion needs the matched calculation per placement (as implemented). One slab, one activation direction (wavefront parallel to fibres and to the boundary normal as configured in the pilot).

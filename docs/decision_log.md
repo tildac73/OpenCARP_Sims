@@ -73,3 +73,9 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
 - **Decision:** ground truth and electrode synthesis use recursive midpoint subdivision (level 2) for elements within 3 mesh spacings of each field point (1.5 mm at 0.5 mm mesh); set via `analysis.leadFieldQuadrature`. The v2-pilot results keep the centroid rule (option absent) so they still reproduce exactly.
 - **Evidence:** VL-2026-10-28-07/08. Analytic box: level 2 error <= 0.44 % of the potential scale at 0.05 mm, <= 0.05 % at >= 0.25 mm; centroid rule 7.3 % at 0.05 mm.
 - **Why adopt although the pilot is unaffected:** the production mesh, thinner walls and smaller standoffs move field points closer to elements in mesh units; the cost is small (~340 subdivided elements per point).
+
+## DL-2026-10-28-07 - Ground-truth descriptor set for the reference model (proposed)
+- **Status:** Proposed; needs confirmation. **Irreversible:** No.
+- **Proposal:** primary ground truth stays FOV80 (cylinder, persistent 80 %). Reported alongside: sphere radius and volume at 50/80/95 %, depth extents at 50/80/95 %, energy footprint ellipse (sigma major/minor, axis angle, centroid offset, energy-weighted depth). For lesion experiments, the boundary-matched ground truth is the matched tissue-removal prediction (VL-2026-10-28-10), and the change point is compared with the distance at which that predicted profile reaches its plateau (definition to be fixed before sweeps).
+- **Why:** FOV80 alone is a lateral radius; wall-thickness and standoff sweeps need depth and volume, fibre-orientation sweeps need the ellipse, and the change-point validation needs a ground truth defined in the same geometry as the change point.
+- **Open:** the plateau definition for the removal-predicted profile (e.g. distance at which predicted PP falls to within X % of its far-lesion value); choose X before any sweep result is seen.
