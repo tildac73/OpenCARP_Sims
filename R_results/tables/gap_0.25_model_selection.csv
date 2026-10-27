@@ -1,0 +1,9 @@
+"Location","Electrode","model","n","AIC","BIC","dAIC","best"
+"Simulated slab","Unipolar","Exponential",29,-28.7550354595704,-24.653147969611,25.8299217514361,FALSE
+"Simulated slab","Unipolar","Power-law",29,-54.5849572110065,-50.4830697210471,0,TRUE
+"Simulated slab","Bipolar","Exponential",29,45.2178468950413,49.3197343850007,26.0132386501876,FALSE
+"Simulated slab","Bipolar","Power-law",29,19.2046082448537,23.3064957348131,0,TRUE
+"Simulated slab","Omnipolar E5-E6-E9","Exponential",30,43.7377909357477,47.9413830807342,0,TRUE
+"Simulated slab","Omnipolar E5-E6-E9","Power-law",30,56.7967450450482,61.0003371900347,13.0589541093005,FALSE
+"Simulated slab","Omnipolar E9-E10-E5","Exponential",29,49.8845267629288,53.9864142528882,50.2302913488176,FALSE
+"Simulated slab","Omnipolar E9-E10-E5","Power-law",29,-0.345764585888853,3.75612290407057,0,TRUE

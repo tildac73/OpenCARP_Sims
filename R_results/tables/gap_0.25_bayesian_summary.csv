@@ -1,0 +1,33 @@
+"Location","Electrode","model","term","mean","lower","upper","Rhat","n_eff"
+"Simulated slab","Unipolar","Power-law","cp",2.63615781519704,2.57257808874154,2.67413886457268,1.0001117694897,3013
+"Simulated slab","Unipolar","Power-law","beta0",-0.889444548084089,-0.971399648725555,-0.799245034330175,1.00838381045263,518
+"Simulated slab","Unipolar","Power-law","sigma",0.0950127865615748,0.0694325942315323,0.123036856346038,1.00090247161838,3312
+"Simulated slab","Unipolar","Power-law","beta1",-0.640364536495191,-0.684722763857595,-0.5966878802117,1.00993859105826,509
+"Simulated slab","Unipolar","Power-law","cp_mm",13.9663006243772,13.099552784464,14.4998581203133,NA,NA
+"Simulated slab","Unipolar","Power-law","value_at_cp",0.0760006195883095,0.0711866878868834,0.0806815842403889,NA,NA
+"Simulated slab","Unipolar","Power-law","dist_to_0.05mV",26.9198732367022,23.8170920700853,30.1997125249286,NA,NA
+"Simulated slab","Unipolar","Power-law","P(0.05mV reached before cp)",0,NA,NA,NA,NA
+"Simulated slab","Bipolar","Power-law","cp",2.52627036153774,2.35412552822482,2.67397247042504,1.00108668030181,3040
+"Simulated slab","Bipolar","Power-law","beta0",-0.496197801056542,-0.786860375342563,-0.218397512479954,1.00576652607919,576
+"Simulated slab","Bipolar","Power-law","sigma",0.331613291539392,0.244333305601856,0.426090922567901,0.999920991428234,4029
+"Simulated slab","Bipolar","Power-law","beta1",-1.48328452188814,-1.64080242522748,-1.32894526329658,1.00671062612025,539
+"Simulated slab","Bipolar","Power-law","cp_mm",12.5627950028191,10.5289177723691,14.4974456294982,NA,NA
+"Simulated slab","Bipolar","Power-law","value_at_cp",0.0145173923945817,0.0111080659961079,0.0183449817738857,NA,NA
+"Simulated slab","Bipolar","Power-law","dist_to_0.05mV",5.39941030964792,4.91123076088658,5.86819754244766,NA,NA
+"Simulated slab","Bipolar","Power-law","P(0.05mV reached before cp)",1,NA,NA,NA,NA
+"Simulated slab","Omnipolar E5-E6-E9","Exponential","cp",8.6580476060398,8.03585649464947,9.32010967604,1.00224291008335,316
+"Simulated slab","Omnipolar E5-E6-E9","Exponential","beta0",0.0216714973116308,-0.175534833096834,0.226561864265382,1.00521749107928,280
+"Simulated slab","Omnipolar E5-E6-E9","Exponential","sigma",0.201227901928395,0.149755394969069,0.260293444673935,1.00024321310487,3423
+"Simulated slab","Omnipolar E5-E6-E9","Exponential","beta1",-0.471263296022344,-0.516809732640777,-0.425273434891663,1.00445805307487,194
+"Simulated slab","Omnipolar E5-E6-E9","Exponential","cp_mm",8.6580476060398,8.03585649464947,9.32010967604,NA,NA
+"Simulated slab","Omnipolar E5-E6-E9","Exponential","value_at_cp",0.0174191047624754,0.0153093821404483,0.0195700030497335,NA,NA
+"Simulated slab","Omnipolar E5-E6-E9","Exponential","dist_to_0.05mV",6.40924498018213,6.08119144378493,6.7419805038402,NA,NA
+"Simulated slab","Omnipolar E5-E6-E9","Exponential","P(0.05mV reached before cp)",1,NA,NA,NA,NA
+"Simulated slab","Omnipolar E9-E10-E5","Power-law","cp",2.49451001167945,2.34286707176668,2.68680385475611,1.00053637376719,1084
+"Simulated slab","Omnipolar E9-E10-E5","Power-law","beta0",0.281638513327165,0.031148979965216,0.519393930504888,1.00643596008635,338
+"Simulated slab","Omnipolar E9-E10-E5","Power-law","sigma",0.227317190171673,0.170914342493059,0.295789350449926,1.00019219341001,4121
+"Simulated slab","Omnipolar E9-E10-E5","Power-law","beta1",-1.83473833120099,-1.982332705601,-1.69254231038072,1.00680668356039,331
+"Simulated slab","Omnipolar E9-E10-E5","Power-law","cp_mm",12.1640203386341,10.2858025932978,14.5295813036065,NA,NA
+"Simulated slab","Omnipolar E9-E10-E5","Power-law","value_at_cp",0.0137809603313589,0.0106172990952186,0.0168062387495082,NA,NA
+"Simulated slab","Omnipolar E9-E10-E5","Power-law","dist_to_0.05mV",5.97206566573414,5.63636081472818,6.31913919205255,NA,NA
+"Simulated slab","Omnipolar E9-E10-E5","Power-law","P(0.05mV reached before cp)",1,NA,NA,NA,NA

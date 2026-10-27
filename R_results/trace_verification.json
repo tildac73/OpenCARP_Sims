@@ -1,0 +1,6 @@
+{
+  "rows": 4160,
+  "maximum_absolute_PP_difference_mV": 5.960464477539063e-08,
+  "source": "/Users/matildacotton/Downloads/boundaryPilotV2 2/results",
+  "method": "Peak-to-peak recalculated directly from every saved measuredMv electrogram trace; final beat 7500\u20137900 ms."
+}

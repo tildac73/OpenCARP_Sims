@@ -4,3 +4,23 @@
 results/
 __pycache__/
 .DS_Store
+
+# Raw simulation output (~29 GB) stays out of git; small provenance files are kept
+boundaryPilotV2 2/*
+!boundaryPilotV2 2/config.json
+!boundaryPilotV2 2/manifest.json
+!boundaryPilotV2 2/physiologyChecks.csv
+
+# Refinement work: keep code, configs and small summaries; drop data slices and regenerable outputs
+_refinement_work/*.npy
+_refinement_work/*_egm_window.npz
+_refinement_work/*_vm_meta.json
+_refinement_work/run_*/mesh
+_refinement_work/run_*/intact
+_refinement_work/run_*/lesion
+_refinement_work/bayes_*/*.rds
+
+# R outputs: keep scripts, tables, figures (png/pdf); drop fitted-model binaries and large TIFFs
+R_results/cache/
+R_results/**/*.rds
+R_results/**/*.tiff

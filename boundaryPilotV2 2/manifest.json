@@ -1,0 +1,8 @@
+{
+  "model": "Courtemanche, unmodified",
+  "forwardMethod": "openCARP phie recovery; unbounded homogeneous medium",
+  "pilotOnly": true,
+  "spatialConvergenceVerified": false,
+  "domainConvergenceVerified": false,
+  "distanceConvention": "positive inside lesion; virtual boundary retained in intact"
+}

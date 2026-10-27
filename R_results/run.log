@@ -1,0 +1,16 @@
+During startup - Warning message:
+Setting LC_CTYPE failed, using "C" 
+[1] TRUE
+Warning message:
+In readLines(source_file) :
+  incomplete final line found on '/Users/matildacotton/Desktop/Masters_V2/EFOV_analysis_pipeline.Rmd'
+Processing gap 0.25
+Bayesian fit Unipolar
+Bayesian fit Bipolar
+Bayesian fit Omnipolar E5-E6-E9
+Bayesian fit Omnipolar E9-E10-E5
+Processing gap 1
+Bayesian fit Unipolar
+Bayesian fit Bipolar
+Bayesian fit Omnipolar E5-E6-E9
+Bayesian fit Omnipolar E9-E10-E5

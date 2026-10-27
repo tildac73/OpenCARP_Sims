@@ -1,0 +1,11 @@
+{
+  "sourceRun": "boundaryPilotV2 2",
+  "egmWindowMsAfterBeat16Stimulus": [
+    30.0,
+    100.0
+  ],
+  "noiseSdMvPerRawSample": 0.005,
+  "gainHeldAtOriginal": 0.461584160592266,
+  "physiologyRerun": false,
+  "physiologyPassedOriginal": true
+}
