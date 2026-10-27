@@ -35,3 +35,8 @@ numerical verification and physiological validation. Newest last.
 ## VL-2026-10-27-06 - Bayesian refit convergence
 - **Type:** Numerical (sampler). **Result:** Pass for lesion fits.
 - **Result:** all 16 lesion fits (both windows) Rhat <= 1.008, ESS >= 955; intact 7/8 pass (bipole 0.25 mm Rhat 1.07). Original-window refit reproduces earlier R estimates (omnipolar E5-E6-E9 8.66 mm).
+
+## VL-2026-10-27-07 - Step 1 gate: v2-pilot reproduces from a clean checkout
+- **Type:** Reproduction (automated, clean worktree). **Result:** Pass.
+- **How:** `git worktree add` at tag `v2-pilot`; only the raw Vm/egm/mesh folders linked in (untracked by design); `EFOV_RUN_SLOW=1 python3 -m unittest tests.test_v2_reference -v`.
+- **Result:** 5/5 tests pass (77 s). First attempt found `results/calibration.json` and `results/pilotStatus.json` untracked; both now tracked (commit 27fd8d3, tag moved before any push).
