@@ -1,0 +1,114 @@
+{
+  "_purpose": "Readiness plan Steps 2, 3 and 6 (feasibility). One file holds every scientific setting used by 3D_Code/readiness/kit.py. Keys starting with '_' are documentation.",
+  "_sources": {
+    "conductivityRatios": "Roberts and Scher 1982 Circ Res 50:342-351 (canine LV): sigma_il 0.344, sigma_it 0.060, sigma_el 0.117, sigma_et 0.080 S/m; transversely isotropic (n = t). DL-2026-10-28-04.",
+    "cvTarget": "0.90 m/s along fibres (DL-2026-10-28-03; van Schie et al. 2021). Sensitivity 0.70 and 1.25 m/s.",
+    "tuningRule": "sigma_i and sigma_e multiplied by (CV_target / CV)^2 each iteration, ratios fixed: openCARP example 02_EP_tissue/03A_study_prep_tuneCV.",
+    "benchmark": "Niederer et al. 2011 Phil Trans R Soc A 369:4331-4351 (doi:10.1098/rsta.2011.0139); parameter blocks copied from openCARP example 02_EP_tissue/03G_study_resolution. Stimulus 50000 uA/cm^3 / chi 1400 cm^-1 = 35.71 uA/cm^2 transmembrane.",
+    "blood": "0.74 S/m (135 ohm cm), Traugott, Quail and White 1981.",
+    "tolerances": "DL-2026-10-28-05 (CV 2 %, PP 5 %, FOV80 0.5 mm, change point 0.5 mm; MPI activation 0.02 ms, Vm 0.1 mV, phie PP 0.1 %)."
+  },
+
+  "mpi": {
+    "config": "3D_Code/configs/mpi_equivalence.json",
+    "parallelProcesses": 8
+  },
+
+  "cvTuning": {
+    "baseConductivitiesSPerM": {"g_il": 0.344, "g_it": 0.060, "g_in": 0.060, "g_el": 0.117, "g_et": 0.080, "g_en": 0.080},
+    "pilotConductivitiesSPerM": {"g_il": 0.174, "g_it": 0.094, "g_in": 0.094, "g_el": 0.625, "g_et": 0.338, "g_en": 0.338},
+    "_initialScale": "Starting multiplier for the base set. ASSUMPTION/estimate from the pilot (CV 0.352 m/s at monodomain sigma_l 0.136 S/m, 0.5 mm): (0.90/0.352)^2 * 0.136 / 0.0873 = 10.2. Only saves iterations; the result does not depend on it.",
+    "initialScale": 10.0,
+    "targetMPerS": 0.90,
+    "sensitivityTargetsMPerS": [0.70, 1.25],
+    "referenceSpacingMm": 0.125,
+    "evaluationSpacingsMm": [0.5, 0.25, 0.0625],
+    "evaluationTimeStepsUs": [10.0],
+    "pilotConductivitySpacingsMm": [0.5, 0.25, 0.125],
+    "_tuningTolerance": "ASSUMPTION: 1 %, half the 2 % CV convergence tolerance so tuning error does not use up the convergence budget.",
+    "tuningToleranceRelative": 0.01,
+    "maximumIterations": 8,
+    "stripLengthMm": 20.0,
+    "stripCrossSectionMm": 1.0,
+    "_measurement": "CV = 1 / |grad t| from a least-squares plane fit to last-beat activation times (-20 mV upward crossing, openCARP LAT) of all nodes with propagation coordinate in measureRangeMm. Planar wave along the strip; 5 mm clear of the stimulus and of the far end.",
+    "measureRangeMm": [-5.0, 5.0],
+    "timeStepUs": 20.0,
+    "outputStepMs": 1.0,
+    "beatCount": 3,
+    "cycleLengthMs": 500.0,
+    "lastBeatDurationMs": 80.0,
+    "stimulus": {"durationMs": 2.0, "strength": 50.0, "stripWidthMm": 0.5},
+    "_captureRule": "If a tuning run does not activate the measurement range in every beat, the strength is doubled and the run repeated, at most twice per tuning (50 -> 100 -> 200 uA/cm^2). CV is measured 5 mm or more from the stimulus, on the last beat. The strength that captured at the target CV is recorded and used for every later strip, ladder and bath run; each sensitivity set records its own.",
+    "maximumStrengthDoublings": 2,
+    "conditioningBeats": 1000
+  },
+
+  "niederer": {
+    "slabSizeMm": [20.0, 7.0, 3.0],
+    "spacingsMm": [0.5, 0.2, 0.1],
+    "timeStepsUs": [50.0, 10.0, 5.0],
+    "durationMs": 150.0,
+    "outputStepMs": 1.0,
+    "stimulusBoxMm": [1.5, 1.5, 1.5],
+    "stimulusStrength": 35.71,
+    "stimulusDurationMs": 2.0,
+    "massLumping": [1],
+    "_note": "Corner of the benchmark at the mesher-centred coordinate (-10, -3.5, -1.5) mm. Activation threshold 0 mV, as in the benchmark."
+  },
+
+  "ladder": {
+    "baseConfig": "3D_Code/configs/boundary_pilot.json",
+    "_reducedDomain": "40 x 30 x 4 mm: pilot length along propagation (stimulus-to-grid distance unchanged), half the pilot width across the boundary. ASSUMPTION that discretisation error measured here transfers to the full slab; the domain runs test domain size separately.",
+    "reducedSlabSizeMm": [40.0, 30.0, 4.0],
+    "reducedCentreYmm": [-8.0, -7.5, -7.0, -6.5, -6.0, -5.5, -5.0, -4.5, -4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0],
+    "reducedViableRegionYmm": [1.0, 12.0],
+    "reducedGroundTruthCentreYmm": [0.0],
+    "_beats": "ASSUMPTION: 4 tissue beats after 1000 single-cell conditioning beats (pilot: 16). The physiology stability check on beats 2-4 and the 4-vs-8-beat run test it.",
+    "beatCount": 4,
+    "physiologyResponseWindowMs": [0.0, 400.0],
+    "_window": "PROPOSED (DL-2026-10-28-08): per run, from intact last-beat activation of top-surface nodes under the grid (|x| <= 6.5 mm): start = max(first - 15, stimulus end + 5) ms, end = last + 30 ms after the beat stimulus. Margins reproduce DL-2026-10-27-01 on the pilot (39.3 -> 24.3 ms; 73.4 -> 103.4 ms). Fixed before any EGM is measured.",
+    "windowLeadMs": 15.0,
+    "windowTrailMs": 30.0,
+    "windowMinimumAfterStimulusMs": 5.0,
+    "gridHalfExtentXmm": 6.5,
+    "quadratureNearSpacings": 3,
+    "quadratureLevel": 2,
+    "runs": [
+      {"name": "L1_dx0.50_dt20_out0.10", "spacingMm": 0.5, "timeStepUs": 20.0, "sampleStepMs": 0.1, "domain": "reduced", "tier": "A", "decimateTo": 0.2},
+      {"name": "L2_dx0.25_dt20", "spacingMm": 0.25, "timeStepUs": 20.0, "sampleStepMs": 0.2, "domain": "reduced", "tier": "A"},
+      {"name": "L3_dx0.25_dt10", "spacingMm": 0.25, "timeStepUs": 10.0, "sampleStepMs": 0.2, "domain": "reduced", "tier": "A"},
+      {"name": "L4_dx0.50_dt20_8beats", "spacingMm": 0.5, "timeStepUs": 20.0, "sampleStepMs": 0.2, "domain": "reduced", "beatCount": 8, "tier": "A"},
+      {"name": "D1_dx0.50_40x60", "spacingMm": 0.5, "timeStepUs": 20.0, "sampleStepMs": 0.2, "domain": "pilot", "tier": "A"},
+      {"name": "D2_dx0.50_60x90", "spacingMm": 0.5, "timeStepUs": 20.0, "sampleStepMs": 0.2, "domain": "large", "tier": "A"},
+      {"name": "L5_dx0.125_dt20", "spacingMm": 0.125, "timeStepUs": 20.0, "sampleStepMs": 0.2, "domain": "reduced", "tier": "B"}
+    ],
+    "largeSlabSizeMm": [60.0, 90.0, 4.0],
+    "comparisons": [
+      {"label": "mesh_0.50_vs_0.25", "coarse": "L1_dx0.50_dt20_out0.10/decimated_out0.20", "fine": "L2_dx0.25_dt20"},
+      {"label": "mesh_0.25_vs_0.125", "coarse": "L2_dx0.25_dt20", "fine": "L5_dx0.125_dt20"},
+      {"label": "timestep_20_vs_10", "coarse": "L2_dx0.25_dt20", "fine": "L3_dx0.25_dt10"},
+      {"label": "output_0.20_vs_0.10", "coarse": "L1_dx0.50_dt20_out0.10/decimated_out0.20", "fine": "L1_dx0.50_dt20_out0.10"},
+      {"label": "beats_4_vs_8", "coarse": "L1_dx0.50_dt20_out0.10/decimated_out0.20", "fine": "L4_dx0.50_dt20_8beats"},
+      {"label": "domain_40x60_vs_60x90", "coarse": "D1_dx0.50_40x60", "fine": "D2_dx0.50_60x90"},
+      {"label": "domain_40x30_vs_40x60", "coarse": "L1_dx0.50_dt20_out0.10/decimated_out0.20", "fine": "D1_dx0.50_40x60"}
+    ]
+  },
+
+  "bath": {
+    "_purpose": "Step 6 feasibility only: does openCARP pseudo-bidomain with a blood bath run on this build, and does its phi_e equal an independent finite-element solve of the same discrete problem? Not a production configuration.",
+    "tissueSizeMm": [20.0, 30.0, 4.0],
+    "bathThicknessMm": 10.0,
+    "spacingMm": 0.5,
+    "timeStepUs": 20.0,
+    "outputStepMs": 0.2,
+    "durationMs": 120.0,
+    "bloodConductivitySPerM": 0.74,
+    "bidomainMode": 2,
+    "_ground": "Extracellular ground (stimulus type 3, 0 mV) on the top face of the bath, the face farthest from the tissue.",
+    "electrodeCentreYmm": 0.0,
+    "gapsMm": [0.25, 1.0],
+    "_tolerance": "PROPOSED: openCARP vs independent FEM phi_e at electrode samples, relative RMS <= 1 % per signal and correlation >= 0.9999 (same mesh, same discrete system; differences should be at solver tolerance).",
+    "relativeRmsTolerance": 0.01,
+    "correlationTolerance": 0.9999
+  }
+}

@@ -134,3 +134,25 @@ numerical verification and physiological validation. Newest last.
 - **Interpretation:** the residual 3-9 % reduction for differential recordings over and near the lesion is the effect of the lesion on activation and on the source field next to the boundary (plus the ~2 % openCARP-vs-synthesis near-surface difference, VL-2026-10-28-08). It is not tissue removal.
 - **Earlier unmatched half-plane prediction:** with intact weights held fixed (`halfPlaneProfiles.csv`), unipolar matched (median ratio 0.97) but bipole and omnipolar did not (ratios 0.32-0.92). Cause: lesion recordings re-select bipole/omnipolar direction (only 17-29 of 65 rows keep the intact weights). The matched prediction is the valid boundary-matched ground truth.
 - **Limitations:** straight boundary, so translation invariance holds by construction; a curved or patchy lesion needs the matched calculation per placement (as implemented). One slab, one activation direction (wavefront parallel to fibres and to the boundary normal as configured in the pilot).
+
+## VL-2026-10-28-11 - Readiness kit: software verification only (no simulation)
+- **Type:** Code inspection, unit tests and an end-to-end run against test doubles. **Result:** Pass. **Not verified:** anything requiring openCARP (physics, parameter names on the installed build).
+- **What was built:** `3D_Code/readiness/` (kit, CV strips, Niederer benchmark, ladder, bath check), `Shared_Pipeline/fem_extracellular.py`, settings `3D_Code/configs/readiness_kit.json`, runbook `3D_Code/readiness/README.md`. Pipeline options added, all backward compatible (absent keys keep the v2-pilot behaviour):
+  - `tissue.conductivitiesSPerM` (replaces the gregion[0] lines of the template);
+  - `acceptance.responseWindowMs` (physiology window separate from the EGM window);
+  - credentials removed from every simulator log.
+- **Tests:** `tests/test_readiness.py` (16):
+  - conductivity override, config validation, credential removal;
+  - activation-file formats, the plane-fit CV, smoke copies, log parsing;
+  - the tuning loop, with capture doubling and ratio preservation, against a fake openCARP;
+  - benchmark parameter blocks and coordinates;
+  - every ladder config validates;
+  - the window rule reproduces the pilot choice (24.2-103.4 ms);
+  - igb decimation;
+  - comparison pass/fail on synthetic runs;
+  - the bath mesh numbers tissue first;
+  - the bath check accepts the identical solution (rel RMS < 1e-5) and rejects a 5 % error;
+  - FEM is exact for linear Vm.
+- **Full suite:** 63 tests on the Mac VM (4 skipped: 3 need scipy's sparse solver, 1 slow), and 16 + 26 in the cloud workspace with scipy 1.18.1.
+- **End-to-end with test doubles:** all nine stages ran in order and produced their summaries. The ladder and bath stages correctly reported failure on the doubles' all-zero Vm (physiology failed, so diagnostic re-analysis ran; the bath correlation was undefined). No credential survived in any output.
+- **Sources checked:** openCARP parameter list (phys_region ptype 0/1, gregion g_bath, cellSurfVolRatio, stimulus type 3 = extracellular ground) and the official example pages 03A (tuneCV method) and 03G (benchmark blocks, copied verbatim). The openCARP GitLab sources were not reachable (bot protection), so remaining parameter names are checked by the kit's smoke stage on the workstation.

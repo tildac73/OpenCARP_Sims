@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Test double for openCARP's bench: writes a Courtemanche state file; lists models."""
+import sys
+args = sys.argv[1:]
+if "--list-imps" in args:
+    print("Courtemanche\ntenTusscherPanfilov\nLuoRudy91"); sys.exit(0)
+path = args[args.index("--save-ini-file") + 1]
+open(path, "w").write("# fake state\nCourtemanche\n")
+print("bench (fake) done")

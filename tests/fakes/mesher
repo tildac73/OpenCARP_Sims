@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Test double for openCARP's mesher: regular box, 6 tetrahedra per cube, centred, micrometres."""
+import itertools, sys
+import numpy as np
+args = sys.argv[1:]
+size = [float(args[args.index(f"-size[{i}]") + 1]) * 1e4 for i in range(3)]          # cm -> um
+res = [float(args[args.index(f"-resolution[{i}]") + 1]) for i in range(3)]          # um
+base = args[args.index("-mesh") + 1]
+axes = [np.linspace(-s / 2, s / 2, round(s / r) + 1) for s, r in zip(size, res)]
+grid = np.stack(np.meshgrid(*axes, indexing="ij"), -1)
+shape = grid.shape[:3]
+nodes = grid.reshape(-1, 3)
+cells = np.array(list(itertools.product(*(range(n - 1) for n in shape))))
+elements = []
+for order in itertools.permutations(range(3)):
+    corner = cells.copy(); ids = [np.ravel_multi_index(corner.T, shape)]
+    for axis in order:
+        corner = corner.copy(); corner[:, axis] += 1; ids.append(np.ravel_multi_index(corner.T, shape))
+    elements.append(np.stack(ids, 1))
+elements = np.concatenate(elements)
+with open(base + ".pts", "w") as f:
+    f.write(f"{len(nodes)}\n"); np.savetxt(f, nodes, fmt="%.0f")
+with open(base + ".elem", "w") as f:
+    f.write(f"{len(elements)}\n"); np.savetxt(f, np.c_[elements, np.ones(len(elements), int)], fmt="Tt %d %d %d %d %d")
+with open(base + ".lon", "w") as f:
+    f.write("1\n"); np.savetxt(f, np.tile([1, 0, 0], (len(elements), 1)), fmt="%d")
+print(f"Number of points: {len(nodes)}\nNumber of Tetrahedra: {len(elements)}")

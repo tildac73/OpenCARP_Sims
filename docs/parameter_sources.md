@@ -38,3 +38,14 @@ estimates that mix wavefront directions relative to fibres; four independent sou
 et al. 2021 LA median, largest cohort), transverse CV set by the Roberts and Scher anisotropy ratios.
 Because a direction-mixed median lies between transverse and longitudinal CV, 0.90 m/s along fibres is a
 conservative (low) choice; sensitivity at 0.70 and 1.25 m/s brackets the reported central values.
+
+## Expected consequence of the CV target for conductivity magnitudes (flag for Step 6)
+Estimate only, from the pilot (0.352 m/s at monodomain sigma_l 0.136 S/m, 0.5 mm; CV ~ sqrt(sigma)): reaching
+0.90 m/s needs a monodomain sigma_l of about 0.9 S/m, i.e. about 10x the Roberts and Scher magnitudes
+(sigma_el ~1.2 S/m). The CV stage will give the actual factor. Two points follow:
+1. An extracellular longitudinal conductivity above blood (0.74 S/m) is physically implausible. In the unbounded homogeneous
+   medium, at a given CV, the magnitudes only scale the electrogram amplitude (absorbed by the gain calibration);
+   once a bath is added (Step 6) the tissue-to-blood conductivity ratio changes the field itself.
+2. CV depends on sigma / (beta * Cm). The same CV could instead be reached by keeping measured conductivities
+   and lowering the surface-to-volume ratio beta (openCARP default 0.14 um^-1). Which to adjust is a
+   modelling decision (extends R4); it needs a sourced beta for human atrium before Step 6.

@@ -226,6 +226,9 @@ def writeParameters(runFolder, condition, meshBase, stimulusBase, recoveryBase, 
             line for line in baseParameters.splitlines() if not line.startswith("gregion[1]")
         )
         conditionParameters = conditionParameters.replace("num_gregions = 2", "num_gregions = 1")
+    conductivities = config.get("tissue", {}).get("conductivitiesSPerM")
+    if conductivities:
+        conditionParameters = applyTissueConductivities(conditionParameters, conductivities)
     resolvedLines = []
     for parameterName, parameterValue in parameters.items():
         if isinstance(parameterValue, (Path, str)):
@@ -234,6 +237,25 @@ def writeParameters(runFolder, condition, meshBase, stimulusBase, recoveryBase, 
     parameterFile.write_text(
         conditionParameters + "\n# Values resolved for this experiment\n" + "".join(resolvedLines)
     )
+
+
+CONDUCTIVITY_NAMES = ("g_il", "g_it", "g_in", "g_el", "g_et", "g_en")
+
+
+def applyTissueConductivities(parameterText, conductivities):
+    """Replace the viable-tissue (gregion[0]) conductivities of the template, in S/m.
+
+    Replacing the template lines (not appending duplicates) keeps one definition per
+    parameter, so openCARP's parameters.par and ground_truth.readElementGeometry see the
+    same values. The near-insulating lesion region (gregion[1]) is unchanged.
+    """
+    import re
+    for name in CONDUCTIVITY_NAMES:
+        pattern = re.compile(rf"^gregion\[0\]\.{name}\s*=.*$", re.MULTILINE)
+        parameterText, count = pattern.subn(f"gregion[0].{name} = {float(conductivities[name]):.6g}", parameterText)
+        if count != 1:
+            raise ValueError(f"Template must define gregion[0].{name} exactly once (found {count})")
+    return parameterText
 
 
 def buildEGMs(simulationFolder, runFolder, config):
@@ -375,9 +397,19 @@ def runCommand(command, logPath):
     with open(logPath, "w") as logFile:
         logFile.write("Command: " + " ".join(map(str, command)) + "\n")
         logFile.flush()
-        subprocess.run(
-            [str(value) for value in command], stdout=logFile, stderr=subprocess.STDOUT, check=True
-        )
+        result = subprocess.run([str(value) for value in command], stdout=logFile, stderr=subprocess.STDOUT)
+    redactCredentials(logPath)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, [str(value) for value in command])
+
+
+def redactCredentials(logPath):
+    """openCARP prints its build repository URL, which can embed an access token; never keep it in logs."""
+    import re
+    text = Path(logPath).read_text(errors="replace")
+    cleaned = re.sub(r"(://)[^/\s:@]+:[^/\s@]+@", r"\1<credentials removed>@", text)
+    if cleaned != text:
+        Path(logPath).write_text(cleaned)
 
 
 def findExecutable(name, environmentName):
@@ -503,6 +535,15 @@ def validateConfig(config):
         count = conditioning["beatCount"]
         if not isinstance(count, int) or isinstance(count, bool) or count < 3:
             raise ValueError("Conditioning beatCount must be an integer >= 3")
+    conductivities = config.get("tissue", {}).get("conductivitiesSPerM")
+    if conductivities is not None:
+        if set(conductivities) != set(CONDUCTIVITY_NAMES):
+            raise ValueError(f"tissue.conductivitiesSPerM needs exactly {CONDUCTIVITY_NAMES}")
+        if not all(np.isfinite(float(v)) and float(v) > 0 for v in conductivities.values()):
+            raise ValueError("Tissue conductivities must be positive and finite (S/m)")
+    responseWindow = config["acceptance"].get("responseWindowMs")
+    if responseWindow is not None and not 0 <= responseWindow[0] < responseWindow[1] <= pace["cycleLengthMs"]:
+        raise ValueError("Physiology response window must fit within one pacing cycle")
     if "contributionRingStepMm" in analysis and analysis["contributionRingStepMm"] <= 0:
         raise ValueError("Contribution ring spacing must be positive")
     if "recordingLabels" in analysis:

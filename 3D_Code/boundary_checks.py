@@ -94,7 +94,11 @@ def checkCondition(runFolder, condition, config):
     savedBeats, selectedNodes = [], set()
     selectedNodes.add(int(np.argmin(np.linalg.norm(positions[nodeIds] - [0, 10, 0], axis=1))))
     previousTimes, previousAmplitude, previousApd = None, None, None
-    windowEnd = config["analysis"]["beatWindowMs"][1]
+    # Physiology has its own window (acceptance.responseWindowMs): the EGM measurement window
+    # (analysis.beatWindowMs) can be short, but the response check needs the full action potential.
+    # Configs without the key keep the original behaviour (one shared window).
+    responseWindow = settings.get("responseWindowMs", config["analysis"]["beatWindowMs"])
+    windowEnd = responseWindow[1]
     for beatIndex in range(finalBeat - 2, finalBeat + 1):
         beatStart = beatIndex * cycleLength
         frameStart = int(np.searchsorted(timeMs, beatStart))
@@ -144,7 +148,7 @@ def checkCondition(runFolder, condition, config):
         lesionCrossings = int(counts[lesionCore].sum()) if condition == "lesion" else 0
         covered = bool(
             np.isfinite(roiTimes).all()
-            and np.all(roiTimes >= config["analysis"]["beatWindowMs"][0])
+            and np.all(roiTimes >= responseWindow[0])
             and np.all(roiTimes + apd <= windowEnd)
         )
         summaries.append(

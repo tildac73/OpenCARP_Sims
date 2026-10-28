@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Test double for openCARP. Planar wave from the stimulated nodes; CV = 0.352 m/s * sqrt(sigma_m / 0.136)
+along x (transverse: sigma_m of t), times a mesh factor (1 - 0.05 * dx_mm). No capture if the stimulus
+strength is below 30 * sqrt(sigma_m_l / 0.136). Writes act-thresh.dat (node<TAB>time), vm.igb, and
+phi_e files when requested, so the kit's file handling can be tested. Not a physics model."""
+import os, re, sys
+import numpy as np
+args = sys.argv[1:]
+parfile = args[args.index("+F") + 1]
+params = {}
+for line in open(parfile):
+    line = line.split("#", 1)[0]
+    if "=" in line:
+        k, v = line.split("=", 1); params[k.strip()] = v.strip().strip('"')
+print("*** GIT tag:            latest")
+print("*** GIT hash:           0000000000000000000000000000000000000000")
+print("*** GIT repo:           https://gitlab-ci-token:SECRET123@git.example.org/openCARP/openCARP.git")
+print("\n    *** Launching simulation ***\n")
+mesh = params["meshname"]; sim = params["simID"]; os.makedirs(sim, exist_ok=True)
+pts = np.loadtxt(mesh + ".pts", skiprows=1, ndmin=2) / 1000.0
+elem = np.loadtxt(mesh + ".elem", skiprows=1, dtype=str, ndmin=2)
+tags = elem[:, 5].astype(int); conn = elem[:, 1:5].astype(int)
+tissueNodes = np.unique(conn[tags != 2])   # tag 2 = bath in the kit; lesion (5) stays intracellular
+def g(name): return float(params.get(f"gregion[0].{name}", 0.17))
+sml = g("g_il") * g("g_el") / (g("g_il") + g("g_el")); smt = g("g_it") * g("g_et") / (g("g_it") + g("g_et"))
+stimFile = params.get("stim[0].elec.vtx_file")
+tend = float(params["tend"]); spacedt = float(params["spacedt"])
+dx = np.min(np.diff(np.unique(pts[:, 0])))
+events = []
+if stimFile:
+    stim = np.loadtxt(stimFile, skiprows=2, dtype=int, ndmin=1)
+    direction = pts[tissueNodes].mean(0) - pts[stim].mean(0); direction[2] = 0
+    axis = int(np.argmax(np.abs(direction)))
+    cv = 0.352 * np.sqrt((sml if axis == 0 else smt) / 0.136) * (1 - 0.05 * dx)
+    strength = float(params.get("stim[0].pulse.strength", 0))
+    captured = strength >= 30 * np.sqrt(sml / 0.136)
+    bcl = float(params.get("stim[0].ptcl.bcl", 500)); npls = int(float(params.get("stim[0].ptcl.npls", 1)))
+    origin = pts[stim, axis].max()
+    for k in range(npls):
+        if not captured: break
+        t = k * bcl + 1.0 + np.maximum(pts[tissueNodes, axis] - origin, 0) / cv
+        keep = t < tend
+        events += list(zip(tissueNodes[keep], t[keep]))
+with open(os.path.join(sim, "act-thresh.dat"), "w") as f:
+    for n, t in events: f.write(f"{n}\t{t:.6f}\n")
+frames = int(round(tend / spacedt)) + 1
+def igb(path, n):
+    hdr = f"x:{n} y:1 z:1 t:{frames} type:float systeme:little_endian dim_t:{tend} inc_t:{spacedt} unites:mV"
+    with open(path, "wb") as f:
+        f.write(hdr.encode().ljust(1023, b" ") + b"\n"); f.write(np.zeros((frames, n), "<f4").tobytes())
+igb(os.path.join(sim, "vm.igb"), len(tissueNodes))
+if params.get("phie_rec_ptf"):
+    count = int(open(params["phie_rec_ptf"] + ".pts").readline())
+    igb(os.path.join(sim, "phie_recovery.igb"), count)
+if params.get("bidomain") == "2":
+    igb(os.path.join(sim, "phie.igb"), len(pts))
+open(os.path.join(sim, "parameters.par"), "w").write(open(parfile).read())
+print("PROG\t-----\nTime\t%%comp\ttime\tctime\tETA\n%.2f\t100.0\t1.0\t0:00:03\t0:00:00" % tend)
