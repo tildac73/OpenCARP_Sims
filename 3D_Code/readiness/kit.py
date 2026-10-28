@@ -15,8 +15,11 @@ completed stage and reuses every completed simulation.
   smoke      1 ms openCARP run of every kind of parameter file used below  blocking
   niederer   N-version benchmark (Niederer et al. 2011)                    reported
   cv         CV tuning to 0.90 m/s and CV resolution study                 blocking (tuning must converge)
-  ladder     3D convergence ladder on the tuned model                      reported, per run
+  fibres     openCARP rotated / bilayer fibres vs electrode synthesis      reported
+  ladder     3D convergence ladder on the tuned model (incl. 1.5 mm wall)  reported, per run
   bath       pseudo-bidomain blood bath vs independent FEM solve           reported
+  bathAnalysis  bath electrograms + ground truth from ladder Vm: bath size,
+             bath mesh, scar type, bath vs unbounded                        reported
   report     copy summaries and logs (credentials removed) to <out>/report
 
 All settings: 3D_Code/configs/readiness_kit.json. Outputs: <out> (default 3D_Code/runs/readiness).
@@ -38,7 +41,7 @@ import common  # noqa: E402
 import boundary_setup  # noqa: E402
 from boundary_geometry import makeElectrodeLayout  # noqa: E402
 
-STAGES = ["preflight", "tests", "mpi", "smoke", "niederer", "cv", "ladder", "bath", "report"]
+STAGES = ["preflight", "tests", "mpi", "smoke", "niederer", "cv", "fibres", "ladder", "bath", "bathAnalysis", "report"]
 BLOCKING = {"preflight", "tests", "mpi", "smoke", "cv"}
 
 
@@ -102,6 +105,23 @@ def planJobs(settings, tiers):
     nodes = nodeCount([b["tissueSizeMm"][0], b["tissueSizeMm"][1], b["tissueSizeMm"][2] + b["bathThicknessMm"]], b["spacingMm"])
     jobs.append(dict(stage="bath", name="bath", nodes=nodes, steps=b["durationMs"] * 1000 / b["timeStepUs"],
                      diskGb=2 * nodes * (b["durationMs"] / b["outputStepMs"] + 1) * 4 / 1e9))
+    mpiConfig = json.loads((common.REPOSITORY / settings["mpi"]["config"]).read_text())
+    fibreNodes = nodeCount(mpiConfig["slabSizeMm"], mpiConfig["meshSpacingMm"])
+    fibreSteps = 2 * mpiConfig["pacing"]["beatCount"] * mpiConfig["pacing"]["cycleLengthMs"] * 1000 / mpiConfig["timeStepUs"]
+    for case in ("uniform30", "bilayer0_90"):
+        jobs.append(dict(stage="fibres", name=case, nodes=fibreNodes, steps=fibreSteps,
+                         diskGb=2 * fibreNodes * (fibreSteps / 2 * mpiConfig["timeStepUs"] / 1000 / mpiConfig["sampleStepMs"]) * 4 / 1e9))
+    runsByName = {run["name"]: run for run in ladder["runs"]}
+    for model in settings.get("bathAnalysis", {}).get("models", []):
+        source = runsByName.get(model["sourceRun"].split("/")[0])
+        if source is None or source["tier"] not in tiers:
+            continue
+        size = list(ladder["reducedSlabSizeMm"]) if source["domain"] == "reduced" else None
+        if size is None:
+            continue
+        size[2] = source.get("wallMm", size[2]) + model["bathThicknessMm"]
+        jobs.append(dict(stage="bathAnalysis", name=f"{model['name']} (FEM, no openCARP; ~1300 solves x 2 conditions)",
+                         nodes=nodeCount(size, source["spacingMm"]), steps=2600, diskGb=0.5))
     for job in jobs:
         job["nodeSteps"] = job["nodes"] * job["steps"]
     return jobs
@@ -165,6 +185,12 @@ def stagePreflight(folder, arguments, settings):
         except ImportError as error:
             raise RuntimeError(f"Python package {module} is required: {error}")
     record["python packages"] = modules
+    try:
+        import pyamg
+        record["pyamg"] = pyamg.__version__
+    except ImportError:
+        record["pyamg"] = ("not installed: bathAnalysis falls back to ILU-GMRES for large meshes (slower). "
+                           "Recommended: pip install pyamg")
     try:
         import carputils
         record["carputilsLocation"] = str(Path(carputils.__file__).parent)
@@ -256,6 +282,8 @@ def stageSmoke(folder, arguments, settings):
     else:
         done["niederer"] = "skipped: tenTusscherPanfilov not listed by bench --list-imps"
     strip_cv.smoke(folder / "cv", settings["cvTuning"], arguments.np); done["cv"] = "passed"
+    import fibre_check
+    fibre_check.smoke(folder / "fibres", provisionalTuned(settings), arguments.np); done["fibres"] = "passed"
     ladder.smoke(folder / "ladder", settings["ladder"], arguments.np, provisionalTuned(settings)); done["ladder"] = "passed"
     bath_check.runStage(folder, settings["bath"], provisionalTuned(settings), settings, arguments.np, smoke=True); done["bath"] = "passed"
     return dict(status="passed", detail=done)
@@ -286,6 +314,19 @@ def readTuned(arguments):
     return json.loads(path.read_text())
 
 
+def stageFibres(folder, arguments, settings):
+    import fibre_check
+    summary = fibre_check.runStage(folder, readTuned(arguments), arguments.np)
+    return dict(status="reported", passed=summary["passed"])
+
+
+def stageBathAnalysis(folder, arguments, settings):
+    import bath_analysis
+    summary = bath_analysis.runStage(folder, Path(arguments.out) / "ladder", settings["bathAnalysis"], arguments.np)
+    return dict(status="reported", failures=summary["failures"],
+                comparisons={c["label"]: c.get("passedClarified", c.get("skipped") or c.get("error")) for c in summary["comparisons"]})
+
+
 def stageLadder(folder, arguments, settings):
     import ladder
     tiers = ("A", "B") if arguments.tier == "B" else ("A",)
@@ -307,7 +348,12 @@ def stageReport(folder, arguments, settings):
                 "ladder/ladderSummary.json", "ladder/convergence.csv", "ladder/*.config.json",
                 "ladder/*/windowDerivation.json", "ladder/*/physiologyChecks.csv", "ladder/*/results/pilotStatus.json",
                 "ladder/*/results/calibration.json", "ladder/*/decimated_out*/results/pilotStatus.json",
-                "bath/bath/bathSummary.json", "kit.log", "tests/tests.log"]
+                "bath/bath/bathSummary.json", "fibres/fibreCheck.json", "fibres/*.config.json",
+                "bathAnalysis/bathAnalysisSummary.json", "bathAnalysis/bathComparisons.csv",
+                "bathAnalysis/*/bathGroundTruth.csv", "bathAnalysis/*/bathModel.json",
+                "bathAnalysis/*/run/results/pilotStatus.json", "bathAnalysis/*/run/results/calibration.json",
+                "bathAnalysis/*/run/results/clinical/changePointFits.csv",
+                "kit.log", "tests/tests.log"]
     copied = []
     for pattern in patterns:
         for path in out.glob(pattern):
@@ -332,7 +378,8 @@ def stageReport(folder, arguments, settings):
     return dict(status="passed", files=len(copied))
 
 
-HANDLERS = dict(preflight=stagePreflight, tests=stageTests, mpi=stageMpi, smoke=stageSmoke, niederer=stageNiederer,
+HANDLERS = dict(fibres=stageFibres, bathAnalysis=stageBathAnalysis,
+                preflight=stagePreflight, tests=stageTests, mpi=stageMpi, smoke=stageSmoke, niederer=stageNiederer,
                 cv=stageCv, ladder=stageLadder, bath=stageBath, report=stageReport)
 
 

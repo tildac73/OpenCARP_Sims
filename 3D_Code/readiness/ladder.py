@@ -48,6 +48,8 @@ def makeConfig(base, run, settings, tuned):
         config["slabSizeMm"] = list(settings["largeSlabSizeMm"])
     elif domain != "pilot":
         raise ValueError(f"Unknown domain {domain}")
+    if "wallMm" in run:                                  # wall thickness (DL-2026-10-28-13): slab z size
+        config["slabSizeMm"][2] = float(run["wallMm"])
     spacing = float(run["spacingMm"])
     config["meshSpacingMm"] = spacing
     config["timeStepUs"] = float(run["timeStepUs"])

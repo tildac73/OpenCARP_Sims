@@ -125,3 +125,27 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
 - **Status:** Decided. **Irreversible:** No.
 - **Decision:** wall thickness = `slabSizeMm[2]`. Electrodes, depth metrics, fibre depth and the window derivation all reference the catheter-facing surface z = +thickness/2, so no other setting changes with it.
 - **Limitation:** mesh convergence is being tested at 4 mm only. Sourced walls are 1.5-2.7 mm (parameter_sources.md), i.e. 3-5 elements at 0.5 mm, so convergence must be rechecked at the thinnest wall in the sweep.
+
+## DL-2026-10-28-14 - Step 6 route: bath electrograms and ground truth by post-processing pseudo-bidomain Vm (proposed)
+- **Status:** Proposed. **Irreversible:** No.
+- **Basis:** in pseudo-bidomain (bidomain = 2) Vm is the monodomain solution, so the bath changes phi_e only. phi_e with a bath is therefore one elliptic solve per frame on Vm that openCARP already produced.
+- **Proposal:** the kit's `bath` stage checks, on this build, that openCARP's pseudo-bidomain phi_e equals `fem_extracellular`'s solve of the same problem (DL-2026-10-28-11). Once it does, bath electrograms and bath ground truth for any run come from that solver (`3D_Code/readiness/bath_analysis.py`):
+  - electrograms are written into a derived run folder and analysed by the unchanged pipeline;
+  - ground truth uses a reciprocity lead field per recording.
+- **Relation to DL-2026-10-27-05:** that decision chose openCARP lead fields by current injection. The FEM lead field solves the same discrete problem and is checked against openCARP, so it is equivalent and avoids one openCARP run per electrode. If the bath check fails, DL-27-05's route stands.
+- **Models in the kit:**
+  - bath 5 / 10 / 20 mm on the 0.5 mm ladder run;
+  - bath 10 mm on the 0.25 mm run;
+  - insulating vs conducting scar (conducting = passive with the healthy extracellular tensor: ASSUMPTION).
+- **Comparisons:** bath size and bath mesh are judged by DL-2026-10-28-05. Bath vs unbounded and scar type are effects to report.
+- **Kept as limitations:**
+  - bath on the catheter side only, with no epicardial medium (no sourced conductivity);
+  - lateral bath = tissue extent;
+  - point electrode samples;
+  - unipolar reference = the grounded far face;
+  - pseudo-bidomain, not full bidomain.
+
+## DL-2026-10-28-15 - Additional readiness checks (Step 7 and wall thickness)
+- **Status:** Decided (part of the kit). **Irreversible:** No.
+- **Fibre check:** openCARP runs with uniform 30 deg and bilayer 0/90 deg fibres, using the tuned (unequal-anisotropy) conductivities, compared with electrode synthesis. Gate PROPOSED: corr >= 0.999, as Step 2. Control: the same comparison with fibres wrongly taken as x must be clearly worse.
+- **Thin wall:** 1.5 mm wall (CT posterior-wall mean, Li et al. 2024), 0.5 vs 0.25 mm mesh, DL-05 tolerances (addresses DL-2026-10-28-13).

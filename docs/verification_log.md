@@ -172,3 +172,21 @@ numerical verification and physiological validation. Newest last.
   - FEM is exact for a rotated anisotropic linear Vm.
 - **Regression:** full suite 74 tests on the Mac VM (5 skipped: 4 need scipy's sparse solver and pass in the cloud workspace, 1 slow), plus the slow contribution regression (`EFOV_RUN_SLOW=1 DeclaredWindowContributions`): pass. The v2-pilot results reproduce.
 - **Not verified:** that openCARP builds the same tensors from a rotated fibre file. Needs one small rotated-fibre run compared with synthesis (as VL-2026-10-28-02), on the workstation.
+
+## VL-2026-10-28-13 - Bath lead fields, bath analysis and fibre check: software verification (no simulation)
+- **Type:** Analytic and synthetic tests; end-to-end run against test doubles. **Result:** Pass. **Not verified:** anything needing openCARP output (the kit stages do that).
+- **`tests/test_bath.py` (5):**
+  - structured mesh identical to the reference decomposition;
+  - reciprocity: the sum of element contributions equals the forward solution at the electrode (rel 1e-10);
+  - iterative (ILU-GMRES) solver equals the direct one, and pyamg-CG agrees to 5e-11;
+  - insulating plane doubles the surface potential of a buried point source (image method; ratio 2 within 0.08);
+  - conductivity jump 1:3 gives the image factor 2 s1/(s1 + s2) = 0.5 (within 0.04).
+- **`tests/test_bath_analysis.py` (4):**
+  - lattice interpolation equals a brute-force search;
+  - lattice model maps the run's nodes exactly, and the scar modes set the active region as intended;
+  - bath electrograms equal an independent direct solve, NaN outside the analysed frames;
+  - reciprocity ground truth reproduces the bipolar electrogram;
+  - the derived run folder passes the pipeline's own completeness and settings checks;
+  - fibre check: synthesis with true fibres matches (corr > 0.99999), and wrongly assumed x fibres are > 100x worse.
+- **Kit end-to-end with test doubles:** all eleven stages ran in order. The stages needing physical Vm (ladder analysis, bath, bath analysis, fibre gate) correctly reported failure on the doubles' all-zero Vm. No credential survived.
+- **Not verified here:** bath analysis end to end on real Vm (needs an analysed ladder run); solver time and memory for the 1.1-million-node 0.25 mm bath model.
