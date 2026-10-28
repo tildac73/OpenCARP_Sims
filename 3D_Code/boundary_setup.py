@@ -18,6 +18,7 @@ import numpy as np
 projectFolder = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(projectFolder / "Shared_Pipeline"))
 import igb_io
+import fibres
 from boundary_geometry import makeElectrodeLayout, signedDistance
 
 
@@ -152,10 +153,14 @@ def buildMesh(runFolder, config):
             for nodeIds, tag in zip(elementNodes, tags):
                 meshFile.write("Tt " + " ".join(map(str, nodeIds)) + f" {tag}\n")
         shutil.copyfile(str(rawMesh) + ".pts", str(meshBase) + ".pts")
-        # Explicit fibre direction; the element conductivity tensor is diagonal in xyz.
+        # Explicit fibre direction. Without a "fibres" config every fibre is +x (v2-pilot file, unchanged);
+        # with one, fibres follow Shared_Pipeline/fibres.py (angle in the surface plane, varying with depth).
         with open(str(meshBase) + ".lon", "w") as fibreFile:
             fibreFile.write("1\n")
-            np.savetxt(fibreFile, np.tile([1.0, 0.0, 0.0], (len(elementNodes), 1)), fmt="%.1f")
+            if config.get("fibres") is None:
+                np.savetxt(fibreFile, np.tile([1.0, 0.0, 0.0], (len(elementNodes), 1)), fmt="%.1f")
+            else:
+                np.savetxt(fibreFile, fibres.fibreVectors(elementCentres, config["slabSizeMm"], config["fibres"]), fmt="%.8f")
         meshNames[condition] = meshBase
     return meshNames
 
@@ -535,6 +540,8 @@ def validateConfig(config):
         count = conditioning["beatCount"]
         if not isinstance(count, int) or isinstance(count, bool) or count < 3:
             raise ValueError("Conditioning beatCount must be an integer >= 3")
+    if config.get("fibres") is not None:
+        fibres.validateSpec(config["fibres"], size[2])
     conductivities = config.get("tissue", {}).get("conductivitiesSPerM")
     if conductivities is not None:
         if set(conductivities) != set(CONDUCTIVITY_NAMES):

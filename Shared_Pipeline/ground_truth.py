@@ -1,4 +1,7 @@
-"""Tetrahedron-based contribution reconstruction for the x-fibre slab.
+"""Tetrahedron-based contribution reconstruction for the slab.
+
+Fibres: any orientation per element (fibres.py, Step 7). With every fibre along x the
+conductivities stay diagonal in mesh axes and the arithmetic is exactly the v2-pilot's.
 
 Each tetrahedron retains its own conductivity, volume and linear Vm gradient.
 We never average conductivity across the viable-lesion interface. The finite
@@ -22,6 +25,7 @@ import numpy as np
 from scipy import sparse
 import egm
 import electrode_synthesis
+import fibres as fibreTools
 import lead_field
 import igb_io
 
@@ -33,8 +37,10 @@ class ElementGeometry:
     centres: np.ndarray             # element, xyz; mm
     gradients: np.ndarray           # element, xyz, four shape functions; 1/mm
     volumes: np.ndarray             # element; mm^3
-    conductivity: np.ndarray        # element, xyz; S/m, fibres along x
-    extracellularConductivity: np.ndarray = None  # element, xyz; S/m (for monodomain source term)
+    conductivity: np.ndarray        # element, principal (fibre, sheet, normal) values; S/m
+    extracellularConductivity: np.ndarray = None  # element, principal values; S/m (monodomain source term)
+    fibreFrames: np.ndarray = None  # element, rows (fibre, sheet, normal) unit vectors; None = fibres along x,
+                                    # so principal values are the x, y, z diagonal (v2-pilot arithmetic)
 
 
 def readParameters(parameterPath):
@@ -66,10 +72,10 @@ def readElementGeometry(runFolder, condition):
     if elements.min() < 0 or elements.max() >= nodeCount:
         raise ValueError("Invalid mesh node index")
     with open(str(meshBase) + ".lon") as stream:
-        stream.readline()
-        fibres = np.loadtxt(stream, ndmin=2)
-    if len(fibres) != elementCount or not np.allclose(np.abs(fibres[:, :3]), [1, 0, 0]):
-        raise ValueError("This pilot implementation requires x-aligned fibres")
+        vectorsPerElement = int(stream.readline().split()[0])
+        fibreRows = np.loadtxt(stream, ndmin=2)
+    if vectorsPerElement not in (1, 2) or fibreRows.shape != (elementCount, 3 * vectorsPerElement):
+        raise ValueError("Fibre file does not match the mesh (expected 1 or 2 vectors per element)")
     parameters = readParameters(runFolder / condition / "parameters.par")
     conductivityByTag, extracellularByTag = {}, {}
     for region in range(int(parameters["num_gregions"])):
@@ -81,8 +87,23 @@ def readElementGeometry(runFolder, condition):
             extracellularByTag[int(parameters[f"{prefix}.ID[{index}]"])] = extracellular
     if set(tags) - conductivityByTag.keys():
         raise ValueError("Missing intracellular conductivity for an element tag")
-    conductivity = np.asarray([conductivityByTag[tag] for tag in tags])
-    extracellularConductivity = np.asarray([extracellularByTag[tag] for tag in tags])
+    sheets = fibreRows[:, 3:6] if vectorsPerElement == 2 else None
+    return buildElementGeometry(positions, elements, tags, fibreRows[:, :3], conductivityByTag,
+                                extracellularByTag, sheets)
+
+
+def buildElementGeometry(positions, elements, tags, fibres, conductivityByTag, extracellularByTag, sheets=None):
+    """Geometry from mesh arrays. conductivityByTag: tag -> (fibre, sheet, normal) S/m."""
+    elementCount = len(elements)
+    conductivity = np.asarray([conductivityByTag[tag] for tag in tags], float)
+    extracellularConductivity = np.asarray([extracellularByTag[tag] for tag in tags], float)
+    if sheets is None and fibreTools.isXAligned(fibres):
+        frames = None
+    else:
+        if sheets is None and not (np.allclose(conductivity[:, 1], conductivity[:, 2])
+                                   and np.allclose(extracellularConductivity[:, 1], extracellularConductivity[:, 2])):
+            raise ValueError("Sheet and normal conductivities differ but the fibre file has no sheet vectors")
+        frames = fibreTools.localFrames(fibres, sheets)
     vertices = positions[elements]
     # V = a + bx + cy + dz in each tetrahedron. Rows are its four vertices.
     matrices = np.concatenate([np.ones((elementCount, 4, 1)), vertices], axis=2)
@@ -91,7 +112,7 @@ def readElementGeometry(runFolder, condition):
         raise ValueError("Invalid tetrahedron volume")
     gradients = np.linalg.inv(matrices)[:, 1:, :]
     return ElementGeometry(positions, elements, vertices.mean(axis=1), gradients,
-                           volumes, conductivity, extracellularConductivity)
+                           volumes, conductivity, extracellularConductivity, frames)
 
 
 def finiteRecordingField(samplePositions, weights, elementCentres, vertices=None, quadrature=None):
@@ -119,10 +140,8 @@ def ringOperator(geometry, samplePositions, weights, anchor, ringStepMm, source=
     """
     vertices = geometry.nodePositions[geometry.elementNodes] if quadrature else None
     field = finiteRecordingField(samplePositions, weights, geometry.centres, vertices, quadrature)
-    coefficients = np.einsum(
-        "ec,ec,ecj,e->ej", field, electrode_synthesis.sourceConductivity(geometry, source),
-        geometry.gradients, geometry.volumes,
-    )
+    coefficients = electrode_synthesis.elementCoefficients(
+        field, electrode_synthesis.sourceConductivity(geometry, source), geometry.gradients, geometry.volumes)
     distance = np.linalg.norm(geometry.centres[:, :2] - anchor[:2], axis=1)
     rings = np.floor(distance / ringStepMm).astype(int)
     operator = sparse.coo_matrix(

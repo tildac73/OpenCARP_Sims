@@ -105,3 +105,23 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
 - **Status:** Proposed. **Irreversible:** No.
 - **Test:** pseudo-bidomain openCARP run (bidomain = 2) with a 10 mm blood layer (0.74 S/m) on the catheter side, grounded on the far face. phi_e at electrode samples is compared with an independent P1 finite-element solve of the same discrete problem from the same Vm (`Shared_Pipeline/fem_extracellular.py`, exact on analytic cases).
 - **Proposed gate:** relative RMS <= 1 % and correlation >= 0.9999 per sample, plus confirmation (from the activation map) that openCARP's Vm ordering matches the mesh. This tests the configuration (tags, conductivities, ground), not the physiology. Bath-size convergence and the analytic half-space check remain for Step 6 proper.
+
+## DL-2026-10-28-12 - Fibre-field convention for the reference model (Step 7)
+- **Status:** Decided for the convention; no fibre angles chosen yet. **Irreversible:** No.
+- **Convention (`Shared_Pipeline/fibres.py`):**
+  - Fibres lie in planes parallel to the surface.
+  - The angle is measured in the x-y plane from +x, counter-clockwise seen from the catheter.
+  - Depth is measured from the catheter-facing (endocardial) surface.
+- **Models:**
+  - `uniform`;
+  - `linearRotation` (endocardial to epicardial angle);
+  - `bilayer` (abrupt or ramped transition at a stated depth). The bilayer follows the qualitative description in Pashakhanloo et al. 2016; no angles are taken from it.
+  - No `fibres` key: every fibre along +x, the v2-pilot file byte for byte.
+- **Tensors:** sigma = sum_k s_k a_k a_k^T on the axes (fibre, sheet, normal). Intracellular and extracellular tensors share axes, so the monodomain tensor is the per-axis series combination, rotated.
+- **Sheet vectors:** with one fibre vector per element, the tissue must be transversely isotropic (sheet value = normal value); otherwise the reader refuses.
+- **Open:** fibre angles for the reference model (R11); whether openCARP builds its tensors with the same convention (verification on the workstation, below).
+
+## DL-2026-10-28-13 - Wall thickness as a parameter
+- **Status:** Decided. **Irreversible:** No.
+- **Decision:** wall thickness = `slabSizeMm[2]`. Electrodes, depth metrics, fibre depth and the window derivation all reference the catheter-facing surface z = +thickness/2, so no other setting changes with it.
+- **Limitation:** mesh convergence is being tested at 4 mm only. Sourced walls are 1.5-2.7 mm (parameter_sources.md), i.e. 3-5 elements at 0.5 mm, so convergence must be rechecked at the thinnest wall in the sweep.

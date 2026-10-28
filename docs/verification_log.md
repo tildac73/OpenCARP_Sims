@@ -156,3 +156,19 @@ numerical verification and physiological validation. Newest last.
 - **Full suite:** 63 tests on the Mac VM (4 skipped: 3 need scipy's sparse solver, 1 slow), and 16 + 26 in the cloud workspace with scipy 1.18.1.
 - **End-to-end with test doubles:** all nine stages ran in order and produced their summaries. The ladder and bath stages correctly reported failure on the doubles' all-zero Vm (physiology failed, so diagnostic re-analysis ran; the bath correlation was undefined). No credential survived in any output.
 - **Sources checked:** openCARP parameter list (phys_region ptype 0/1, gregion g_bath, cellSurfVolRatio, stimulus type 3 = extracellular ground) and the official example pages 03A (tuneCV method) and 03G (benchmark blocks, copied verbatim). The openCARP GitLab sources were not reachable (bot protection), so remaining parameter names are checked by the kit's smoke stage on the workstation.
+
+## VL-2026-10-28-12 - Arbitrary fibre orientation in ground truth, synthesis and FEM (Step 7)
+- **Type:** Code change with analytic and invariance tests (no simulation). **Result:** Pass.
+- **Change:** `ground_truth.readElementGeometry` reads any fibre file (1 or 2 vectors per element) via `buildElementGeometry`. Conductivity becomes a tensor only when fibres are not along x. `electrode_synthesis.sourceConductivity` / `elementCoefficients` / `conductivityTimesGradients`, `contribution_metrics.elementCoefficients` and `fem_extracellular` accept tensors. `boundary_setup` writes fibres from a `fibres` config.
+- **Tests (`tests/test_fibres.py`, 11):**
+  - fibre models and depth convention;
+  - principal values on the fibre axes;
+  - monodomain tensor = S_i (S_i + S_e)^-1 S_e;
+  - x fibres take the original diagonal path, equal to the forced-tensor path to 1e-12;
+  - rotating mesh, fibres and electrodes by 35 deg leaves synthesised potentials and ground-truth ring traces unchanged (rel 1e-10), with and without near-field subdivision;
+  - rotating fibres alone changes the signal;
+  - unequal sheet values without sheet vectors are refused;
+  - buildMesh writes the legacy file unchanged and a bilayer file that the reader recovers;
+  - FEM is exact for a rotated anisotropic linear Vm.
+- **Regression:** full suite 74 tests on the Mac VM (5 skipped: 4 need scipy's sparse solver and pass in the cloud workspace, 1 slow), plus the slow contribution regression (`EFOV_RUN_SLOW=1 DeclaredWindowContributions`): pass. The v2-pilot results reproduce.
+- **Not verified:** that openCARP builds the same tensors from a rotated fibre file. Needs one small rotated-fibre run compared with synthesis (as VL-2026-10-28-02), on the workstation.

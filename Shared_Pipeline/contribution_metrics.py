@@ -26,8 +26,10 @@ LEVELS = (0.5, 0.8, 0.9, 0.95, 0.99)
 
 
 def elementCoefficients(geometry, field, conductivity):
-    """(E, 4) weights mapping nodal Vm to each element's contribution (common prefactor omitted)."""
-    return np.einsum("ec,ec,ecj,e->ej", field, conductivity, geometry.gradients, geometry.volumes)
+    """(E, 4) weights mapping nodal Vm to each element's contribution (common prefactor omitted).
+    conductivity: (E, 3) diagonal (fibres along x) or (E, 3, 3) tensors (electrode_synthesis.sourceConductivity)."""
+    import electrode_synthesis
+    return electrode_synthesis.elementCoefficients(field, conductivity, geometry.gradients, geometry.volumes)
 
 
 def binnedTraces(geometry, coefficients, voltage, keys, edges):

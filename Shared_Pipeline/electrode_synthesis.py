@@ -39,21 +39,45 @@ def monodomainConductivity(intracellular, extracellular):
 
 
 def sourceConductivity(geometry, source="monodomain"):
+    """Source conductivity per element: (E, 3) diagonal values when fibres are along x
+    (geometry.fibreFrames is None, the v2-pilot case), else (E, 3, 3) tensors in mesh axes."""
     if source == "monodomain":
         if geometry.extracellularConductivity is None:
             raise ValueError("Geometry lacks extracellular conductivity; read it with ground_truth.readElementGeometry")
-        return monodomainConductivity(geometry.conductivity, geometry.extracellularConductivity)
-    if source == "intracellular":
-        return np.asarray(geometry.conductivity, float)
-    raise ValueError("source must be 'monodomain' or 'intracellular'")
+        principal = monodomainConductivity(geometry.conductivity, geometry.extracellularConductivity)
+    elif source == "intracellular":
+        principal = np.asarray(geometry.conductivity, float)
+    else:
+        raise ValueError("source must be 'monodomain' or 'intracellular'")
+    frames = getattr(geometry, "fibreFrames", None)
+    if frames is None:
+        return principal
+    import fibres
+    return fibres.tensors(principal, frames)
+
+
+def conductivityTimesGradients(conductivity, gradients):
+    """sigma . grad(N_j) per element: (E, 3, 4). Diagonal (E, 3) or tensor (E, 3, 3) conductivity."""
+    conductivity = np.asarray(conductivity, float)
+    if conductivity.ndim == 2:
+        return conductivity[:, :, None] * gradients
+    return np.einsum("ecd,edj->ecj", conductivity, gradients)
+
+
+def elementCoefficients(field, conductivity, gradients, volumes):
+    """(E, 4) weights: field . (sigma grad N_j) vol. The diagonal branch is the v2-pilot arithmetic."""
+    conductivity = np.asarray(conductivity, float)
+    if conductivity.ndim == 2:
+        return np.einsum("ec,ec,ecj,e->ej", field, conductivity, gradients, volumes)
+    return np.einsum("ec,ecd,edj,e->ej", field, conductivity, gradients, volumes)
 
 
 def pointOperator(geometry, points, sigmaBathSPerM=1.0, source="monodomain", batch=8,
                   nearRadiusMm=0.0, subdivisionLevel=0):
     """Dense (points, nodes) matrix mapping nodal Vm (mV) to potential (mV) at each point.
 
-    Fibres must be x-aligned (checked by readElementGeometry), so the diagonal conductivity
-    is expressed in mesh axes. nearRadiusMm / subdivisionLevel enable near-field subdivision
+    Fibres may have any orientation (geometry.fibreFrames); with fibres along x the
+    conductivity is diagonal in mesh axes, as in the v2-pilot. nearRadiusMm / subdivisionLevel enable near-field subdivision
     (lead_field.py; Step 4 setting: radius = 3 mesh spacings, level 2). Defaults keep the
     one-point centroid rule verified in VL-2026-10-28-02.
     """
@@ -65,7 +89,7 @@ def pointOperator(geometry, points, sigmaBathSPerM=1.0, source="monodomain", bat
     conductivity = sourceConductivity(geometry, source)
     # Element weight vector w_e,j such that sum_j w_e,j Vm_j = (G grad Vm_e) . L * vol, for unit L axis.
     # Combined per point below; computed in batches to bound memory.
-    weightedGradients = conductivity[:, :, None] * geometry.gradients * geometry.volumes[:, None, None]
+    weightedGradients = conductivityTimesGradients(conductivity, geometry.gradients) * geometry.volumes[:, None, None]
     nodeCount = len(geometry.nodePositions)
     flatNodes = geometry.elementNodes.ravel()
     operator = np.empty((len(points), nodeCount))

@@ -6,8 +6,8 @@ Strong form, tissue (intracellular sigma_i, extracellular sigma_e) plus bath (si
 with total current continuous between them, no flux through the outer boundary, and phi = 0 on
 grounded nodes. Weak form with linear tetrahedra:
     K phi = -B Vm,   K = sum_e vol_e G_e^T S_e G_e,   B = sum_tissue vol_e G_e^T Si_e G_e
-(S_e = sigma_i + sigma_e in tissue, sigma_b I in bath; Si_e = sigma_i). Conductivity tensors are
-diagonal in x, y, z: this checker assumes x-aligned fibres, as the pilot does.
+(S_e = sigma_i + sigma_e in tissue, sigma_b I in bath; Si_e = sigma_i). Conductivities are
+either (E, 3) diagonals in x, y, z (fibres along x) or (E, 3, 3) tensors (fibres.tensors).
 
 This is not the production route (openCARP computes phi_e, DL-2026-10-27-05). It recomputes the
 same discrete problem from openCARP's own Vm to check that the bath, its conductivity, the tissue
@@ -27,13 +27,21 @@ def elementGradients(positions, elements):
     return volumes, gradients
 
 
-def assemble(positions, elements, diagonalConductivity, rows=None):
-    """Sparse sum_e vol_e G_e^T diag(sigma_e) G_e (N x N). rows: optional element subset."""
+def asTensors(conductivity):
+    conductivity = np.asarray(conductivity, float)
+    if conductivity.ndim == 2:
+        return np.einsum("ei,ij->eij", conductivity, np.eye(3))
+    return conductivity
+
+
+def assemble(positions, elements, conductivity, rows=None):
+    """Sparse sum_e vol_e G_e^T sigma_e G_e (N x N); sigma (E, 3) diagonal or (E, 3, 3). rows: element subset."""
     from scipy import sparse
+    conductivity = asTensors(conductivity)
     if rows is not None:
-        elements, diagonalConductivity = elements[rows], diagonalConductivity[rows]
+        elements, conductivity = elements[rows], conductivity[rows]
     volumes, gradients = elementGradients(positions, elements)
-    local = np.einsum("e,eia,ei,eib->eab", volumes, gradients, diagonalConductivity, gradients)
+    local = np.einsum("e,eia,eij,ejb->eab", volumes, gradients, conductivity, gradients)
     i = np.repeat(elements, 4, axis=1).ravel()
     j = np.tile(elements, (1, 4)).ravel()
     return sparse.csr_matrix((local.ravel(), (i, j)), shape=(len(positions), len(positions)))
@@ -45,8 +53,9 @@ class ExtracellularSolver:
     def __init__(self, positions, elements, tissueMask, sigmaIntra, sigmaExtra, sigmaBath, groundNodes):
         from scipy.sparse.linalg import splu
         tissueMask = np.asarray(tissueMask, bool)
-        total = np.where(tissueMask[:, None], np.asarray(sigmaIntra) + np.asarray(sigmaExtra), sigmaBath)
-        intra = np.where(tissueMask[:, None], np.asarray(sigmaIntra), 0.0)
+        sigmaIntra, sigmaExtra = asTensors(sigmaIntra), asTensors(sigmaExtra)
+        total = np.where(tissueMask[:, None, None], sigmaIntra + sigmaExtra, sigmaBath * np.eye(3))
+        intra = np.where(tissueMask[:, None, None], sigmaIntra, 0.0)
         self.stiffness = assemble(positions, elements, total)
         self.source = assemble(positions, elements, intra, rows=tissueMask)
         self.ground = np.unique(np.asarray(groundNodes, int))
