@@ -104,7 +104,7 @@ def prepare(folder, settings, tuned, kitSettings):
     values = {"meshname": folder / "mesh" / "bath", "simID": folder / "sim", "dt": settings["timeStepUs"],
               "spacedt": settings["outputStepMs"], "tend": settings["durationMs"],
               "stim[0].elec.vtx_file": folder / "stimulus.vtx", "stim[0].pulse.strength": tuned["stimulusStrength"],
-              "stim[0].ptcl.duration": cv["stimulus"]["durationMs"], "stim[0].ptcl.bcl": cv["cycleLengthMs"],
+              "stim[0].ptcl.duration": cv["stimulus"]["durationMs"], "stim[0].ptcl.bcl": settings["durationMs"],   # one pulse; openCARP needs duration <= bcl <= tend
               "stim[0].ptcl.npls": 1, "stim[1].elec.vtx_file": folder / "ground.vtx",
               "imp_region[0].im_sv_init": folder / "conditioning" / "Courtemanche.sv"}
     parameterFile = common.writeParameterFile(folder / "bath.par", parameterText(tuned, settings), values)

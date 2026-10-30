@@ -119,9 +119,14 @@ class CommonHelpers(unittest.TestCase):
     def test_smoke_copy_and_log_parsing(self):
         with tempfile.TemporaryDirectory() as folder:
             par = Path(folder) / "run.par"
-            par.write_text('bidomain = 0\nsimID = "/x/sim"\ntend = 2000\n')
+            par.write_text('bidomain = 0\nsimID = "/x/sim"\ntend = 2000\n'
+                           'stim[0].ptcl.duration = 2.0\nstim[0].ptcl.bcl = 500.0\nstim[0].ptcl.npls = 16\n')
             smoke = common.smokeCopy(par, Path(folder) / "smoke")
-            self.assertIn("tend = 1.0", smoke.read_text())
+            text = smoke.read_text()
+            self.assertIn("tend = 5.0", text)
+            self.assertIn("stim[0].ptcl.bcl = 5.0", text)          # openCARP: duration <= bcl <= tend
+            self.assertIn("stim[0].ptcl.npls = 1", text)
+            self.assertIn("stim[0].ptcl.duration = 2.0", text)     # pulse itself unchanged
             self.assertIn(str(Path(folder) / "smoke"), smoke.read_text())
             log = Path(folder) / "o.log"
             log.write_text("*** GIT hash:           9accae\n1.00\t0.0\t7.8\t0:00:07\t17:20:47\n8000\t100\t1\t17:21:02\t0:00:00\n")

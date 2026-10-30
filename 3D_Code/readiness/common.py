@@ -165,14 +165,27 @@ def writeParameterFile(path, baseText, values):
     return Path(path)
 
 
-def smokeCopy(parameterPath, smokeFolder, durationMs=1.0):
-    """Same parameter file, but tend = durationMs and output into smokeFolder."""
+def smokeCopy(parameterPath, smokeFolder, durationMs=5.0):
+    """Short copy of a parameter file for the smoke stage: same names, files and solver settings.
+
+    openCARP rejects a pacing protocol that does not fit inside the run: it requires
+    ptcl.duration <= tend and ptcl.duration <= ptcl.bcl <= tend (seen on the workstation build).
+    So besides tend and simID, every stimulus's bcl is set to tend and npls to 1. Pulse duration
+    and strength are left unchanged; durationMs must exceed every pulse duration in the file.
+    This affects only the smoke copy, never the real run.
+    """
     text = Path(parameterPath).read_text()
     for name, value in [("tend", durationMs), ("simID", json.dumps(str(smokeFolder)))]:
         pattern = re.compile(rf"^{name}\s*=.*$", re.MULTILINE)
         text, count = pattern.subn(f"{name} = {value}", text)
         if count != 1:
             raise ValueError(f"{parameterPath}: expected exactly one '{name}' line, found {count}")
+    for match in re.finditer(r"^stim\[(\d+)\]\.ptcl\.duration\s*=\s*([^\s#]+)", text, re.MULTILINE):
+        if float(match.group(2)) >= durationMs:
+            raise ValueError(f"{parameterPath}: stim[{match.group(1)}] pulse ({match.group(2)} ms) does not fit "
+                             f"in the {durationMs} ms smoke run")
+    text = re.sub(r"^(stim\[\d+\]\.ptcl\.bcl)\s*=.*$", rf"\1 = {durationMs}", text, flags=re.MULTILINE)
+    text = re.sub(r"^(stim\[\d+\]\.ptcl\.npls)\s*=.*$", r"\1 = 1", text, flags=re.MULTILINE)
     target = Path(smokeFolder).parent / (Path(parameterPath).stem + ".smoke.par")
     target.write_text(text)
     return target

@@ -12,7 +12,7 @@ completed stage and reuses every completed simulation.
   preflight  versions, executables, MPI launcher, memory, disk            blocking
   tests      unit tests of this repository                                 blocking
   mpi        serial vs parallel equivalence (Step 2 gate)                  blocking (skipped if --np 1)
-  smoke      1 ms openCARP run of every kind of parameter file used below  blocking
+  smoke      5 ms openCARP run of every kind of parameter file used below  blocking
   niederer   N-version benchmark (Niederer et al. 2011)                    reported
   cv         CV tuning to 0.90 m/s and CV resolution study                 blocking (tuning must converge)
   fibres     openCARP rotated / bilayer fibres vs electrode synthesis      reported

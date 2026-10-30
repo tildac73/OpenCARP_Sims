@@ -64,7 +64,7 @@ says which one: move that folder aside (do not delete raw output you may want to
 | preflight | Records versions, executables, MPI launcher, CPU, memory, disk, repository commit, carputils location; lists ionic models | All executables present; scipy importable; enough disk | Stops |
 | tests | Runs the repository's unit tests | All pass | Stops |
 | mpi | Serial and `--np` runs of `mpi_equivalence.json`, then `compare_runs.py`; measures speed-up | Activation <= 0.02 ms, Vm <= 0.1 mV, phi_e PP <= 0.1 % | Stops. Keep both folders |
-| smoke | 1 ms openCARP run of every kind of parameter file used later (benchmark, strips, ladder intact and lesion, bath) | openCARP starts once and writes its outputs | Stops: a parameter name or file is wrong |
+| smoke | 5 ms openCARP run of every kind of parameter file used later (benchmark, strips, ladder intact and lesion, bath) | openCARP starts once and writes its outputs | Stops: a parameter name or file is wrong |
 | niederer | 3 spacings x 3 time steps of the Niederer et al. 2011 benchmark | Reported | Continues |
 | cv | Tunes all conductivities (Roberts and Scher ratios fixed) to 0.90 m/s along fibres at 0.125 mm; then CV at 0.5, 0.25, 0.0625 mm and at dt 10 us; transverse CV; pilot conductivities at three spacings; sensitivity targets 0.70 and 1.25 m/s | Tuning within 1 % of target | Stops: ladder and bath need the tuned values |
 | fibres | Two small runs with rotated (30 deg) and bilayer (0/90 deg) fibres; openCARP's recovered phi_e vs electrode synthesis; control with fibres wrongly taken as x | Reported (proposed: corr >= 0.999; control clearly worse) | Continues |
