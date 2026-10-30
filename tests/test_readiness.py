@@ -156,7 +156,7 @@ class Benchmark(unittest.TestCase):
         settings = common.loadSettings(common.REPOSITORY / "3D_Code/configs/readiness_kit.json")["niederer"]
         text = niederer.parameterText(settings, 1)
         for line in ['imp_region[0].im_param          = "flags=EPI"', "gregion[0].g_it = 0.019", "stim[0].pulse.strength  = 35.71",
-                     "stim[0].elec.p0[0]      = -10000.0", "stim[0].elec.p1[2]      = 0.0", "lats[0].threshold    = 0."]:
+                     "stim[0].elec.p0[0]      = -10000.0", "stim[0].elec.p1[2]      = 0.0", "lats[0].threshold    = 0.", "stim[0].ptcl.bcl        = 150.0"]:
             self.assertIn(line, text)
         fraction, points = niederer.diagonalPoints(settings["slabSizeMm"])
         np.testing.assert_allclose(points[0], [-10, -3.5, -1.5]); np.testing.assert_allclose(points[-1], [10, 3.5, 1.5])

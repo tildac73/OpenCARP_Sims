@@ -56,6 +56,9 @@ stim[0].pulse.strength  = {strength}
 stim[0].ptcl.duration   = {duration}
 stim[0].ptcl.start      = 0.00
 stim[0].ptcl.npls       = 1
+# openCARP requires ptcl.duration <= ptcl.bcl and its default bcl (1 ms) is shorter than the 2 ms pulse.
+# With npls = 1 only one pulse is delivered, so bcl only has to satisfy that check: set to the run length.
+stim[0].ptcl.bcl        = {bcl}
 
 timedt = 1
 num_LATs             = 1
@@ -80,7 +83,8 @@ def parameterText(settings, massLumping):
     p0 = -half * 1000
     p1 = (-half + np.asarray(settings["stimulusBoxMm"], float)) * 1000
     return BLOCKS.format(massLumping=massLumping, p0x=p0[0], p0y=p0[1], p0z=p0[2], p1x=p1[0], p1y=p1[1], p1z=p1[2],
-                         strength=settings["stimulusStrength"], duration=settings["stimulusDurationMs"])
+                         strength=settings["stimulusStrength"], duration=settings["stimulusDurationMs"],
+                         bcl=settings["durationMs"])
 
 
 def runCase(stageFolder, settings, spacingMm, timeStepUs, massLumping, processCount, smoke=False):
