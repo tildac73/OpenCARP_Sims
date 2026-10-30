@@ -134,6 +134,18 @@ class CommonHelpers(unittest.TestCase):
             self.assertEqual(common.openCarpBanner(log)["GIT hash"], "9accae")
 
 
+class BathFiles(unittest.TestCase):
+    def test_find_phie_prefers_whole_mesh_file(self):
+        import bath_check
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            (folder / "phie_i.igb").write_text("")
+            with self.assertRaises(FileNotFoundError):
+                bath_check.findPhie(folder)
+            (folder / "phie.igb").write_text("")
+            self.assertEqual(bath_check.findPhie(folder).name, "phie.igb")
+
+
 class CvTuning(unittest.TestCase):
     def test_tuning_loop_with_capture_search(self):
         import strip_cv

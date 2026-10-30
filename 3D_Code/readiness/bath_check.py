@@ -114,11 +114,18 @@ def prepare(folder, settings, tuned, kitSettings):
 
 
 def findPhie(simulationFolder):
+    """openCARP's extracellular potential on the whole mesh (tissue + bath): phie.igb.
+
+    The workstation build also writes phie_i.igb (phi_e on the intracellular, i.e. tissue-only,
+    grid), so a pattern match finds two files. phie.igb is the one the check needs; check()
+    confirms it has one value per mesh node.
+    """
     folder = Path(simulationFolder)
-    candidates = [p for p in sorted(folder.glob("phie*.igb")) if "recovery" not in p.name]
-    if len(candidates) != 1:
-        raise FileNotFoundError(f"{folder}: expected one extracellular potential file, found {[p.name for p in candidates]}")
-    return candidates[0]
+    path = folder / "phie.igb"
+    if not path.is_file():
+        found = sorted(p.name for p in folder.glob("phie*.igb"))
+        raise FileNotFoundError(f"{folder}: no phie.igb (found {found})")
+    return path
 
 
 def check(folder, settings, tuned):
