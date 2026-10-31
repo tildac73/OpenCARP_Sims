@@ -146,6 +146,18 @@ class BathFiles(unittest.TestCase):
             self.assertEqual(bath_check.findPhie(folder).name, "phie.igb")
 
 
+class BathFrames(unittest.TestCase):
+    def test_slice_covers_double_filter_history(self):
+        """The pipeline's filter check reads 2 x history before the window; those frames must be computed."""
+        import bath_analysis
+        times = np.arange(0, 2000.0001, 0.2)
+        config = dict(pacing=dict(beatCount=4, cycleLengthMs=500.0),
+                      analysis=dict(beatWindowMs=[7.0, 60.0], filterHistoryMs=200.0))
+        frames = bath_analysis.bathFrameSlice(times, config)
+        self.assertAlmostEqual(times[frames.start], 1500 + 7 - 400)
+        self.assertAlmostEqual(times[frames.stop], 1500 + 60)
+
+
 class CvTuning(unittest.TestCase):
     def test_tuning_loop_with_capture_search(self):
         import strip_cv

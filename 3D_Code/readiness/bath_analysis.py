@@ -99,6 +99,19 @@ def solverFor(model, bloodSPerM, method):
 
 
 # ----------------------------------------------------------------- electrograms
+def bathFrameSlice(timesMs, config):
+    """Frames the pipeline reads from egm.npz: the measurement window plus TWICE the filter history.
+
+    processCondition filters from (window start - history), and checkFilterHistory re-filters from
+    (window start - 2 x history) to show the history is long enough. Frames outside the slice stay
+    NaN, so computing only the single-history slice made the check NaN and stopped the analysis.
+    """
+    rawSlice, measureSlice = analysis.measurementSlices(timesMs, config)
+    measurementStart = timesMs[rawSlice][measureSlice][0]
+    longer = int(np.searchsorted(timesMs, measurementStart - 2 * config["analysis"]["filterHistoryMs"]))
+    return slice(max(0, min(longer, rawSlice.start)), rawSlice.stop)
+
+
 def bathElectrograms(runFolder, config, condition, model, solver, rawSlice, block=50):
     """(placements, 16, frames) phi_e at electrodes for the rawSlice frames; NaN elsewhere (as electrode_sampling)."""
     source = dict(np.load(Path(runFolder) / condition / "egm.npz"))
@@ -204,8 +217,8 @@ def runModel(stageFolder, ladderFolder, spec, settings, processCount):
         model = latticeModel(sourceFolder, config, condition, spec["bathThicknessMm"], spec["scar"])
         solver = solverFor(model, settings["bloodConductivitySPerM"], settings["solver"])
         times = dict(np.load(sourceFolder / condition / "egm.npz"))["t_ms"]
-        rawSlice, _ = analysis.measurementSlices(times, config)
-        signals[condition] = bathElectrograms(sourceFolder, config, condition, model, solver, rawSlice)
+        signals[condition] = bathElectrograms(sourceFolder, config, condition, model, solver,
+                                              bathFrameSlice(times, config))
         models[condition], solvers[condition] = model, solver
     derived = folder / "run"
     writeDerivedRun(sourceFolder, derived, config, signals)
