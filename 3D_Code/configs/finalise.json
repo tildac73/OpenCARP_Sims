@@ -6,7 +6,7 @@
   "tissue": {
     "_conductivities": "Roberts and Scher 1982 ratios, magnitudes tuned to the CV target at each mesh spacing (DL-2026-10-28-04; tuning at the production spacing, DL-10 as confirmed 1 Nov 2026).",
     "cvTargetMPerS": 0.9,
-    "wallMm": 4.0,
+    "wallMm": 1.5,
     "lesionConductivitySPerM": 1e-06,
     "bloodSPerM": 0.74,
     "_blood": "Traugott, Quail and White 1981 (135 ohm cm).",
