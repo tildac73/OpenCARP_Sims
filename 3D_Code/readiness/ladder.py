@@ -198,13 +198,34 @@ def runOne(stageFolder, run, base, settings, tuned, processCount):
 
 
 # ----------------------------------------------------------------- comparison
+def attachPointKeys(contributions, points, runFolder):
+    """Give each contribution row the point keys used to match runs.
+
+    The pipeline's contributions.csv already carries some of these keys (condition, kind). A plain
+    merge would rename both copies (condition_x, condition_y) and the later join on POINT_KEYS fails
+    with KeyError. Shared columns are checked against the points table first, so a genuine
+    disagreement stops the comparison instead of being silently overwritten.
+    """
+    shared = [key for key in POINT_KEYS if key in contributions.columns]
+    keyed = points[["recordingId"] + POINT_KEYS]
+    if shared:
+        check = contributions[["recordingId"] + shared].merge(
+            keyed[["recordingId"] + shared], on="recordingId", how="left", suffixes=("", "Point"),
+            validate="one_to_one")
+        for key in shared:
+            mismatch = check[key].astype(str) != check[f"{key}Point"].astype(str)
+            if mismatch.any():
+                raise ValueError(f"{runFolder}: contributions.csv and the points tables disagree on "
+                                 f"'{key}' for {int(mismatch.sum())} recordings")
+    return contributions.drop(columns=shared).merge(keyed, on="recordingId", how="left", validate="one_to_one")
+
+
 def loadAnalysed(runFolder):
     results = Path(runFolder) / "results"
     gain = json.loads((results / "calibration.json").read_text())["gain"]
     points = pd.concat([pd.read_csv(results / f"{c}Points.csv") for c in ["intact", "lesion"]], ignore_index=True)
     points["rawCleanPp"] = points.cleanAtSelectedWeightsPpMv / gain
-    contributions = pd.read_csv(results / "contributions.csv").merge(
-        points[["recordingId"] + POINT_KEYS], on="recordingId", how="left", validate="one_to_one")
+    contributions = attachPointKeys(pd.read_csv(results / "contributions.csv"), points, runFolder)
     fits = pd.read_csv(results / "clinical" / "changePointFits.csv")
     fits = fits[fits.selected.astype(str).str.lower() == "true"]
     physiology = pd.read_csv(Path(runFolder) / "physiologyChecks.csv")

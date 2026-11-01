@@ -241,12 +241,24 @@ class Ladder(unittest.TestCase):
         points = pd.DataFrame(rows)
         for condition in ["intact", "lesion"]:
             points[points.condition == condition].to_csv(results / f"{condition}Points.csv", index=False)
-        pd.DataFrame(dict(recordingId=["intact:0:1:bi:B", "lesion:0:1:bi:B"], fov80ReconstructionMm=[3.5, 3.0])).to_csv(results / "contributions.csv", index=False)
+        # Same leading columns as the pipeline's contributions.csv (boundary_analysis.py), which
+        # repeats condition and kind; leaving them out let the KeyError of 31 Oct pass the tests.
+        pd.DataFrame(dict(recordingId=["intact:0:1:bi:B", "lesion:0:1:bi:B"], condition=["intact", "lesion"], kind=["bi", "bi"],
+                          fov80ReconstructionMm=[3.5, 3.0])).to_csv(results / "contributions.csv", index=False)
         pd.DataFrame([dict(condition="lesion", gapMm=0.25, noiseRepeat=0, kind="bi", label="B", distanceConvention="recordingAnchor",
                            preprocessing="clinicalTrimmed", model="Exponential", changePointMm=5.0 + cpShift,
                            fitStatus="supportedDescriptiveChangePoint", selected=True)]).to_csv(results / "clinical" / "changePointFits.csv", index=False)
         (results / "calibration.json").write_text(json.dumps(dict(gain=gain)))
         pd.DataFrame([dict(condition="intact", beatNumber=4, speedMmPerMs=speed)]).to_csv(folder / "physiologyChecks.csv", index=False)
+
+    def test_comparison_rejects_inconsistent_contribution_keys(self):
+        with tempfile.TemporaryDirectory() as folder:
+            a, b = Path(folder) / "a", Path(folder) / "b"
+            self._analysedRun(a); self._analysedRun(b)
+            path = b / "results" / "contributions.csv"
+            table = pd.read_csv(path); table.loc[0, "kind"] = "uni"; table.to_csv(path, index=False)
+            with self.assertRaises(ValueError):
+                self.ladder.compare(a, b, "inconsistent")
 
     def test_comparison_passes_and_fails_as_specified(self):
         with tempfile.TemporaryDirectory() as folder:
