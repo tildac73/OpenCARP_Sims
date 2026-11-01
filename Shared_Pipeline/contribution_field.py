@@ -130,6 +130,47 @@ class BathModel:
         out[self.tissueNodes] = tissueVm if self.vmOrder is None else tissueVm[self.vmOrder]
         return out
 
+    def toVmOrder(self, allNodes):
+        """Adjoint of fullVm: (all nodes,) -> (tissue nodes,) in vm.igb order."""
+        values = np.asarray(allNodes, float)[self.tissueNodes]
+        if self.vmOrder is None:
+            return values
+        out = np.empty_like(values)
+        out[self.vmOrder] = values
+        return out
+
+
+# ----------------------------------------------------------------- electrode transfer (reciprocity)
+_TRANSFER = {}
+
+
+def _transferRow(index):
+    model, rows = _TRANSFER["model"], _TRANSFER["rows"]
+    z = model.solver.solveLoad(np.asarray(rows[index].todense()).ravel())   # K z = w (grounded, K symmetric)
+    return model.toVmOrder(-(model.solver.source.T @ z))
+
+
+def electrodeTransfer(model, rows, processes=1):
+    """(U, tissue nodes) matrix T with phi_u(t) = T[u] . Vm(t) (Vm in vm.igb order), for interpolation rows (U x N).
+
+    Same linear algebra as solving phi = K^-1 (-S Vm) every frame and interpolating, rearranged by
+    reciprocity (K symmetric): w^T phi = -(S^T K^-1 w)^T Vm. One solve per electrode instead of one per
+    output frame; the electrode solves are independent and run in `processes` forked workers (Linux).
+    """
+    from scipy import sparse
+    rows = sparse.csr_matrix(rows)
+    _TRANSFER.update(model=model, rows=rows)
+    try:
+        if processes > 1:
+            import multiprocessing
+            with multiprocessing.get_context("fork").Pool(processes) as pool:
+                result = pool.map(_transferRow, range(rows.shape[0]), chunksize=1)
+        else:
+            result = [_transferRow(k) for k in range(rows.shape[0])]
+    finally:
+        _TRANSFER.clear()
+    return np.asarray(result)
+
 
 # ----------------------------------------------------------------- interpolation
 def pointInterpolator(positions, elements, points, neighbours=24):

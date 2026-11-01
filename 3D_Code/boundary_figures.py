@@ -31,9 +31,14 @@ def makeFigures(runFolder, config):
     points = pd.read_csv(runFolder / "results/points.csv")
     clean = points[points.noiseRepeat == 0]
     plotVoltageDistance(clean, config, outputFolder)
-    plotContributionRadii(clean, outputFolder)
+    # groundTruth "external" (production model): no unbounded FOV80 or reconstruction columns; the
+    # contribution field and its reconstruction check are in results/contributionField*.
+    external = config["analysis"].get("groundTruth", "unboundedLeadField") == "external"
+    if not external:
+        plotContributionRadii(clean, outputFolder)
     plotExampleTraces(runFolder, points, clean, outputFolder)
-    plotReconstructionChecks(clean, outputFolder)
+    if not external:
+        plotReconstructionChecks(clean, outputFolder)
     status = json.loads((runFolder / "results/pilotStatus.json").read_text())
     (outputFolder / "README.txt").write_text(
         "These figures describe a pilot, not a mesh- or domain-converged EFOV result.\n"

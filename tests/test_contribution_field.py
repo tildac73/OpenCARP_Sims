@@ -56,6 +56,28 @@ class ContributionField(unittest.TestCase):
                 grid = cf.voxelGrid([4.0, 4.0, 1.0], 0.5)
                 self.assertAlmostEqual(float(cf.voxelise(model, shares, grid).sum()), 1.0, places=10)
 
+    def test_electrode_transfer_equals_per_frame_solve(self):
+        """Reciprocity electrograms (one solve per electrode) = per-frame solve + interpolation, incl. a permuted Vm order."""
+        import contribution_field as cf
+        g = dict(g_il=1.7, g_it=0.3, g_in=0.3, g_el=0.6, g_et=0.4, g_en=0.4)
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder) / "box"
+            writeBox(base)
+            plain = cf.BathModel(base, g, 1e-6, 0.74, "sigmaI", method="lu")
+            permutation = np.random.default_rng(3).permutation(len(plain.tissueNodes))
+            vmPositions = np.empty((len(permutation), 3)); vmPositions[permutation] = plain.positions[plain.tissueNodes]
+            points = np.array([[x, y, 0.3 + 0.2 * k] for x in (-1.0, 0.0, 1.0) for y in (-1.5, 0.5) for k in range(3)])
+            rows = cf.pointInterpolator(plain.positions, plain.elements, points)
+            tissueVm = np.random.default_rng(2).normal(size=(len(plain.tissueNodes), 7))
+            for kwargs in [{}, dict(vmTissuePositions=vmPositions)]:
+                for method in ["lu", "amg"]:
+                    model = cf.BathModel(base, g, 1e-6, 0.74, "sigmaI", method=method, **kwargs)
+                    direct = rows @ model.solver.solve(model.fullVm(tissueVm))
+                    for processes in [1, 2]:
+                        transfer = cf.electrodeTransfer(model, rows, processes)
+                        np.testing.assert_allclose(transfer @ tissueVm, direct, rtol=1e-7,
+                                                   atol=1e-8 * np.abs(direct).max())
+
     def test_source_tensors(self):
         import contribution_field as cf
         src, rest = cf.sourceTensors("sigmaM", [2.0, 1.0, 1.0], [2.0, 1.0, 1.0])

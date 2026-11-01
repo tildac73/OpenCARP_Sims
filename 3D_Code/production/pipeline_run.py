@@ -139,8 +139,8 @@ def recoveryInterpolator(meshBase, runFolder):
     return cf.pointInterpolator(positions, elements, layout["recoveryPoints"]), layout
 
 
-def writeElectrograms(runFolder, config, condition, signalBlocks, source, block=50):
-    """signalBlocks(frames) -> (recovery points, frames) phi; writes egm.npz (NaN outside analysis frames)."""
+def writeElectrograms(runFolder, config, condition, electrodeBlocks, source, block=50):
+    """electrodeBlocks(frames) -> (placements, 16, frames) unipolar phi; writes egm.npz (NaN outside analysis frames)."""
     runFolder = Path(runFolder)
     folder = runFolder / condition
     if (folder / "meta.json").exists():
@@ -151,10 +151,10 @@ def writeElectrograms(runFolder, config, condition, signalBlocks, source, block=
     indices = np.arange(len(times))[frames]
     for first in range(0, len(indices), block):
         chosen = indices[first:first + block]
-        recovery = signalBlocks(slice(chosen[0], chosen[-1] + 1))
-        if not np.isfinite(recovery).all():
+        values = electrodeBlocks(slice(chosen[0], chosen[-1] + 1))
+        if not np.isfinite(values).all():
             raise ValueError(f"{condition}: non-finite extracellular potential")
-        uni[..., chosen] = recovery[layout["recoveryIndex"]].mean(axis=2)
+        uni[..., chosen] = values
     np.savez_compressed(folder / "egm.npz", uni=uni, uni_xy=layout["centres"], uni_sample_xyz=layout["samples"],
                         d_mm=signedDistance(layout["centres"], config["boundary"]),
                         centre_xy_mm=layout["placements"][:, :2], p_gap_mm=layout["placements"][:, 2], t_ms=times)
@@ -192,13 +192,46 @@ def readPhie(jobFolder, frames):
     return full
 
 
-def openCarpSignals(jobFolder, interpolator):
-    return lambda frames: interpolator @ readPhie(jobFolder, frames).T.astype(float)
+def openCarpSignals(jobFolder, interpolator, layout):
+    """openCARP phie.igb interpolated at the electrode samples, averaged over each electrode's samples."""
+    index = layout["recoveryIndex"]
+    return lambda frames: (interpolator @ readPhie(jobFolder, frames).T.astype(float))[index].mean(axis=2)
 
 
-def femSignals(jobFolder, model, interpolator):
-    path = Path(jobFolder) / "vm.igb"
-    return lambda frames: interpolator @ model.solver.solve(model.fullVm(igb_io.read(path, frames).T))
+def electrodeRows(interpolator, layout):
+    """Unique electrodes: (U x N) rows = mean of each electrode's sample rows, and the (placements, 16) map onto them.
+
+    Overlapping electrode grids share electrodes (same samples), so U is much smaller than placements x 16.
+    """
+    from scipy import sparse
+    index = layout["recoveryIndex"]                                  # (placements, 16, samples)
+    keys = {}
+    electrodeOf = np.empty(index.shape[:2], dtype=np.int64)
+    for p in range(index.shape[0]):
+        for e in range(index.shape[1]):
+            electrodeOf[p, e] = keys.setdefault(tuple(sorted(index[p, e])), len(keys))
+    unique = list(keys)
+    samples = index.shape[2]
+    averaging = sparse.csr_matrix((np.full(len(unique) * samples, 1.0 / samples),
+                                   (np.repeat(np.arange(len(unique)), samples), np.concatenate(unique))),
+                                  shape=(len(unique), interpolator.shape[0]))
+    return averaging @ interpolator, electrodeOf
+
+
+def femSignals(jobFolder, model, interpolator, layout, processes=1):
+    """Extracellular solve of the job's Vm at the electrodes, by reciprocity (contribution_field.electrodeTransfer).
+
+    Equals solving every frame and interpolating (tests/test_contribution_field.py), with one solve per unique
+    electrode instead of one per frame.
+    """
+    path, cache = Path(jobFolder) / "vm.igb", {}
+
+    def signals(frames):
+        if not cache:                                              # solved on first use (skipped on resume)
+            rows, cache["electrodeOf"] = electrodeRows(interpolator, layout)
+            cache["transfer"] = cf.electrodeTransfer(model, rows, processes)    # (U, tissue nodes)
+        return (cache["transfer"] @ igb_io.read(path, frames).T.astype(float))[cache["electrodeOf"]]
+    return signals
 
 
 def runPipeline(runFolder, processCount=1):

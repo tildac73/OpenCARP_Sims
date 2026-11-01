@@ -19,6 +19,7 @@ setting is chosen by a rule fixed in `3D_Code/configs/finalise.json` before the 
 | Electrogram measures, change points | our pipeline (`run_boundary.py --process-only`), unchanged |
 | Ground truth | `Shared_Pipeline/contribution_field.py`: exact per-element share of each recording (reciprocity) |
 | Independent check of openCARP's extracellular field | `Shared_Pipeline/fem_extracellular.py` |
+| Electrograms when the sigma_i source is chosen | `pipeline_run.femSignals`: our extracellular solve, one solve per unique electrode (reciprocity, VL-2026-11-02-01), in `--np` worker processes |
 
 ## Two findings this is built on (1 Nov 2026, openCARP 19.0.0)
 

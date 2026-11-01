@@ -296,14 +296,15 @@ def analyseVariant(ctx, folder, spacing, tuned, jobs, specs, bath, source, scar=
         model = cf.BathModel(meshBase, tuned["conductivitiesSPerM"], t["lesionConductivitySPerM"], t["bloodSPerM"],
                              source, scar=scar, vmTissuePositions=tissuePositions)
         models[condition] = model
-        interpolator, _ = pr.recoveryInterpolator(meshBase, folder)
+        interpolator, layout = pr.recoveryInterpolator(meshBase, folder)
         if fromOpenCarp:
             if not sameMesh or source != "sigmaM" or scar != "insulating":
                 raise ValueError("openCARP electrograms exist only for the run's own bath, sigma_m, insulating scar")
             check[condition] = forwardModelCheck(ctx, job, model, interpolator, config, folder)
-            signals, text = pr.openCarpSignals(job, interpolator), "openCARP pseudo-bidomain phie.igb"
+            signals, text = pr.openCarpSignals(job, interpolator, layout), "openCARP pseudo-bidomain phie.igb"
         else:
-            signals, text = pr.femSignals(job, model, interpolator), f"extracellular solve ({source}, scar {scar}, bath {bath} mm)"
+            signals = pr.femSignals(job, model, interpolator, layout, ctx.np)
+            text = f"extracellular solve ({source}, scar {scar}, bath {bath} mm; per-electrode reciprocity)"
         log(f"electrograms: {folder.name} {condition}")
         pr.writeElectrograms(folder, config, condition, signals, text)
     log(f"pipeline: {folder.name}")
