@@ -22,12 +22,17 @@ def analyseExperiment(runFolder, config, physiologyPassed):
     outputFolder.mkdir(exist_ok=True)
     gain = calibrateGain(runFolder, config)
     measurementTables, contributionTables = [], []
+    # groundTruth "external" (production model with a blood bath): the unbounded-medium lead field of
+    # ground_truth.py does not describe a bath, so it is skipped here; the bath-aware contribution field
+    # is computed afterwards by Shared_Pipeline/contribution_field.py (3D_Code/production/finalise.py).
+    external = config["analysis"].get("groundTruth", "unboundedLeadField") == "external"
     for condition in ["intact", "lesion"]:
         measurements = processCondition(runFolder, condition, config, gain)
         measurementTables.append(measurements)
-        contributionTables.append(
-            computeContributions(runFolder, condition, config, measurements, gain, physiologyPassed)
-        )
+        if not external:
+            contributionTables.append(
+                computeContributions(runFolder, condition, config, measurements, gain, physiologyPassed)
+            )
     return saveExperimentResults(
         runFolder, config, physiologyPassed, measurementTables, contributionTables
     )
@@ -437,7 +442,11 @@ def saveExperimentResults(
     """Join measurements and contribution checks, then write the pilot decision."""
     outputFolder = Path(runFolder) / "results"
     measurements = pd.concat(measurementTables, ignore_index=True)
-    contributions = qualifyContributions(pd.concat(contributionTables, ignore_index=True), config)
+    external = not contributionTables
+    if external:
+        contributions = pd.DataFrame(columns=["recordingId", "condition", "kind", "fovEligible"])
+    else:
+        contributions = qualifyContributions(pd.concat(contributionTables, ignore_index=True), config)
     contributions.to_csv(outputFolder / "contributions.csv", index=False)
     combined = measurements.merge(
         contributions.drop(columns=["condition", "kind"]),
@@ -472,6 +481,10 @@ def saveExperimentResults(
         "lesionTransition": bool(summary[summary.condition == "lesion"].transitionObserved.all()),
         "validContributions": bool(len(shapeGroups) == 6 and (shapeGroups >= 0.9).all()),
     }
+    if external:
+        # Checked outside the pipeline: contribution_field.py verifies that the summed element
+        # contributions reproduce each ground-truth electrogram.
+        criteria.pop("validContributions")
     passed = all(criteria.values())
     saveJson(
         outputFolder / "pilotStatus.json",
@@ -488,6 +501,7 @@ def saveExperimentResults(
             meshConvergenceVerified=False,
             domainConvergenceVerified=False,
             interpretation="Pilot estimates only. Inspect checks before interpreting spatial sensing; convergence is a separate experiment.",
+            groundTruth="external: see contribution field outputs" if external else "unbounded lead field (contributions.csv)",
         ),
     )
     from boundary_clinical import analyseChangePoints

@@ -190,3 +190,36 @@ numerical verification and physiological validation. Newest last.
   - fibre check: synthesis with true fibres matches (corr > 0.99999), and wrongly assumed x fibres are > 100x worse.
 - **Kit end-to-end with test doubles:** all eleven stages ran in order. The stages needing physical Vm (ladder analysis, bath, bath analysis, fibre gate) correctly reported failure on the doubles' all-zero Vm. No credential survived.
 - **Not verified here:** bath analysis end to end on real Vm (needs an analysed ladder run); solver time and memory for the 1.1-million-node 0.25 mm bath model.
+
+## VL-2026-11-01-01 - Readiness-kit report reviewed; comparison crash fixed
+- **Type:** Review of the kit report (30-31 Oct). **Result:** physiology passes in every run; MPI, fibres and tests pass; CV tuned to 0.895 m/s at 0.125 mm.
+- **Fault:** all 13 convergence comparisons crashed (KeyError 'condition': contributions.csv already holds condition and kind, so the merge duplicated them). Fixed in ladder.attachPointKeys with a consistency check; test data now carry those columns; 86 tests pass.
+- **Finding:** with one conductivity set, CV is 0.78 m/s at 0.5 mm, 0.87 at 0.25 mm, 0.895 at 0.125 mm, 0.903 at 0.0625 mm. Tuning must be at the production spacing (DL-04).
+
+## VL-2026-11-01-02 - Bath mismatch explained (openCARP 19.0.0, container)
+- **Type:** Numerical verification, real openCARP runs on a small slab. **Result:** cause found.
+- **Bath check fault:** our hand-built bath mesh gave bath elements fibre vectors, so openCARP treated them as tissue with default conductivities (fit: bath = default sigma_i + sigma_e, residual 0.0). With zero fibres (mesher's convention) openCARP applies g_bath.
+- **Formulation:** with a correct bath, openCARP pseudo-bidomain phi_e equals the extracellular solve with source sigma_m exactly (relative residual 0.0); full bidomain equals the solve with source sigma_i within 1.5 %. bidm_eqv_mono = 0 has no effect in pseudo-bidomain. The 31 Oct factor 0.25 (openCARP / FEM) is sigma_e / (sigma_i + sigma_e) along fibres (0.254).
+- **Consequence:** every bath result of the 31 Oct kit (bath, bathAnalysis) is void; readiness/bath_check.py and bath_analysis.py are superseded by 3D_Code/production.
+
+## VL-2026-11-01-03 - Final settings run end to end on real openCARP (container, small slab)
+- **Type:** Execution and numerical check, openCARP 19.0.0 + carputils 19.0.0 (conda-forge), 2 cores. Test configuration only: slab 16 x 20 x 2 mm, baths 2 / 4 / 6 mm, 300 conditioning beats, recompute stage seeded (the readiness runs exist only on the workstation). **Result:** every stage ran; the gates behave as specified.
+- **tune:** 0.907 m/s at 0.5 mm (scale 6.42 of Roberts and Scher; sigma_el 0.75 S/m), 0.902 m/s at 0.25 mm (scale 5.44). The 3D slab conducts at 0.906 m/s at 0.5 mm.
+- **run050 (carputils slab.py, pseudo-bidomain, 4 beats):** physiology passes; openCARP phi_e vs sigma_m solve at all electrode samples: relative RMS <= 3.0e-6, correlation >= 0.999999999996 (gate passes). Contribution field: shares sum to 1 (deviation 2e-16), summed contributions reproduce the measured electrograms (residual <= 4.2e-8, scale = gain).
+- **bidomainCheck (30 ms):** sigma_i solve vs openCARP bidomain: relative RMS 1.2 %, scale 0.997. Pseudo-bidomain vs bidomain phi_e: scale 0.22, relative RMS 84 %. Activation, bidomain vs pseudo-bidomain: max 3.8 ms, median 1.1 ms. Cost ratio about 13 per simulated ms (small model).
+- **bathStudy:** 2-6 mm baths not converged on this small slab (PP 40 % at 4 vs 6 mm); rule chose the thickest bath and flagged it.
+- **decide/report:** ran on stand-in 0.25 mm variants (0.5 mm results linked; a real 0.25 mm run needs ~7 h per condition on 2 cores). Checks the logic only. Forward model sigma_m vs sigma_i after calibration on the small slab: PP 6.5 %, field L1 7.4 %.
+- **Fixed during the test:** carputils mesh.generate cannot run outside an experiment (direct mesher call with Block's options); empty change-point tables on short profiles; saveJson folders.
+- **Not verified here:** the workstation openCARP build (run050's gate checks it there), full-size run times, and the recompute stage on the real ladder results.
+
+## VL-2026-11-01-04 - Prepacing with checkpoint and restore reproduces a continuous run (container, openCARP 19.0.0)
+- **Type:** Numerical verification. **Result:** Pass.
+- **Method:** slab.py with restartMs: monodomain (no extracellular solve) to restartMs, state saved (tsav / write_statef), restart in pseudo-bidomain (start_statef); Vm and activation times merged from t = 0.
+- **Small slab, restart at 30 ms and at 4 ms (mid-activation):** merged Vm identical to the continuous run (max difference 0.0 mV); phi_e after the restart within 1.2e-7 mV of the continuous run; activation file identical row for row (935 rows; restored runs write absolute times).
+- **Final settings run (test slab):** physiology table identical to the continuous run (max difference 0.0); forward-model comparison numbers identical; openCARP vs sigma_m solve 3.0e-6. Cost 191 s vs 375 s per condition, disk 0.5 vs 1.2 GB.
+- **Production setting:** restart at 1050 ms (4 beats at 500 ms; 57 ms before the first frame the analysis reads), so the bath is solved for 950 of 2000 ms.
+
+## VL-2026-11-01-05 - Solver flavour and restricted phi_e output: same results, less time and disk (container, openCARP 19.0.0)
+- **Type:** Numerical verification. **Result:** Pass.
+- **Solver flavour (carputils --flavor), 0.25 mm test slab with 6 mm bath, 40 ms, phi_e every 0.2 ms:** petsc (GAMG, the default) 537 s, boomeramg (hypre) 116 s, direct (MUMPS) 143 s. Bath-solve time 394 / 49 / 57 s. Against direct: Vm within 7.6e-6 mV, phi_e within 9.5e-7 mV for both iterative flavours; activation files identical. In the final settings run (test slab): PP within 1.3e-9 relative, forward-model and bath-study numbers identical; 133 s vs 191 s per condition.
+- **Restricted phi_e output (dataout_e = 3):** openCARP writes the listed nodes in ascending node order with values identical to the full output. Final settings run (test slab): every PP, physiology value and comparison identical; simulation folder 396 vs 512 MB on this thin-bath slab (the saving grows with bath thickness).

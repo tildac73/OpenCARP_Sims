@@ -1,0 +1,92 @@
+{
+  "_purpose": "Final settings run (3D_Code/production/finalise.py): settles every open setting of the production model used for the parameter sweeps. Every rule below is fixed before the run; finalise.py only applies them. Keys starting with '_' are documentation.",
+  "baseConfig": "3D_Code/configs/boundary_pilot.json",
+  "kitSettings": "3D_Code/configs/readiness_kit.json",
+  "readinessLadderFolder": "3D_Code/runs/readiness/ladder",
+  "tissue": {
+    "_conductivities": "Roberts and Scher 1982 ratios, magnitudes tuned to the CV target at each mesh spacing (DL-2026-10-28-04; tuning at the production spacing, DL-10 as confirmed 1 Nov 2026).",
+    "cvTargetMPerS": 0.9,
+    "wallMm": 4.0,
+    "lesionConductivitySPerM": 1e-06,
+    "bloodSPerM": 0.74,
+    "_blood": "Traugott, Quail and White 1981 (135 ohm cm).",
+    "boundaryYmm": 0.0
+  },
+  "domains": {
+    "_purpose": "Candidate tissue domains (x along propagation, y across the lesion boundary). Chosen by the recompute stage rule.",
+    "pilot": [
+      40.0,
+      60.0
+    ],
+    "large": [
+      60.0,
+      90.0
+    ]
+  },
+  "spacingsMm": [
+    0.5,
+    0.25
+  ],
+  "runBathMm": 10.0,
+  "_runBathMm": "Bath of the openCARP 0.5 mm runs. Other thicknesses are evaluated by the verified extracellular solve on the same Vm (pseudo-bidomain Vm does not depend on the bath; openCARP pseudo-bidomain phi_e equals that solve exactly, checked in every run).",
+  "bathStudyMm": [
+    5.0,
+    10.0,
+    20.0
+  ],
+  "windowRule": {
+    "_source": "DL-2026-10-28-08, confirmed 1 Nov 2026.",
+    "windowLeadMs": 15.0,
+    "windowTrailMs": 30.0,
+    "windowMinimumAfterStimulusMs": 5.0,
+    "gridHalfExtentXmm": 6.5
+  },
+  "physiologyResponseWindowMs": [
+    0.0,
+    400.0
+  ],
+  "bidomainCheck": {
+    "_purpose": "OPTIONAL (finalise.py run --only bidomainCheck), only if the forwardModel stage chooses the sigma_i source: cost of openCARP full bidomain and its bath loading of Vm, to choose how to run sigma_i in production.",
+    "durationMs": 60.0
+  },
+  "tolerances": {
+    "_source": "DL-2026-10-28-05 (CV, PP, change point), VL-2026-10-28-06 clarification (supported change points only, no support-status change), confirmed 1 Nov 2026. contributionFieldL1 is PROPOSED and must be confirmed before the run.",
+    "cvRelative": 0.02,
+    "ppRelative": 0.05,
+    "changePointMm": 0.5,
+    "contributionFieldL1": 0.1,
+    "_contributionFieldL1": "PROPOSED: L1 distance between two contribution-share fields on 0.5 mm voxels, sum|a-b| / sum|b|, maximum over the ground-truth recordings.",
+    "forwardModelMatchRelativeRms": 0.01,
+    "forwardModelMatchCorrelation": 0.9999,
+    "_forwardModelMatch": "DL-2026-10-28-11, confirmed 1 Nov 2026: openCARP pseudo-bidomain phi_e vs the sigma_m extracellular solve at electrode samples, every run."
+  },
+  "contributionField": {
+    "voxelMm": 0.5,
+    "curveStepMm": 0.25
+  },
+  "rules": {
+    "_recompute": "From the existing readiness ladder runs (no simulation), with CV, PP and (full-domain runs only) supported change points; FOV80 reported, not used (ground truth replaced 1 Nov 2026).",
+    "sampleStep": "0.2 ms if output_0.20_vs_0.10 passes, else 0.1 ms",
+    "timeStep": "20 us if timestep_20_vs_10 passes (CV and PP; reduced slab, so no change points), else 10 us",
+    "beats": "4 if beats_4_vs_8 passes (CV and PP; reduced slab), else 8",
+    "domain": "pilot (40 x 60 mm) if domain_40x60_vs_60x90 passes (CV, PP, supported change points), else large (60 x 90 mm)",
+    "bath": "Chosen model only: thinnest of bathStudyMm whose comparison with the next thicker bath passes (raw PP, supported change points, contribution field); if none, the thickest and a flag.",
+    "spacing": "Chosen model and bath: 0.5 mm if the matched-CV comparison 0.5 vs 0.25 mm passes (CV, calibrated PP, supported change points, contribution field), else 0.25 mm and a flag that 0.25 vs 0.125 mm is not yet shown. Calibrated PP because the meshes have different tuned conductivity magnitudes; raw PP is reported.",
+    "_ppModes": "Raw PP (PP / gain) where conductivities and Vm are shared (bath study, scar); calibrated PP where conductivities differ by design (matched-CV mesh comparison) or the source tensor differs (forward model).",
+    "forwardModel": "Decided first, on the run050 Vm (0.5 mm, run bath): openCARP pseudo-bidomain (sigma_m) if sigma_m vs sigma_i passes (calibrated PP, supported change points, contribution field); otherwise the sigma_i source. Later stages use only the chosen model.",
+    "scar": "reported effect only (insulating vs conducting); R10 is your decision"
+  },
+  "prepacing": {
+    "_purpose": "openCARP runs monodomain (no extracellular solve) up to restartMs, saves its state, and restarts with the bath switched on (slab.py). Vm and activation times are kept from t = 0, so the physiology checks are unchanged. Equal to a continuous run (container check 1 Nov 2026: Vm identical, phi_e within 1e-7 mV, activation times identical).",
+    "enabled": true,
+    "restartMarginMs": 50.0,
+    "_restartMarginMs": "restartMs = last-beat earliest window start (stimulus end + 5 ms) - 2 x filter history - margin, on a 10 ms grid: 1050 ms for 4 beats at 500 ms."
+  },
+  "solver": {
+    "_purpose": "carputils solver flavour for openCARP. boomeramg (hypre AMG, a standard carputils flavour) solved the bath about 8x faster than the default petsc (GAMG) at the same tolerance, results equal to float precision (container, 1 Nov 2026). preflight runs a 1 ms smoke test and falls back to petsc if this build lacks hypre.",
+    "preferredFlavor": "boomeramg",
+    "fallbackFlavor": "petsc"
+  },
+  "phieOutputHeightMm": 3.0,
+  "_phieOutputHeightMm": "phi_e is written only on the bath layer up to this height above the tissue (openCARP dataout_e = 3). The pilot electrodes reach 2 mm (1 mm gap + 1 mm electrode); 3 mm leaves one 0.5 mm element of margin plus 0.5 mm. A sample outside the layer stops the analysis (NaN check). For sweeps with larger standoffs, raise it to the largest standoff + electrode length + 1 mm."
+}

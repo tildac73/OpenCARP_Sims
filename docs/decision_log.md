@@ -149,3 +149,39 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
 - **Status:** Decided (part of the kit). **Irreversible:** No.
 - **Fibre check:** openCARP runs with uniform 30 deg and bilayer 0/90 deg fibres, using the tuned (unequal-anisotropy) conductivities, compared with electrode synthesis. Gate PROPOSED: corr >= 0.999, as Step 2. Control: the same comparison with fibres wrongly taken as x must be clearly worse.
 - **Thin wall:** 1.5 mm wall (CT posterior-wall mean, Li et al. 2024), 0.5 vs 0.25 mm mesh, DL-05 tolerances (addresses DL-2026-10-28-13).
+
+## DL-2026-11-01-01 - Pending readiness decisions confirmed
+- **Status:** Decided (confirmed by Matilda, 1 Nov 2026). **Irreversible:** No.
+- **Confirmed:** VL-2026-10-28-06 clarification (change-point tolerance on supported change points only, plus no support-status change); DL-2026-10-28-08 (window rule); DL-2026-10-28-10 (1 % tuning tolerance), with tuning at the production spacing as DL-2026-10-28-04 states; DL-2026-10-28-11 (forward-model match: relative RMS <= 1 %, correlation >= 0.9999).
+- **DL-2026-10-28-09 confirmed with an amendment:** change-point convergence is judged only on runs that pass pilot acceptance (the 40 x 60 and 60 x 90 mm domains). On the reduced 40 x 30 mm slab, every run fails stableFarRegion and lesionTransition (16 contributions vs 48), so only CV, PP and the contribution field are judged there. Made from the acceptance flags, before any comparison result was seen.
+- **Rejected:** DL-2026-10-28-14 (bath electrograms by post-processing). Electrograms come from openCARP's built-in bath; the extracellular solver stays as the independent check (DL-2026-10-27-05 route).
+
+## DL-2026-11-01-02 - Ground truth: the exact contributing-tissue field (supersedes DL-2026-10-28-07)
+- **Status:** Decided (Matilda, 1 Nov 2026); comparison tolerance PROPOSED. **Irreversible:** No.
+- **Decision:** the ground truth is the full field of element contributions, no radius: for each recording, s_e = sum_t c_e(t) phi(t) / sum_t phi(t)^2 with c_e from the reciprocity lead field (Shared_Pipeline/contribution_field.py). Shares sum to 1 exactly; cancellation is kept; nothing is cut off. FOV80 is no longer the ground truth.
+- **Comparison between runs:** L1 distance of share fields on 0.5 mm voxels, sum|a - b| / sum|b|, maximum over ground-truth recordings <= 0.10 (PROPOSED; to confirm before the final settings run).
+- **Check in every run:** summed contributions reproduce the electrogram the pipeline measured (container test: residual 3e-8, scale = gain).
+
+## DL-2026-11-01-03 - One bath for all production runs
+- **Status:** Decided (Matilda, 1 Nov 2026). **Irreversible:** Yes, once production runs start.
+- **Decision:** bath thickness and mesh are chosen once by the final settings run (thinnest of 5 / 10 / 20 mm passing against the next thicker, both forward models) and fixed for every sweep run.
+- **Note:** the standoff sweep must stay well inside the chosen bath; bath convergence is shown at the pilot standoffs (0.25 and 1 mm).
+
+## DL-2026-11-01-04 - Production model as a carputils experiment; openCARP defaults where they exist
+- **Status:** Decided (Matilda, 1 Nov 2026). **Irreversible:** No.
+- **Decision:** the production simulation is 3D_Code/production/slab.py (carputils standard parser, carpexample, mesh.Block with set_bath, carp_cmd, job.carp). Bath from mesher (tag 0, zero fibres). Electrograms from openCARP phi_e. Kept as our code, with reasons: CV tuning on tetrahedral strips (tuneCV uses hexahedra, DL-10); electrogram measures and change points (the pipeline); contribution field (openCARP outputs only the summed signal; its lead-field module is not in openCARP 19.0.0); the extracellular solver as an independent check.
+
+## DL-2026-11-01-05 - Forward model (pseudo-bidomain vs bidomain source): decided by the final settings run
+- **Status:** Open; rule fixed. **Irreversible:** Yes, once production runs start.
+- **Finding (VL-2026-11-01-02):** openCARP pseudo-bidomain uses the monodomain conductivity as the extracellular source; full bidomain uses sigma_i. With the tuned conductivities (sigma_i > sigma_e) the two differ by ~4x in amplitude and in shape.
+- **Rule:** decided first, on the 0.5 mm Vm with the 10 mm run bath: if sigma_m vs sigma_i passes (calibrated PP, supported change points, contribution field), openCARP pseudo-bidomain is the production model; otherwise the sigma_i source is required, and the route (openCARP full bidomain, or the verified sigma_i solve on openCARP Vm) is decided with the measured costs (optional bidomainCheck stage). The bath study and the 0.25 mm run then use only the chosen model (simplification, 1 Nov 2026, before any production result).
+
+## DL-2026-11-01-06 - Prepacing: bath switched on only from 1050 ms
+- **Status:** Decided (Matilda, 1 Nov 2026). **Irreversible:** No.
+- **Decision:** production runs pace beats 1-3 in monodomain (Vm and activation times written as before; no extracellular solve), checkpoint at 1050 ms, and restart with the bath. Standard openCARP checkpoint/restore; equal to a continuous run (VL-2026-11-01-04).
+- **Why:** the bath solve is a whole-domain linear system at every output step; about three-quarters of those solves fell before the frames the analysis reads. Halves the bath cost and phi_e storage.
+
+## DL-2026-11-01-07 - boomeramg solver flavour; phi_e written only on the electrode layer
+- **Status:** Decided (1 Nov 2026, under Matilda's instruction to optimise without losing anything required). **Irreversible:** No.
+- **Solver:** carputils flavour boomeramg (hypre AMG; standard carputils option) for openCARP; same tolerance as the default, results equal to float precision, about 8x faster bath solves (VL-2026-11-01-05). preflight smoke-tests it and falls back to the default (petsc) if this openCARP build lacks hypre.
+- **Output:** phi_e written only for bath nodes within 3 mm of the tissue surface (openCARP dataout_e = 3). The whole domain is still solved. Nothing downstream reads phi_e elsewhere; an electrode sample outside the layer stops the analysis. Sweeps with larger standoffs must raise phieOutputHeightMm.
