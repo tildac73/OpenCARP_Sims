@@ -21,16 +21,16 @@ setting is chosen by a rule fixed in `3D_Code/configs/finalise.json` before the 
 | Independent check of openCARP's extracellular field | `Shared_Pipeline/fem_extracellular.py` |
 | Electrograms when the sigma_i source is chosen | `pipeline_run.femSignals`: our extracellular solve, one solve per unique electrode (reciprocity, VL-2026-11-02-01), in `--np` worker processes |
 
-## Two findings this is built on (1 Nov 2026, openCARP 19.0.0)
+## Fixed before the run (2 Nov 2026)
 
-1. The earlier bath check was not testing a bath. Our hand-built mesh gave bath elements fibre
-   vectors, so openCARP treated the "blood" as tissue with default conductivities. With zero
-   fibres (as mesher makes them) openCARP applies `g_bath`, and pseudo-bidomain phi_e equals our
-   extracellular solve exactly.
-2. openCARP pseudo-bidomain uses the monodomain conductivity sigma_i sigma_e / (sigma_i + sigma_e)
-   as the extracellular source; full bidomain uses sigma_i. With the tuned conductivities
-   (sigma_i > sigma_e) pseudo-bidomain phi_e is about 4x smaller and differently shaped. The final
-   run measures whether this changes any result.
+- **Forward model:** openCARP pseudo-bidomain; every electrogram is openCARP's phi_e (your decision,
+  DL-2026-11-02-01; it overrides the 1 Nov rule outcome, which rested on an unconfirmed tolerance).
+- **Bath:** 5 mm on every side, no-flux walls, 1 mm^3 grounded corner, as Leenknegt et al. 2023
+  (assumption, DL-2026-11-02-02).
+
+Background (1 Nov, openCARP 19.0.0): bath elements must have zero fibres for openCARP to apply
+g_bath (mesher does this); pseudo-bidomain phi_e equals our extracellular solve with source sigma_m
+exactly, which every run checks (gate).
 
 ## Run it (workstation, inside efov-runner)
 
@@ -38,44 +38,35 @@ setting is chosen by a rule fixed in `3D_Code/configs/finalise.json` before the 
 cd <repository root>                              # pull the commit with this file first
 export MPIEXEC_BIN=/usr/local/lib/opencarp/lib/petsc/bin/mpiexec
 python3 3D_Code/production/finalise.py plan --np 24
-nohup python3 3D_Code/production/finalise.py run --np 24 > 3D_Code/runs/final_console.log 2>&1 &
+nohup python3 3D_Code/production/finalise.py run --np 24 > 3D_Code/runs/final_v2_console.log 2>&1 &
 python3 3D_Code/production/finalise.py status     # any time
 ```
 
-Expected cost (24 cores; estimates from the readiness timings and container tests): about 9-12 h and
-about 90 GB if the workstation's openCARP has hypre (preflight checks; otherwise about 10-22 h). The
-0.25 mm run is most of both, and its Vm record (all tissue nodes, every 0.2 ms) is now most of the disk.
-Optimisations, each with results identical to the unoptimised run: prepacing (bath solved only from
-1050 ms, VL-2026-11-01-04), the boomeramg solver flavour and phi_e written only on the 3 mm electrode
-layer (VL-2026-11-01-05).
+Expected cost (24 cores, estimated from the 1 Nov workstation timings): about 7-8 h and about 60 GB.
+run025 (2.65 M nodes) is most of both: openCARP about 2.5-3 h per condition (the 3.4 M-node run took
+3.0 and 3.6 h), then the forward-model gate, pipeline and contribution field. Optimisations, each with
+results identical to the unoptimised run: prepacing (bath solved only from 1050 ms, VL-2026-11-01-04),
+the boomeramg solver flavour and phi_e written only on the 3 mm electrode layer (VL-2026-11-01-05).
 
 Re-running the same command resumes: finished stages and simulations are reused. If a stage
-fails, `3D_Code/runs/final/<stage>/stage.json` has the error; an interrupted openCARP run must
+fails, `3D_Code/runs/final_v2/<stage>/stage.json` has the error; an interrupted openCARP run must
 be moved aside (the script says which).
 
 carputils needs a settings file. If `CARPUTILS_SETTINGS` is not set, the run writes
-`3D_Code/runs/final/carputils_settings.yaml` with `MPIEXEC = $MPIEXEC_BIN`.
+`3D_Code/runs/final_v2/carputils_settings.yaml` with `MPIEXEC = $MPIEXEC_BIN`.
 
 ## What each stage contributes to the final model
-
-The final model needs nine values: domain, mesh spacing, time step, output step, beats,
-conductivities, forward model, bath thickness, scar type. Each stage exists to fix one or more.
 
 | Stage | Simulation | Final-model parameter it decides |
 | --- | --- | --- |
 | preflight | none | none: records versions so the result is reproducible |
 | recompute | none (existing readiness runs) | output step, time step, beats, domain |
 | tune | strips, minutes | conductivities at 0.5 and 0.25 mm |
-| run050 | 0.5 mm slab, 10 mm bath | none directly: the Vm the next two stages use; gate that openCARP's bath is set up right |
-| forwardModel | none (second field on run050 Vm) | forward model: openCARP pseudo-bidomain, or the sigma_i source |
-| bathStudy | none (solves on run050 Vm) | bath thickness (chosen model); scar effect for your R10 decision |
-| run025 | 0.25 mm slab, chosen bath | none directly: the finer level of the mesh decision |
+| run050 | 0.5 mm slab, intact + lesion | none directly; gate: openCARP phi_e = the verified solve |
+| run025 | 0.25 mm slab, intact + lesion | none directly: the finer level of the mesh decision |
 | decide | none | mesh spacing; writes productionModel.json |
 
-Optional, only if forwardModel chooses the sigma_i source: `finalise.py run --np 24 --only bidomainCheck`
-(60 ms of full bidomain: its cost and how much it changes propagation, to choose how to run sigma_i).
-
-Send back `3D_Code/runs/final/report.md`, `productionModel.json` and every `*/stage.json`
+Send back `3D_Code/runs/final_v2/report.md`, `productionModel.json` and every `*/stage.json`
 (a few MB). Raw output stays on the workstation.
 
 ## Production sweeps afterwards

@@ -72,11 +72,12 @@ class BathModel:
     conductivities: dict g_il.. g_en for viable tissue (S/m); lesion: near-zero value used for all six
     (insulating scar) or scar="conducting" (lesion passive with the healthy extracellular tensor;
     ASSUMPTION, no scar conductivity sourced); blood: bath conductivity (S/m).
-    Ground: nodes on the bath face farthest from the tissue (as in slab.py).
+    Ground: groundNodes (the openCARP run's ground.vtx) if given, else the nodes on the bath face
+    farthest from the tissue (older slab.py geometry). Other outer walls are no-flux (natural condition).
     """
 
     def __init__(self, meshBase, conductivities, lesionConductivity, blood, source, scar="insulating",
-                 method="auto", luMaxNodes=400_000, vmTissuePositions=None):
+                 method="auto", luMaxNodes=400_000, vmTissuePositions=None, groundNodes=None):
         positions, elements, tags, fibres = readMesh(meshBase)
         self.positions, self.elements, self.tags = positions, elements, tags
         tissue = tags != BATH_TAG
@@ -103,7 +104,12 @@ class BathModel:
         sigmaSrc = np.zeros((len(elements), 3, 3)); sigmaRest = np.zeros((len(elements), 3, 3))
         sigmaSrc[active] = fibreTools.tensors(principalSrc[active], frames[active])
         sigmaRest[active] = fibreTools.tensors(principalRest[active], frames[active])
-        self.ground = np.flatnonzero(np.isclose(positions[:, 2], positions[:, 2].max()))
+        if groundNodes is None:
+            self.ground = np.flatnonzero(np.isclose(positions[:, 2], positions[:, 2].max()))
+        else:
+            self.ground = np.unique(np.asarray(groundNodes, int))
+            if not len(self.ground):
+                raise ValueError("groundNodes is empty")
         if method == "auto":
             method = "lu" if len(positions) <= luMaxNodes else ("amg" if fem._haveAmg() else "ilu")
         self.solver = fem.ExtracellularSolver(positions, elements, active, sigmaSrc, sigmaRest, blood,

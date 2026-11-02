@@ -128,6 +128,16 @@ def prepare(runFolder, config, jobs, windowRule):
     return config
 
 
+def readVertices(path):
+    """openCARP .vtx file -> node indices."""
+    with open(path) as stream:
+        count = int(stream.readline()); stream.readline()
+        nodes = np.loadtxt(stream, dtype=np.int64, ndmin=1)
+    if len(nodes) != count:
+        raise ValueError(f"{path}: header says {count} vertices, file has {len(nodes)}")
+    return nodes
+
+
 def analysisFrames(runFolder, config):
     times = igb_io.timeAxis(Path(runFolder) / "intact" / "vm.igb")
     return times, bathFrameSlice(times, config)

@@ -231,3 +231,16 @@ numerical verification and physiological validation. Newest last.
 - **Check:** unit test against the per-frame solve (LU and AMG, 1 and 2 processes, permuted Vm order): agreement within 1e-7 relative. Full layout on the 40 x 60 x 1.5 mm, 0.5 mm, 20 mm-bath mesh (431,244 nodes): max relative difference 9.6e-11 from the per-frame solve. 2.9 s per electrode on 1 core, 1.4 s on 2 (linear scaling).
 - **Also tested, not adopted:** warm start from the previous frame and rtol 1e-8: 1.2-1.7x faster per frame only.
 - **Not verified:** the scaling on 24 workstation cores (memory bandwidth will limit it below 24x).
+
+## VL-2026-11-02-02 - Leenknegt-style bath, openCARP-only final settings run (container, openCARP 19.0.0)
+- **Type:** Execution and numerical check on a small test slab (16 x 20 x 2 mm, 0.5 mm, 2 mm bath on every side, 1 mm grounded corner cube; test values only). **Result:** Pass.
+- **Geometry:** bath elements on all six sides, lesion (tag 5) confined to tissue with y < 0, 27 ground nodes at the (max x, max y, max z) corner, none on tissue.
+- **Gate (openCARP pseudo-bidomain phi_e vs the sigma_m solve with the same ground):** relative RMS <= 1.3e-6, correlation >= 0.9999999999992 (both conditions). Ground truth: shares sum to 1 (4e-16), reconstruction residual 1.1e-7, scale = gain.
+- **decide/report:** ran on a stand-in 0.25 mm folder (copy of 0.5 mm): logic only. Physiology passed; pilot acceptance false as in every earlier small-slab test (slab too small for a stable far region).
+- **Not verified here:** full-size timing and the 0.25 mm run (workstation).
+
+## VL-2026-11-02-03 - beta calibration reproduces the conductivity-scaled propagation (container, openCARP 19.0.0)
+- **Type:** Numerical verification. **Result:** Pass.
+- **Method:** slab.py, 8 x 4 x 1.5 mm, 0.5 mm, pseudo-bidomain, 2 mm bath all round, 20 ms. A: Roberts and Scher conductivities x 6.42, beta 0.14 um^-1 (default). B: Roberts and Scher conductivities, beta 0.14 / 6.42 um^-1. Same stimulus.
+- **Result:** Vm max difference 4.0e-5 mV (range -79.5 to 35.8 mV); activation files identical in length (612 rows); stimulus captures in both. phi_e PP: B / A = 0.66 (the conductivity magnitudes against blood change the extracellular field, as intended).
+- **Final settings run (test slab, 2 Nov):** run050 with surfaceToVolume calibration (Roberts and Scher conductivities, beta 0.0218 um^-1): slab CV 0.9069 m/s, identical to the conductivity-scaled run; physiology passes; gate relative RMS <= 8.1e-7; ground-truth shares sum to 1.

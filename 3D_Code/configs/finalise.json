@@ -1,5 +1,5 @@
 {
-  "_purpose": "Final settings run (3D_Code/production/finalise.py): settles every open setting of the production model used for the parameter sweeps. Every rule below is fixed before the run; finalise.py only applies them. Keys starting with '_' are documentation.",
+  "_purpose": "Final settings run (3D_Code/production/finalise.py): settles the remaining open settings of the production model used for the parameter sweeps (output step, time step, beats, domain, conductivities, mesh spacing). Forward model and bath are fixed before the run (forwardModelDecision, bath). Every rule below is fixed before the run; finalise.py only applies them. Keys starting with '_' are documentation.",
   "baseConfig": "3D_Code/configs/boundary_pilot.json",
   "kitSettings": "3D_Code/configs/readiness_kit.json",
   "readinessLadderFolder": "3D_Code/runs/readiness/ladder",
@@ -10,7 +10,9 @@
     "lesionConductivitySPerM": 1e-06,
     "bloodSPerM": 0.74,
     "_blood": "Traugott, Quail and White 1981 (135 ohm cm).",
-    "boundaryYmm": 0.0
+    "boundaryYmm": 0.0,
+    "cvCalibration": "surfaceToVolume",
+    "_cvCalibration": "DL-2026-11-02-03: conductivities kept at the measured Roberts and Scher 1982 values; the CV target is reached by beta = 0.14 / s, where s is the conductivity scale the tune stage finds (identical Vm; beta does not enter the extracellular field). 'conductivity' = the earlier choice (conductivities x s, default beta)."
   },
   "domains": {
     "_purpose": "Candidate tissue domains (x along propagation, y across the lesion boundary). Chosen by the recompute stage rule.",
@@ -27,13 +29,12 @@
     0.5,
     0.25
   ],
-  "runBathMm": 10.0,
-  "_runBathMm": "Bath of the openCARP 0.5 mm runs. Other thicknesses are evaluated by the verified extracellular solve on the same Vm (pseudo-bidomain Vm does not depend on the bath; openCARP pseudo-bidomain phi_e equals that solve exactly, checked in every run).",
-  "bathStudyMm": [
-    5.0,
-    10.0,
-    20.0
-  ],
+  "bath": {
+    "thicknessMm": 5.0,
+    "allSides": true,
+    "groundCubeMm": 1.0,
+    "_source": "ASSUMPTION, not tested (DL-2026-11-02-02): bath modelled as Leenknegt, Panfilov and Dierckx 2023, Front. Physiol. 14:1213218 (openCARP slab 'surrounded by a bath of 5 mm in all three directions', no-flux outer boundary, 'grounded region of 1 mm3' at a bath corner). Blood conductivity stays 0.74 S/m (Traugott et al. 1981; Leenknegt used 0.7 S/m). Unipolar potentials are referenced to that corner."
+  },
   "windowRule": {
     "_source": "DL-2026-10-28-08, confirmed 1 Nov 2026.",
     "windowLeadMs": 15.0,
@@ -45,10 +46,6 @@
     0.0,
     400.0
   ],
-  "bidomainCheck": {
-    "_purpose": "OPTIONAL (finalise.py run --only bidomainCheck), only if the forwardModel stage chooses the sigma_i source: cost of openCARP full bidomain and its bath loading of Vm, to choose how to run sigma_i in production.",
-    "durationMs": 60.0
-  },
   "tolerances": {
     "_source": "DL-2026-10-28-05 (CV, PP, change point), VL-2026-10-28-06 clarification (supported change points only, no support-status change), confirmed 1 Nov 2026. contributionFieldL1 is PROPOSED and must be confirmed before the run.",
     "cvRelative": 0.02,
@@ -70,11 +67,9 @@
     "timeStep": "20 us if timestep_20_vs_10 passes (CV and PP; reduced slab, so no change points), else 10 us",
     "beats": "4 if beats_4_vs_8 passes (CV and PP; reduced slab), else 8",
     "domain": "pilot (40 x 60 mm) if domain_40x60_vs_60x90 passes (CV, PP, supported change points), else large (60 x 90 mm)",
-    "bath": "Chosen model only: thinnest of bathStudyMm whose comparison with the next thicker bath passes (raw PP, supported change points, contribution field); if none, the thickest and a flag.",
     "spacing": "Chosen model and bath: 0.5 mm if the matched-CV comparison 0.5 vs 0.25 mm passes (CV, calibrated PP, supported change points, contribution field), else 0.25 mm and a flag that 0.25 vs 0.125 mm is not yet shown. Calibrated PP because the meshes have different tuned conductivity magnitudes; raw PP is reported.",
-    "_ppModes": "Raw PP (PP / gain) where conductivities and Vm are shared (bath study, scar); calibrated PP where conductivities differ by design (matched-CV mesh comparison) or the source tensor differs (forward model).",
-    "forwardModel": "Decided first, on the run050 Vm (0.5 mm, run bath): openCARP pseudo-bidomain (sigma_m) if sigma_m vs sigma_i passes (calibrated PP, supported change points, contribution field); otherwise the sigma_i source. Later stages use only the chosen model.",
-    "scar": "reported effect only (insulating vs conducting); R10 is your decision"
+    "_ppModes": "Calibrated PP for the matched-CV mesh comparison (conductivity magnitudes differ by design); raw PP is reported.",
+    "scar": "not decided here; insulating as the pilot until you decide R10"
   },
   "prepacing": {
     "_purpose": "openCARP runs monodomain (no extracellular solve) up to restartMs, saves its state, and restarts with the bath switched on (slab.py). Vm and activation times are kept from t = 0, so the physiology checks are unchanged. Equal to a continuous run (container check 1 Nov 2026: Vm identical, phi_e within 1e-7 mV, activation times identical).",
@@ -88,5 +83,10 @@
     "fallbackFlavor": "petsc"
   },
   "phieOutputHeightMm": 3.0,
-  "_phieOutputHeightMm": "phi_e is written only on the bath layer up to this height above the tissue (openCARP dataout_e = 3). The pilot electrodes reach 2 mm (1 mm gap + 1 mm electrode); 3 mm leaves one 0.5 mm element of margin plus 0.5 mm. A sample outside the layer stops the analysis (NaN check). For sweeps with larger standoffs, raise it to the largest standoff + electrode length + 1 mm."
+  "_phieOutputHeightMm": "phi_e is written only on the bath layer up to this height above the tissue (openCARP dataout_e = 3). The pilot electrodes reach 2 mm (1 mm gap + 1 mm electrode); 3 mm leaves one 0.5 mm element of margin plus 0.5 mm. A sample outside the layer stops the analysis (NaN check). For sweeps with larger standoffs, raise it to the largest standoff + electrode length + 1 mm.",
+  "forwardModelDecision": {
+    "chosen": "sigmaM",
+    "decided": "Matilda Cotton, 2 Nov 2026",
+    "reason": "openCARP pseudo-bidomain phi_e is used for every electrogram. The forwardModel rule chose sigma_i only on the contribution-field criterion, whose tolerance (0.10) was proposed and never confirmed: field L1 max 0.109, median 0.003 over 48 recordings. The confirmed criteria passed: calibrated PP max 4.2 % (tolerance 5 %), supported change-point shift 0.1 mm (0.5 mm), no support-status change. Raw amplitude differs (gain 0.158 vs 0.040); the pipeline's gain calibration removes it. Overrides the rule outcome; see DL-2026-11-02-01."
+  }
 }

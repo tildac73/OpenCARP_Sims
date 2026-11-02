@@ -9,8 +9,9 @@ which finalise.py writes; nothing scientific is set here.
 
 Model
   * Tissue slab x in [-Lx/2, Lx/2], y in [-Ly/2, Ly/2], z in [-t/2, t/2] (mm); fibres along +x.
-  * Blood bath on the catheter side only, z in [t/2, t/2 + B], built by mesher through
-    Block.set_bath. mesher gives bath elements tag 0 and zero fibre vectors, which is how
+  * Blood bath built by mesher through Block.set_bath: B mm on every side of the slab (spec
+    "bathAllSides": true, as Leenknegt et al. 2023, Front. Physiol. 14:1213218) or, for older specs,
+    on the catheter side only (z in [t/2, t/2 + B]). mesher gives bath elements tag 0 and zero fibre vectors, which is how
     openCARP recognises bath and applies gregion[].g_bath. (Our earlier hand-built bath mesh gave
     bath elements fibres, so openCARP used default tissue conductivities there: 1 Nov 2026.)
   * Lesion (condition "lesion"): tissue elements with y < boundary position, tag 5, near-zero
@@ -19,10 +20,16 @@ Model
     elliptic solve whose source uses the monodomain conductivity), 1 = full bidomain. Verified on
     openCARP 19.0.0 against the FEM solver: pseudo-bidomain phi_e = FEM with source sigma_m
     (exact); bidomain phi_e = FEM with source sigma_i (within 1.5 %).
-  * Ground: extracellular ground (stimulus type 3) on the bath face farthest from the tissue.
+  * Ground: extracellular ground (stimulus type 3) on the nodes of a cube of side "groundCubeMm" at the
+    bath corner (max x, max y, max z), all other outer walls no-flux (openCARP default), as Leenknegt
+    et al. 2023 (1 mm^3 grounded region at a bath corner). Older specs without groundCubeMm ground the
+    whole bath face farthest from the tissue.
   * Stimulus: transmembrane, strip of nodes with x <= xmin + stripWidth, viable tissue only
     (no node touching a lesion element), as in the pilot.
   * Ionic model: Courtemanche (openCARP), initial state from bench limit-cycle pacing (spec).
+  * Surface-to-volume ratio beta (spec "cellSurfVolRatioPerUm", openCARP imp_region[0].cellSurfVolRatio;
+    default 0.14 um^-1 if absent). Monodomain Vm depends on sigma / beta only, so beta is where the CV
+    calibration goes when conductivities are kept at measured values (DL-2026-11-02-03).
   * phi_e output (spec "phieOutputHeightMm"): openCARP still solves the whole tissue + bath, but writes
     phi_e only on the bath layer within that height of the tissue surface, where the electrodes are
     (dataout_e = 3; phieNodes.npy lists the nodes). Nothing downstream reads phi_e elsewhere.
@@ -83,9 +90,16 @@ def readSpec(path):
 def geometry(spec):
     size = np.asarray(spec["tissueSizeMm"], float)
     block = mesh.Block(size=tuple(size), resolution=float(spec["spacingMm"]))
-    block.set_bath(thickness=(0.0, 0.0, float(spec["bathThicknessMm"])), both_sides=False)
+    bath = float(spec["bathThicknessMm"])
+    allSides = bool(spec.get("bathAllSides", False))
+    if allSides:
+        block.set_bath(thickness=(bath, bath, bath), both_sides=True)
+    else:
+        block.set_bath(thickness=(0.0, 0.0, bath), both_sides=False)
     if spec["condition"] == "lesion":
-        margin = float(spec["spacingMm"])
+        # With bath around the slab the lesion box must stop at the tissue faces (element centres of bath
+        # lie outside them); the older top-only geometry kept the original margin.
+        margin = 0.0 if allSides else float(spec["spacingMm"])
         lower = (-size[0] / 2 - margin, -size[1] / 2 - margin, -size[2] / 2 - margin)
         upper = (size[0] / 2 + margin, float(spec["boundaryYmm"]), size[2] / 2)   # tissue only: z <= t/2
         block.add_region(mesh.BoxRegion(lower, upper, tag=LESION_TAG))
@@ -122,10 +136,17 @@ def boundarySets(meshBase, spec, folder):
     xmin = positions[isTissue, 0].min()
     stimulus = isTissue & (positions[:, 0] <= xmin + strip + 1e-9)
     stimulus[lesionNodes] = False
-    ground = np.isclose(positions[:, 2], positions[:, 2].max())
-    expectedTop = spec["tissueSizeMm"][2] / 2 + spec["bathThicknessMm"]
-    if not np.isclose(positions[:, 2].max(), expectedTop):
-        raise ValueError(f"Bath top at {positions[:, 2].max()} mm, expected {expectedTop} mm")
+    size, bath = np.asarray(spec["tissueSizeMm"], float), float(spec["bathThicknessMm"])
+    expectedUpper = size / 2 + (bath if spec.get("bathAllSides") else np.array([0.0, 0.0, bath]))
+    if not np.allclose(positions.max(axis=0), expectedUpper):
+        raise ValueError(f"Mesh upper corner {positions.max(axis=0)} mm, expected {expectedUpper} mm")
+    cube = spec.get("groundCubeMm")
+    if cube is None:
+        ground = np.isclose(positions[:, 2], positions[:, 2].max())
+    else:
+        ground = np.all(positions >= positions.max(axis=0) - float(cube) - 1e-9, axis=1)
+        if np.any(ground & isTissue):
+            raise ValueError("Ground cube reaches tissue nodes")
     writeVertices(folder / "stimulus.vtx", np.flatnonzero(stimulus), "extra")
     writeVertices(folder / "ground.vtx", np.flatnonzero(ground), "extra")
     height = spec.get("phieOutputHeightMm")
@@ -224,6 +245,8 @@ def run(args, job):
         cmd += ["-simID", str(simID), "-meshname", meshBase, "-bidomain", int(bidomain),
                 "-dt", float(spec["timeStepUs"]), "-spacedt", float(spec["sampleStepMs"]), "-tend", float(tend),
                 "-imp_region[0].im_sv_init", str(spec["initialState"])]
+        if spec.get("cellSurfVolRatioPerUm") is not None:      # beta; openCARP default 0.14 um^-1
+            cmd += ["-imp_region[0].cellSurfVolRatio", float(spec["cellSurfVolRatioPerUm"])]
         cmd += conductivityOptions(spec)
         cmd += ["-num_stim", 2,
                 "-stim[0].crct.type", 0, "-stim[0].pulse.shape", 0, "-stim[0].ptcl.start", 0,

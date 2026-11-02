@@ -7,22 +7,24 @@ the rules and writes the evidence. Simulations use the carputils production mode
 (3D_Code/production/slab.py); analysis uses the unchanged pipeline (run_boundary.py) plus the
 exact contributing-tissue field (Shared_Pipeline/contribution_field.py).
 
+Fixed before the run (not tested here; finalise.json):
+  forward model -> openCARP pseudo-bidomain, phi_e from openCARP (your decision, DL-2026-11-02-01)
+  bath          -> 5 mm of blood on every side of the slab, no-flux outer walls, a 1 mm^3 grounded
+                   region at one bath corner (as Leenknegt et al. 2023; an assumption, DL-2026-11-02-02)
+
 Stages, and the final-model parameter each one decides (each writes <out>/<stage>/stage.json; a
 rerun skips completed stages and simulations):
   preflight     -> nothing; records versions so the result is reproducible
   recompute     -> output step, time step, beats, domain (existing readiness runs; no simulation)
   tune          -> conductivities: 0.90 m/s at 0.5 and 0.25 mm (strips, minutes)
-  run050        -> the 0.5 mm Vm used by the next two stages; gate: openCARP's bath is set up right
-  forwardModel  -> openCARP pseudo-bidomain or the sigma_i source (same Vm, both fields compared)
-  bathStudy     -> bath thickness (5 / 10 / 20 mm, chosen model, on the run050 Vm); scar effect for R10
-  run025        -> the 0.25 mm level of the mesh decision (chosen bath and model)
+  run050        -> 0.5 mm openCARP run (intact + lesion); gate: openCARP's phi_e matches the verified solve
+  run025        -> the same at 0.25 mm
   decide        -> mesh spacing (0.5 vs 0.25 mm at matched CV); writes productionModel.json, report.md
-Optional, only if forwardModel chooses the sigma_i source: --only bidomainCheck (cost of full bidomain).
 
 Usage (from the repository root, inside the efov-runner container):
     export MPIEXEC_BIN=/usr/local/lib/opencarp/lib/petsc/bin/mpiexec
     python3 3D_Code/production/finalise.py plan --np 24
-    nohup python3 3D_Code/production/finalise.py run --np 24 > 3D_Code/runs/final_console.log 2>&1 &
+    nohup python3 3D_Code/production/finalise.py run --np 24 > 3D_Code/runs/final_v2_console.log 2>&1 &
     python3 3D_Code/production/finalise.py status
 """
 import argparse
@@ -51,8 +53,8 @@ import contribution_field as cf  # noqa: E402
 import igb_io  # noqa: E402
 import pipeline_run as pr  # noqa: E402
 
-STAGES = ["preflight", "recompute", "tune", "run050", "forwardModel", "bathStudy", "run025", "decide"]
-OPTIONAL_STAGES = ["bidomainCheck"]         # only if the sigma_i source is needed (finalise.py run --only bidomainCheck)
+STAGES = ["preflight", "recompute", "tune", "run050", "run025", "decide"]
+SOURCE = "sigmaM"                           # openCARP pseudo-bidomain (DL-2026-11-02-01)
 SOURCE_TEXT = {"sigmaM": "openCARP pseudo-bidomain (source sigma_m)", "sigmaI": "bidomain physics (source sigma_i)"}
 POINT_KEYS = ["condition", "noiseRepeat", "centreYmm", "gapMm", "kind", "label"]
 FIT_KEYS = ["condition", "gapMm", "noiseRepeat", "kind", "label", "distanceConvention", "preprocessing"]
@@ -215,17 +217,20 @@ def conditioning(ctx, folder, timeStepUs, strength):
     return folder / "conditioning" / "Courtemanche.sv"
 
 
-def slabSpec(ctx, condition, spacing, bath, bidomain, tuned, state, extra=None):
-    d, t = ctx.decisions(), ctx.settings["tissue"]
+def slabSpec(ctx, condition, spacing, tuned, state, extra=None):
+    d, t, bath = ctx.decisions(), ctx.settings["tissue"], ctx.settings["bath"]
     domain = ctx.settings["domains"][d["domain"]]
     pace = ctx.base["pacing"]
     spec = dict(condition=condition, tissueSizeMm=[domain[0], domain[1], t["wallMm"]], spacingMm=spacing,
-                bathThicknessMm=bath, bidomain=bidomain, conductivitiesSPerM=tuned["conductivitiesSPerM"],
+                bathThicknessMm=bath["thicknessMm"], bathAllSides=bath["allSides"], groundCubeMm=bath["groundCubeMm"],
+                bidomain=2, conductivitiesSPerM=tuned["conductivitiesSPerM"],
                 lesionConductivitySPerM=t["lesionConductivitySPerM"], bloodSPerM=t["bloodSPerM"],
                 boundaryYmm=t["boundaryYmm"], timeStepUs=d["timeStepUs"], sampleStepMs=d["sampleStepMs"],
                 pacing=dict(cycleLengthMs=pace["cycleLengthMs"], beatCount=d["beatCount"], durationMs=pace["durationMs"],
                             strength=tuned["stimulusStrength"], stripWidthMm=pace["stripWidthMm"]),
                 initialState=str(state), meshRoot=str(ctx.out / "meshes"))
+    if tuned.get("cellSurfVolRatioPerUm") is not None:
+        spec["cellSurfVolRatioPerUm"] = tuned["cellSurfVolRatioPerUm"]
     spec.update(extra or {})
     spec["phieOutputHeightMm"] = ctx.settings["phieOutputHeightMm"]
     if "durationMs" not in spec and ctx.settings["prepacing"]["enabled"]:
@@ -249,35 +254,20 @@ def analysisConfig(ctx, spacing, tuned):
     config["analysis"]["beatWindowMs"] = [25.0, 100.0]          # placeholder; replaced by the derived window
     config["analysis"]["groundTruth"] = "external"
     config["tissue"] = {"conductivitiesSPerM": dict(tuned["conductivitiesSPerM"]),
-                        "source": f"finalise tune stage, {spacing} mm"}
+                        "cellSurfVolRatioPerUm": tuned.get("cellSurfVolRatioPerUm"),
+                        "source": f"finalise tune stage, {spacing} mm; CV calibration: {tuned.get('calibration')}"}
     config["_purpose"] = "Final settings run; production-model candidate."
     boundary_setup.validateConfig(config)
     return config
 
 
-def meshFor(ctx, spec):
-    """Mesh of a spec with another bath thickness: mesher with the options carputils Block generates
-    (mesh.generate itself needs a running carputils experiment)."""
-    os.environ.setdefault("CARPUTILS_SETTINGS", carputilsEnvironment(ctx)["CARPUTILS_SETTINGS"])
-    import slab
-    name = f"{spec['condition']}_dx{spec['spacingMm']:g}_B{spec['bathThicknessMm']:g}_{spec['tissueSizeMm'][0]:g}x{spec['tissueSizeMm'][1]:g}x{spec['tissueSizeMm'][2]:g}"
-    folder = Path(spec["meshRoot"]) / "bathStudy" / name
-    base = folder / "block"
-    if not Path(f"{base}.elem").exists():
-        folder.mkdir(parents=True, exist_ok=True)
-        options = [str(o) for o in slab.geometry(spec).mesher_opts(str(base))]
-        with open(folder / "mesher.log", "w") as stream:
-            subprocess.run([shutil.which("mesher") or "mesher"] + options, check=True, stdout=stream, stderr=subprocess.STDOUT)
-    return str(base)
+# ----------------------------------------------------------------- one analysed run
+def variantName(spacing):
+    return f"dx{spacing:.2f}"
 
 
-# ----------------------------------------------------------------- one analysed variant
-def variantName(spacing, bath, source, scar="insulating"):
-    return f"dx{spacing:.2f}_B{bath:g}_{source}" + ("" if scar == "insulating" else f"_{scar}")
-
-
-def analyseVariant(ctx, folder, spacing, tuned, jobs, specs, bath, source, scar="insulating", fromOpenCarp=False):
-    """Pipeline run + contribution field for one (mesh, bath, forward model, scar) on the jobs' Vm."""
+def analyseVariant(ctx, folder, spacing, tuned, jobs):
+    """Pipeline run on openCARP's phi_e, forward-model gate and contribution field for one intact + lesion pair."""
     folder = Path(folder)
     summaryPath = folder / "variant.json"
     if summaryPath.exists():
@@ -285,35 +275,24 @@ def analyseVariant(ctx, folder, spacing, tuned, jobs, specs, bath, source, scar=
     config = pr.prepare(folder, analysisConfig(ctx, spacing, tuned), jobs, ctx.settings["windowRule"])
     t = ctx.settings["tissue"]
     models, check = {}, {}
-    jobMesh = {c: pr.jobRecord(j)["meshBase"] for c, j in jobs.items()}
     for condition, job in jobs.items():
-        sameMesh = specs[condition]["bathThicknessMm"] == bath
-        meshBase = jobMesh[condition] if sameMesh else meshFor(ctx, {**specs[condition], "bathThicknessMm": bath})
-        tissuePositions = None
-        if not sameMesh:
-            positions, elements, tags, _ = cf.readMesh(jobMesh[condition])
-            tissuePositions = positions[np.unique(elements[tags != cf.BATH_TAG])]
+        meshBase = pr.jobRecord(job)["meshBase"]
+        # Same mesh, conductivities and ground as the openCARP run (ground.vtx written by slab.py).
         model = cf.BathModel(meshBase, tuned["conductivitiesSPerM"], t["lesionConductivitySPerM"], t["bloodSPerM"],
-                             source, scar=scar, vmTissuePositions=tissuePositions)
+                             SOURCE, groundNodes=pr.readVertices(Path(job) / "ground.vtx"))
         models[condition] = model
         interpolator, layout = pr.recoveryInterpolator(meshBase, folder)
-        if fromOpenCarp:
-            if not sameMesh or source != "sigmaM" or scar != "insulating":
-                raise ValueError("openCARP electrograms exist only for the run's own bath, sigma_m, insulating scar")
-            check[condition] = forwardModelCheck(ctx, job, model, interpolator, config, folder)
-            signals, text = pr.openCarpSignals(job, interpolator, layout), "openCARP pseudo-bidomain phie.igb"
-        else:
-            signals = pr.femSignals(job, model, interpolator, layout, ctx.np)
-            text = f"extracellular solve ({source}, scar {scar}, bath {bath} mm; per-electrode reciprocity)"
+        check[condition] = forwardModelCheck(ctx, job, model, interpolator, config, folder)
         log(f"electrograms: {folder.name} {condition}")
-        pr.writeElectrograms(folder, config, condition, signals, text)
+        pr.writeElectrograms(folder, config, condition, pr.openCarpSignals(job, interpolator, layout),
+                             "openCARP pseudo-bidomain phie.igb")
     log(f"pipeline: {folder.name}")
     status = pr.runPipeline(folder, 1)
     log(f"contribution field: {folder.name}")
     table = pr.groundTruth(folder, config, models, ctx.settings["contributionField"]["voxelMm"],
                            ctx.settings["contributionField"]["curveStepMm"])
-    summary = dict(folder=str(folder), spacingMm=spacing, bathMm=bath, source=source, scar=scar,
-                   electrograms="openCARP" if fromOpenCarp else "extracellular solve", pilotStatus=status,
+    summary = dict(folder=str(folder), spacingMm=spacing, bath=ctx.settings["bath"], source=SOURCE,
+                   electrograms="openCARP", pilotStatus=status,
                    window=config["analysis"]["beatWindowMs"], forwardModelCheck=check,
                    groundTruthCheck=dict(shareSumMaxDeviation=float((table.shareSum - 1).abs().max()),
                                          reconstructionResidualMax=float(table.reconstructionResidual.max()),
@@ -399,6 +378,12 @@ def compareRuns(ctx, folderA, folderB, label, ppMode="raw", useCv=True, useChang
         checks["cv"] = row["cvRelative"] <= tol["cvRelative"]
     if useChangePoint:
         checks["changePoint"] = cpShift <= tol["changePointMm"] and row["supportStatusChanges"] == 0
+    # The signals behind the PP maximum (the gate is the per-signal maximum, so small signals can dominate it).
+    worst = clean.assign(ppRelative=ppRelative).nlargest(5, "ppRelative")
+    row["worstPpSignals"] = [dict(condition=w["condition"], kind=w["kind"], label=w["label"], centreYmm=float(w["centreYmm"]),
+                                  gapMm=float(w["gapMm"]), ppMvA=float(w["ppMvA"]), ppMvB=float(w["ppMvB"]),
+                                  rawPpA=float(w["rawCleanPpA"]), rawPpB=float(w["rawCleanPpB"]),
+                                  relative=float(w["ppRelative"])) for w in worst.to_dict("records")]
     row["checks"] = checks
     row["passed"] = bool(all(checks.values()) and a["physiology"] and b["physiology"])
     return row
@@ -499,160 +484,99 @@ def tuned(ctx, spacing):
     return load(ctx.out / "tune" / f"tuned_dx{spacing:.2f}.json")
 
 
-def runPair(ctx, label, spacing, bath, bidomain=2, conditions=("intact", "lesion"), extra=None):
+OPENCARP_DEFAULT_BETA_PER_UM = 0.14         # imp_region[].cellSurfVolRatio default (openCARP +Help), used by the tune strips
+
+
+def tissueFor(ctx, spacing):
+    """Conductivities, beta and stimulus of the production model at one spacing (DL-2026-11-02-03).
+
+    The tune stage reaches the CV target by scaling the Roberts and Scher conductivities by s. Monodomain Vm
+    depends on sigma / beta only (checked: Vm identical within 4e-5 mV, VL-2026-11-02-03), so the same
+    propagation is obtained with measured conductivities and beta = 0.14 / s ("surfaceToVolume"), or with
+    conductivities x s and the default beta ("conductivity"). Only the extracellular field differs: beta does
+    not enter it, the conductivity magnitudes (against blood) do.
+    """
     t = tuned(ctx, spacing)
+    mode = ctx.settings["tissue"]["cvCalibration"]
+    if mode == "surfaceToVolume":
+        base = ctx.kit["cvTuning"]["baseConductivitiesSPerM"]
+        return dict(conductivitiesSPerM=dict(base), stimulusStrength=t["stimulusStrength"],
+                    cellSurfVolRatioPerUm=OPENCARP_DEFAULT_BETA_PER_UM / t["scaleOfRobertsScher"], calibration=mode,
+                    scaleOfRobertsScher=t["scaleOfRobertsScher"], achievedMPerS=t["achievedMPerS"])
+    if mode == "conductivity":
+        return dict(conductivitiesSPerM=t["conductivitiesSPerM"], stimulusStrength=t["stimulusStrength"],
+                    cellSurfVolRatioPerUm=None, calibration=mode,
+                    scaleOfRobertsScher=t["scaleOfRobertsScher"], achievedMPerS=t["achievedMPerS"])
+    raise ValueError("tissue.cvCalibration must be 'surfaceToVolume' or 'conductivity'")
+
+
+def runPair(ctx, spacing):
+    t = tissueFor(ctx, spacing)
     state = conditioning(ctx, ctx.out / "conditioning" / f"dt{ctx.decisions()['timeStepUs']:g}_s{t['stimulusStrength']:g}",
                          ctx.decisions()["timeStepUs"], t["stimulusStrength"])
     jobs, specs, timing = {}, {}, {}
-    for condition in conditions:
-        spec = slabSpec(ctx, condition, spacing, bath, bidomain, t, state, extra)
-        job = ctx.out / "sims" / f"{label}_{condition}"
+    for condition in ("intact", "lesion"):
+        spec = slabSpec(ctx, condition, spacing, t, state)
+        job = ctx.out / "sims" / f"{variantName(spacing)}_{condition}"
         timing[condition] = runSlab(ctx, job, spec)
         jobs[condition], specs[condition] = job, spec
     return jobs, specs, timing
 
 
-def stageRun050(ctx):
-    """Base 0.5 mm run: the Vm every later 0.5 mm decision is computed on; gate that openCARP's bath is set up right."""
-    bath = ctx.settings["runBathMm"]
-    jobs, specs, timing = runPair(ctx, "dx0.50_pseudo", 0.5, bath)
-    variant = analyseVariant(ctx, ctx.out / "variants" / variantName(0.5, bath, "sigmaM"), 0.5, tuned(ctx, 0.5),
-                             jobs, specs, bath, "sigmaM", fromOpenCarp=True)
+def stageRun(ctx, spacing):
+    """openCARP pseudo-bidomain run at one spacing, analysed; gate: openCARP phi_e = the verified sigma_m solve."""
+    jobs, specs, timing = runPair(ctx, spacing)
+    variant = analyseVariant(ctx, ctx.out / "variants" / variantName(spacing), spacing, tissueFor(ctx, spacing), jobs)
     if not all(c["passed"] for c in variant["forwardModelCheck"].values()):
-        raise RuntimeError(f"openCARP phi_e does not match the sigma_m solve: {variant['forwardModelCheck']}")
-    return dict(timing=timing, variant=variant)
+        raise RuntimeError(f"openCARP phi_e does not match the sigma_m solve at {spacing} mm: {variant['forwardModelCheck']}")
+    return dict(timing=timing, nodes={c: pr.jobRecord(j)["sets"]["nodes"] for c, j in jobs.items()}, variant=variant)
 
 
-def stageForwardModel(ctx):
-    """Decides the forward model: openCARP pseudo-bidomain (sigma_m) vs bidomain physics (sigma_i), same Vm."""
-    jobs, specs = pairFor(ctx, "dx0.50_pseudo")
-    bath = ctx.settings["runBathMm"]
-    analyseVariant(ctx, ctx.out / "variants" / variantName(0.5, bath, "sigmaI"), 0.5, tuned(ctx, 0.5), jobs, specs, bath, "sigmaI")
-    row = compareRuns(ctx, ctx.out / "variants" / variantName(0.5, bath, "sigmaM"),
-                      ctx.out / "variants" / variantName(0.5, bath, "sigmaI"), "forwardModel_sigmaM_vs_sigmaI",
-                      ppMode="calibrated", useCv=False)
-    return dict(comparison=row, chosen="sigmaM" if row["passed"] else "sigmaI")
-
-
-def chosenSource(ctx):
-    return ctx.stage("forwardModel")["chosen"]
-
-
-def pairFor(ctx, label):
-    jobs = {c: ctx.out / "sims" / f"{label}_{c}" for c in ["intact", "lesion"]}
-    specs = {c: load(ctx.out / "sims" / f"{label}_{c}.json") for c in jobs}
-    return jobs, specs
-
-
-def stageBathStudy(ctx):
-    """Decides the bath thickness (chosen forward model only); reports the scar effect for R10."""
-    jobs, specs = pairFor(ctx, "dx0.50_pseudo")
-    runBath, source, t050 = ctx.settings["runBathMm"], chosenSource(ctx), tuned(ctx, 0.5)
-    baths = sorted(ctx.settings["bathStudyMm"])
-    for bath in baths:
-        analyseVariant(ctx, ctx.out / "variants" / variantName(0.5, bath, source), 0.5, t050, jobs, specs, bath, source,
-                       fromOpenCarp=(source == "sigmaM" and bath == runBath))
-    analyseVariant(ctx, ctx.out / "variants" / variantName(0.5, runBath, source, "conducting"), 0.5, t050, jobs, specs,
-                   runBath, source, "conducting")
-    comparisons = {}
-    for thin, thick in zip(baths[:-1], baths[1:]):
-        label = f"bath_{thin:g}_vs_{thick:g}"
-        comparisons[label] = compareRuns(ctx, ctx.out / "variants" / variantName(0.5, thin, source),
-                                         ctx.out / "variants" / variantName(0.5, thick, source), label, useCv=False)
-    chosen, flag = baths[-1], "bath not converged at the thickest bath tested"
-    for thin, thick in zip(baths[:-1], baths[1:]):
-        if comparisons[f"bath_{thin:g}_vs_{thick:g}"]["passed"]:
-            chosen, flag = thin, None
-            break
-    scar = compareRuns(ctx, ctx.out / "variants" / variantName(0.5, runBath, source, "conducting"),
-                       ctx.out / "variants" / variantName(0.5, runBath, source), "scar_conducting_vs_insulating", useCv=False)
-    return dict(source=source, comparisons=comparisons, chosenBathMm=chosen, flag=flag, scarEffect=scar)
+def stageRun050(ctx):
+    return stageRun(ctx, 0.5)
 
 
 def stageRun025(ctx):
-    """0.25 mm run with the chosen bath and forward model: the finer level of the mesh decision."""
-    bath, source = ctx.stage("bathStudy")["chosenBathMm"], chosenSource(ctx)
-    jobs, specs, timing = runPair(ctx, f"dx0.25_pseudo_B{bath:g}", 0.25, bath)
-    t025 = tuned(ctx, 0.25)
-    folder = ctx.out / "variants" / variantName(0.25, bath, source)
-    variant = analyseVariant(ctx, folder, 0.25, t025, jobs, specs, bath, source, fromOpenCarp=(source == "sigmaM"))
-    check = variant["forwardModelCheck"]
-    if source == "sigmaI":                          # the bath gate is defined on openCARP's own (sigma_m) field
-        t = ctx.settings["tissue"]
-        config = load(folder / "config.json")
-        check = {}
-        for condition, job in jobs.items():
-            meshBase = pr.jobRecord(job)["meshBase"]
-            model = cf.BathModel(meshBase, t025["conductivitiesSPerM"], t["lesionConductivitySPerM"], t["bloodSPerM"], "sigmaM")
-            check[condition] = forwardModelCheck(ctx, job, model, pr.recoveryInterpolator(meshBase, folder)[0], config, folder)
-    if not all(c["passed"] for c in check.values()):
-        raise RuntimeError(f"openCARP phi_e does not match the sigma_m solve at 0.25 mm: {check}")
-    return dict(timing=timing, variant=variant, forwardModelCheck=check)
+    return stageRun(ctx, 0.25)
 
 
 def stageDecide(ctx):
     """Decides the mesh spacing (matched CV) and writes the final settings."""
-    d, source = ctx.decisions(), chosenSource(ctx)
-    bath = ctx.stage("bathStudy")["chosenBathMm"]
+    d = ctx.decisions()
     # Matched CV: the meshes have different tuned conductivity magnitudes, so raw amplitudes differ by design;
     # the gate uses calibrated PP (spatial pattern) and reports raw PP.
-    mesh = compareRuns(ctx, ctx.out / "variants" / variantName(0.5, bath, source),
-                       ctx.out / "variants" / variantName(0.25, bath, source), "mesh_0.50_vs_0.25", ppMode="calibrated")
+    mesh = compareRuns(ctx, ctx.out / "variants" / variantName(0.5), ctx.out / "variants" / variantName(0.25),
+                       "mesh_0.50_vs_0.25", ppMode="calibrated")
     spacing = 0.5 if mesh["passed"] else 0.25
     flags = []
     if spacing == 0.25:
         flags.append("0.5 vs 0.25 mm failed: 0.25 mm is used, but 0.25 vs 0.125 mm is not yet shown.")
-    if ctx.stage("bathStudy").get("flag"):
-        flags.append(ctx.stage("bathStudy")["flag"])
-    if source == "sigmaI":
-        flags.append("sigma_m and sigma_i differ: production needs the sigma_i source. Choose the route (openCARP full "
-                     "bidomain, or the verified sigma_i solve on openCARP Vm); run --only bidomainCheck for its cost.")
-    flags.append("Scar type (R10): see the scar effect in report.md.")
+    flags.append("Forward model: openCARP pseudo-bidomain is your decision and overrides the 1 Nov rule outcome "
+                 "(DL-2026-11-02-01).")
+    flags.append("Bath: modelling assumption, not tested (DL-2026-11-02-02).")
+    if "PROPOSED" in ctx.settings["tolerances"].get("_contributionFieldL1", ""):
+        flags.append("contributionFieldL1 tolerance (0.10) is still PROPOSED: confirm it, or the mesh decision rests on it.")
+    flags.append("Scar type (R10): your decision; the pilot's insulating scar is used here.")
+    bath = ctx.settings["bath"]
+    t = tissueFor(ctx, spacing)
     model = dict(
         status="PROPOSED by the final settings run; becomes v3-reference once you confirm the flags",
         createdUtc=now(), domainMm=ctx.settings["domains"][d["domain"]] + [ctx.settings["tissue"]["wallMm"]],
         spacingMm=spacing, timeStepUs=d["timeStepUs"], sampleStepMs=d["sampleStepMs"], beatCount=d["beatCount"],
-        bathMm=bath, bloodSPerM=ctx.settings["tissue"]["bloodSPerM"], forwardModel=SOURCE_TEXT[source],
-        conductivitiesSPerM=tuned(ctx, spacing)["conductivitiesSPerM"], stimulusStrength=tuned(ctx, spacing)["stimulusStrength"],
+        bath=dict(thicknessMm=bath["thicknessMm"], allSides=bath["allSides"], groundCubeMm=bath["groundCubeMm"],
+                  outerBoundary="no flux", bloodSPerM=ctx.settings["tissue"]["bloodSPerM"]),
+        forwardModel=SOURCE_TEXT[SOURCE], conductivitiesSPerM=t["conductivitiesSPerM"], stimulusStrength=t["stimulusStrength"],
+        cellSurfVolRatioPerUm=t["cellSurfVolRatioPerUm"] or OPENCARP_DEFAULT_BETA_PER_UM, cvCalibration=t["calibration"],
         cvTargetMPerS=ctx.settings["tissue"]["cvTargetMPerS"], scar="insulating (pilot) unless you choose otherwise (R10)",
+        prepacingRestartMs=restartTime(ctx, d["beatCount"]), phieOutputHeightMm=ctx.settings["phieOutputHeightMm"],
         measurementWindow="derived per run (DL-2026-10-28-08)", groundTruth="exact contribution field (contribution_field.py)",
+        productionSpec=slabSpec(ctx, "<intact|lesion>", spacing, t, "<conditioning state>"),
         flags=flags)
     return dict(meshComparison=mesh, productionModel=model)
 
 
-def stageBidomainCheck(ctx):
-    """OPTIONAL (--only bidomainCheck), only if the sigma_i source is needed: cost and bath loading of full bidomain."""
-    bath = ctx.settings["runBathMm"]
-    duration = ctx.settings["bidomainCheck"]["durationMs"]
-    jobs, specs, timing = runPair(ctx, "dx0.50_bidomain60", 0.5, bath, bidomain=1, conditions=("intact",),
-                                  extra={"durationMs": duration})
-    job, spec = jobs["intact"], specs["intact"]
-    pseudoJob = ctx.out / "sims" / "dx0.50_pseudo_intact"
-    t = ctx.settings["tissue"]
-    meshBase = pr.jobRecord(job)["meshBase"]
-    model = cf.BathModel(meshBase, tuned(ctx, 0.5)["conductivitiesSPerM"], t["lesionConductivitySPerM"], t["bloodSPerM"], "sigmaI")
-    interpolator, _ = pr.recoveryInterpolator(meshBase, ctx.out / "variants" / variantName(0.5, bath, "sigmaM"))
-    frames = igb_io.header(job / "phie.igb")[2]
-    chosen = np.arange(int(round(10 / spec["sampleStepMs"])), frames, 5)
-    bido = np.stack([interpolator @ pr.readPhie(job, slice(f, f + 1)).T[:, 0] for f in chosen], axis=1)
-    femI = np.stack([interpolator @ model.solver.solve(model.fullVm(igb_io.read(job / "vm.igb", slice(f, f + 1)).T))[:, 0]
-                     for f in chosen], axis=1)
-    rel = lambda x, y: float(np.linalg.norm(x - y) / np.linalg.norm(y))
-    import common
-    nodes = igb_io.header(job / "vm.igb")[1]
-    firstB = common.firstActivationInWindow(*common.readActivationFile(job / "act-thresh.dat", nodes), nodes, 0, duration)
-    firstP = common.firstActivationInWindow(*common.readActivationFile(pseudoJob / "act-thresh.dat", nodes), nodes, 0, duration)
-    both = np.isfinite(firstB) & np.isfinite(firstP)
-    pseudoMs = spec["pacing"]["cycleLengthMs"] * ctx.decisions()["beatCount"]
-    return dict(timing=timing, sigmaISolveVsBidomainRelativeRms=rel(femI, bido),
-                activationDifferenceMsMax=float(np.abs(firstB[both] - firstP[both]).max()),
-                costSecondsPerSimulatedMs=dict(bidomain=timing["intact"]["wallSeconds"] / duration,
-                                               pseudoBidomain=load(ctx.out / "sims" / "dx0.50_pseudo_intact.timing.json")["wallSeconds"] / pseudoMs))
-
-
 STAGE_FUNCTIONS = dict(preflight=stagePreflight, recompute=stageRecompute, tune=stageTune, run050=stageRun050,
-                       forwardModel=stageForwardModel, bathStudy=stageBathStudy, run025=stageRun025, decide=stageDecide,
-                       bidomainCheck=stageBidomainCheck)
+                       run025=stageRun025, decide=stageDecide)
 
 
 # ----------------------------------------------------------------- report
@@ -682,10 +606,14 @@ def writeReport(ctx):
         lines += ["", "Decisions: " + ", ".join(f"{k} = {v}" for k, v in r["decisions"].items()), ""]
     tu = ctx.stage("tune")
     if tu:
-        lines += ["## CV tuning", "", "| Spacing (mm) | CV (m/s) | scale of Roberts-Scher | sigma_il | sigma_el |", "| --- | --- | --- | --- | --- |"]
+        lines += ["## CV tuning", "", f"CV calibration: {ctx.settings['tissue']['cvCalibration']} (DL-2026-11-02-03).", "",
+                  "| Spacing (mm) | CV (m/s) | scale s of Roberts-Scher | production sigma_il | production sigma_el | production beta (1/um) |",
+                  "| --- | --- | --- | --- | --- | --- |"]
         for key, v in tu["tuned"].items():
-            g = v["conductivitiesSPerM"]
-            lines.append(f"| {key} | {fmt(v['achievedMPerS'])} | {fmt(v['scaleOfRobertsScher'])} | {fmt(g['g_il'])} | {fmt(g['g_el'])} |")
+            p = tissueFor(ctx, float(key))
+            g = p["conductivitiesSPerM"]
+            lines.append(f"| {key} | {fmt(v['achievedMPerS'])} | {fmt(v['scaleOfRobertsScher'])} | {fmt(g['g_il'])} | {fmt(g['g_el'])} | "
+                         f"{fmt(p['cellSurfVolRatioPerUm'] or OPENCARP_DEFAULT_BETA_PER_UM, 4)} |")
         lines.append("")
     for stage in ["run050", "run025"]:
         s = ctx.stage(stage)
@@ -701,26 +629,22 @@ def writeReport(ctx):
                        f"{fmt(row['changePointMaxShiftMmSupported'])} mm ({row['supportedFits']} fits) | {row['supportStatusChanges']} | "
                        f"{fmt(row['fieldL1Max'])} | {fmt(row['passed'])} |")
         return out + [""]
-    fm = ctx.stage("forwardModel")
-    if fm:
-        lines += table("Forward model", "openCARP pseudo-bidomain if it passes, else the sigma_i source", [fm["comparison"]])
-        lines += [f"Chosen: {SOURCE_TEXT[fm['chosen']]}", ""]
-    bs = ctx.stage("bathStudy")
-    if bs:
-        lines += table("Bath thickness", "the thinnest bath that passes against the next thicker", bs["comparisons"].values())
-        lines += [f"Chosen bath: {bs['chosenBathMm']:g} mm" + (f" ({bs['flag']})" if bs.get("flag") else ""), ""]
-        lines += table("Scar type (R10, your decision)", "nothing automatically; size of the effect", [bs["scarEffect"]])
+    bath = ctx.settings["bath"]
+    lines += ["## Fixed before the run", "",
+              f"- Forward model: {SOURCE_TEXT[SOURCE]}; electrograms are openCARP's phi_e. "
+              f"{ctx.settings['forwardModelDecision']['reason']}",
+              f"- Bath: {bath['thicknessMm']:g} mm on every side, no-flux outer walls, {bath['groundCubeMm']:g} mm "
+              f"grounded cube at a bath corner. {bath['_source']}", ""]
+    for stage in ["run050", "run025"]:
+        s = ctx.stage(stage)
+        if s:
+            lines += [f"Gate {stage} (openCARP phi_e vs sigma_m solve): " + ", ".join(
+                f"{c} relative RMS {v['relativeRmsMax']:.2g}, correlation {v['correlationMin']:.8f}"
+                for c, v in s["variant"]["forwardModelCheck"].items()), ""]
     de = ctx.stage("decide")
     if de:
         lines += table("Mesh spacing (matched CV)", "0.5 mm if it passes, else 0.25 mm", [de["meshComparison"]])
         lines += ["## Proposed production model", "", "```json", json.dumps(de["productionModel"], indent=2), "```", ""]
-    b = ctx.stage("bidomainCheck")
-    if b:
-        lines += ["## Full bidomain (optional check)", "",
-                  f"- sigma_i solve vs openCARP bidomain: relative RMS {fmt(b['sigmaISolveVsBidomainRelativeRms'])}",
-                  f"- activation shift vs pseudo-bidomain: max {fmt(b['activationDifferenceMsMax'])} ms",
-                  f"- cost: bidomain {fmt(b['costSecondsPerSimulatedMs']['bidomain'])} s, pseudo-bidomain "
-                  f"{fmt(b['costSecondsPerSimulatedMs']['pseudoBidomain'])} s per simulated ms", ""]
     (ctx.out / "report.md").write_text("\n".join(lines) + "\n")
 
 
@@ -755,14 +679,17 @@ def plan(ctx):
     domains = ctx.settings["domains"]
     domain = domains.get(d["domain"], domains["pilot"])
     wall = ctx.settings["tissue"]["wallMm"]
-    def nodes(spacing, bath):
-        return int(np.prod([round(domain[0] / spacing) + 1, round(domain[1] / spacing) + 1, round((wall + bath) / spacing) + 1]))
+    bath = ctx.settings["bath"]
+    B = bath["thicknessMm"]
+    def nodes(spacing):
+        sides = 2 if bath["allSides"] else 0
+        return int(np.prod([round((domain[0] + sides * B) / spacing) + 1, round((domain[1] + sides * B) / spacing) + 1,
+                            round((wall + (2 if bath["allSides"] else 1) * B) / spacing) + 1]))
     print(f"Domain {domain[0]:g} x {domain[1]:g} x {wall:g} mm ({d['domain']}); beats {d['beatCount']}; output {d['sampleStepMs']} ms")
+    print(f"Bath {B:g} mm" + (" on every side" if bath["allSides"] else " on top") + f", grounded {bath['groundCubeMm']:g} mm corner cube")
     print("openCARP runs (pseudo-bidomain), each intact + lesion:")
-    print(f"  run050  0.5 mm, bath {ctx.settings['runBathMm']:g} mm: {nodes(0.5, ctx.settings['runBathMm']):,} nodes")
-    for bath in ctx.settings["bathStudyMm"]:
-        print(f"  run025  0.25 mm if the bath study chooses {bath:g} mm: {nodes(0.25, bath):,} nodes")
-    print("Extracellular solves on the run050 Vm: bath " + ", ".join(f"{b:g} mm ({nodes(0.5, b):,} nodes)" for b in ctx.settings["bathStudyMm"]))
+    print(f"  run050  0.5 mm: {nodes(0.5):,} nodes")
+    print(f"  run025  0.25 mm: {nodes(0.25):,} nodes")
     for name in STAGES:
         print(f"  {name:14s} {ctx.stage(name, completeOnly=False).get('status', 'not started')}")
 
@@ -782,8 +709,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("command", choices=["plan", "run", "status", "report"])
     parser.add_argument("--np", type=int, default=1)
-    parser.add_argument("--out", default=str(REPOSITORY / "3D_Code" / "runs" / "final"))
-    parser.add_argument("--only", choices=STAGES + OPTIONAL_STAGES)
+    parser.add_argument("--out", default=str(REPOSITORY / "3D_Code" / "runs" / "final_v2"))
+    parser.add_argument("--only", choices=STAGES)
     args = parser.parse_args()
     ctx = Context(args.out, args.np)
     if args.command == "plan":
