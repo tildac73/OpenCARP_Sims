@@ -1,6 +1,6 @@
 # Final model: edit plan and decision register (3 Nov 2026)
 
-Branch: `finalModel` at `7cee884` (tildac73/OpenCARP_Sims). **Implemented 3 Nov 2026 on branch `finalModelV2`** (decision log DL-2026-11-03-02; verification VL-2026-11-03-02/03). Changes made during implementation are marked **[implementation]** below.
+Branch: `finalModel` at `7cee884` (tildac73/OpenCARP_Sims). **Implemented 3 Nov 2026 on branch `finalModelV2`; revised the same day after the independent review (Section 0, FM-23 to FM-30)** (decision log DL-2026-11-03-02; verification VL-2026-11-03-02/03). Changes made during implementation are marked **[implementation]** below.
 Decision IDs FM-01 to FM-22 go into `docs/decision_log.md` when each is implemented.
 Status labels:
 - **Decided**: follows Matilda's instruction or a sourced value.
@@ -9,6 +9,25 @@ Status labels:
 - **[VERIFY]**: a value or claim not yet checked against a primary source.
 
 Literature access this session: Scite lapsed, PMC behind CAPTCHA, several publishers blocked. Every source below was actually read (abstract or page) unless marked [VERIFY].
+
+## 0. Revision after the independent review (3 Nov 2026, evening): FM-23 to FM-30
+
+An independent reviewer (subagent with no access to the reasoning) checked the implementation against the Working Methodology, the Proposed Project, Wang's manuscript and supplement, and the literature. Matilda decided: no bath convergence study; fix the lesion as proposed; no scaling to Wang's values (keep them separate); no comparison of openCARP values at all; the reviewer's recommendations for the rest. Decision log DL-2026-11-03-03; verification VL-2026-11-03-04 (sandbox, no openCARP).
+
+| ID | Decision | Supersedes |
+|---|---|---|
+| FM-23 | **Forward model: monodomain Vm + sigma_i source, by reciprocity.** openCARP's pseudo-bidomain drives phi_e with sigma_m; with the model's unequal anisotropy (intracellular 5.7, extracellular 1.5) that under-weights fibre-parallel sources by ~2.3x and biases the endo/epi split. Tissue runs are now monodomain (no phi_e output, no prepacing restart); every distinct electrode (712 per condition at baseline) gets an openCARP Laplace lead field; phi = -z^T S_i Vm. Lead fields cached per conductor fingerprint and node set. Precedent: monodomain Vm with a forward model for phi_e (Potse et al. 2006, IEEE TBME; abstract read). Limitation kept: no bath loading in Vm. | DL-2026-11-02-01, FM-13, FM-14 source, FM-20 phi_e |
+| FM-24 | **Lesion = 5.6 mm ablation strip + viable isolated tissue beyond it** (never stimulated), as after single-ring isolation and as in the October 2D spec. Width: Wang supplement (5.6 +- 1.2 mm, citing Friedman et al. 2021). | FM-07 geometry (half-plane) |
+| FM-25 | **Physical model units; no calibration.** Wang's medians (1.44 / 0.97 mV) reported beside the model, never applied. Pre-registered primary test: change-point shift per doubling of noise (0.0025-0.02 mV), `noiseDoubling.csv`. | FM-19 |
+| FM-26 | **No openCARP-vs-openCARP or openCARP-vs-own-solver comparisons.** Reconstruction gate removed (now an identity); share-sum check kept; W0 = Laplace runs + cost; C3 removed; C5 = lesion-strip activation check. Limitation: the physical amplitude scale rests on openCARP's total-current convention, unchecked. | FM-13/14 gates, C3, W0 (b-c) |
+| FM-27 | **PF: EnSite-style and global maximum co-primary**, each exported as its own Wang dataset; `pfNoiseRobustness.csv` (clean vs noisy PF by distance). | FM-10 primary/alternative |
+| FM-28 | **Measurement window per placement** (same rule, same length), so oblique waves are measured locally. | DL-2026-10-28-08 (single window) |
+| FM-29 | Code fixes: 10 ms of Vm beyond the latest window for the resampling FIR; wording: the R wrapper uses MD5 and its own chunk parser (not SHA-256 or purl); output rate 5 kHz. | FM-12 wording |
+| FM-30 | **Near/far 4 mm is a convention** (one HD Grid spacing); Schlageter's 4 mm is electrode-to-tissue distance. Continuous curves are primary. | FM-15 rationale |
+
+Not acted on (recorded): bath convergence (Matilda); roof prediction to be pre-registered when analysed; canine-LV conductivities; 3x3 wall x standoff block.
+
+Container checks now: C1 (mesh), W0 (Laplace accepted; cost of 712 solves per condition), C4 (fibres), C5 (lesion strip quiet, isolated tissue quiet, viable side activates), C8 (Wang R).
 
 ---
 
@@ -97,7 +116,7 @@ Literature access this session: Scite lapsed, PMC behind CAPTCHA, several publis
 - Tissue stays transversely isotropic (one fibre vector per element), as now.
 - Angles are measured from +x, which is also the reference wave direction and parallel to the lesion line. The thesis must state that fibre angle and wave angle are separate sweep variables (FM-17).
 
-**FM-07 - Primary lesion: inexcitable, intracellularly uncoupled, extracellularly conducting.** Decided (3 Nov 2026; Matilda delegated the choice: "what most other researchers would do").
+**[geometry superseded by FM-24]** **FM-07 - Primary lesion: inexcitable, intracellularly uncoupled, extracellularly conducting.** Decided (3 Nov 2026; Matilda delegated the choice: "what most other researchers would do").
 - Reason for choosing it: a passive, non-excitable region that keeps a conducting extracellular space is the usual simulation representation of scar or lesion. It asserts no conductivity change without a measurement; the porated and insulating cases are reported as bounds.
 - Basis:
   - RF lesions are coagulation necrosis with sarcolemmal damage, and irreversible injury above ~50 °C (Thoracic Key chapter on RF lesion biophysics; book identifier 9780323529921, authors not shown in the excerpt).
@@ -131,7 +150,7 @@ Literature access this session: Scite lapsed, PMC behind CAPTCHA, several publis
 - Unipolar signals: the resampling filter only. The clinical unipolar filter is unknown: [VERIFY], Junction 1.
 - Peak-to-peak, PF and everything downstream run on the 2 kHz signals.
 
-**FM-10 - Peak frequency: an EnSite OT Near Field approximation.** Decided; wavelet details Assumption.
+**[primary definition superseded by FM-27]** **FM-10 - Peak frequency: an EnSite OT Near Field approximation.** Decided; wavelet details Assumption.
 - Published description (Europace 2024;26:euae154):
   - the algorithm is proprietary and wavelet-derived;
   - it gives a peak-frequency trace over time; each point is assigned the highest PF and its time;
@@ -179,11 +198,11 @@ Literature access this session: Scite lapsed, PMC behind CAPTCHA, several publis
 
 ### Electrograms, ground truth and contributions
 
-**FM-13 - Remove the independent FEM forward-model check.** Decided (Matilda).
+**[source superseded by FM-23]** **FM-13 - Remove the independent FEM forward-model check.** Decided (Matilda).
 - Remove the electrograms stage's `forwardModelCheck`, its acceptance thresholds, and the method-of-images / insulating-plane unit tests.
 - Electrograms are openCARP pseudo-bidomain φe, as before (DL-2026-11-02-01).
 
-**FM-14 - Lead fields computed by openCARP: Laplace solves with a total-current electrode, by reciprocity.** Decided (3 Nov 2026; Matilda delegated the choice: "what most other researchers would do"). Feasibility checked first (W0).
+**[source and checks superseded by FM-23, FM-26]** **FM-14 - Lead fields computed by openCARP: Laplace solves with a total-current electrode, by reciprocity.** Decided (3 Nov 2026; Matilda delegated the choice: "what most other researchers would do"). Feasibility checked first (W0).
 - Reason for choosing it: the lead field comes from the same simulator, mesh, conductivities and ground as the electrograms, so attribution and signal share one discrete problem. The reconstruction check proves it on every run.
 - Corrects the earlier draft of this plan, which said openCARP cannot provide lead fields. Precisely:
   - openCARP's dedicated lead-field stimulus (`LF_I`) needs `ENABLE_LEADFIELD` at build time. The conda-forge openCARP 19.0.0 binary contains no lead-field code (no `LF_I` or `leadfield` strings; inspected 3 Nov 2026).
@@ -197,7 +216,7 @@ Literature access this session: Scite lapsed, PMC behind CAPTCHA, several publis
 - The reconstruction check stays and becomes a test of openCARP against openCARP: summed contributions from the openCARP lead field must reproduce openCARP's φe for every ground-truth recording (relative residual ≤ 1e-3; scale = gain within 1e-3). If it fails, the run stops.
 - Pre-declared fallback (decided now, so W0 cannot turn into a loop): if W0 shows that the Laplace mode rejects a current stimulus, or that the reconstruction fails, the lead field reverts to the earlier Python reciprocity solve (verified VL-2026-10-28-07, VL-2026-11-02-01). The ground-truth definition and outputs are identical either way. No third route is explored.
 
-**FM-15 - Contribution classes: endocardial, epicardial, far-field.** Decided (3 Nov 2026; Matilda delegated the choice: "what most other researchers would do").
+**[cut-off rationale superseded by FM-30]** **FM-15 - Contribution classes: endocardial, epicardial, far-field.** Decided (3 Nov 2026; Matilda delegated the choice: "what most other researchers would do").
 - Reason for the 4 mm cut-off: it is the published near-field cut-off for human atrial electrograms (Schlageter et al. 2024), so results can be compared with it. The continuous curves are reported alongside, so no conclusion depends on the cut-off value.
 - For each recording, every tissue element is assigned to exactly one class:
   - **near-field endocardial**: lateral distance from the recording anchor ≤ R_nf, depth from the catheter-facing surface < T/2;
@@ -263,14 +282,14 @@ Literature access this session: Scite lapsed, PMC behind CAPTCHA, several publis
 - The tuned β is written into `model.par` with its provenance (`python -m efov tune --write-par`). Sweep variants with a different CV target or ionic model retune into their own resolved .par.
 - β is tuned once on uniform fibres and held fixed across fibre models. The effective slab CV then changes with fibre architecture, as it physically should, and is reported. The CV gate applies to the strip, not to bilayer slabs.
 
-**FM-19 - Calibration gain fixed from the inferior reference run.** Decided.
+**[superseded by FM-25]** **FM-19 - Calibration gain fixed from the inferior reference run.** Decided.
 - The gain is computed once: median bipolar PP at the intact reference placement = 1.44 mV.
 - R7 resolved: 1.44 mV is Wang's Table 2 median healthy-tissue bipolar voltage on the inferior wall (IQR 0.70-2.29).
 - That gain is applied unchanged to the roof run and every sweep variant. Recalibrating each run would erase regional and sweep amplitude differences, which are predictions.
 - Noise stays 5 µV SD. Assumption [VERIFY]: no source recorded. It is a sweep variable.
 - Circularity, stated in the thesis: the absolute amplitude is calibrated to a Wang value and noise is absolute, so the inferior wall's SNR is partly set by calibration. Validation target V-5 (the 0.05 mV crossing) is therefore partly circular for the inferior wall. The roof prediction is not.
 
-**FM-20 - Storage: compaction of unshared simulations.** Decided; **[implementation]** revised.
+**[phi_e output removed by FM-23]** **FM-20 - Storage: compaction of unshared simulations.** Decided; **[implementation]** revised.
 - Vm output is not restricted (the planned `dataout_i = 3` was dropped: it would have needed an unverified parameter and a split physiology read).
 - φe is written on the electrode envelope box (about 0.7 M nodes, ~13 GB per condition at 5 kHz). Without compaction the one-at-a-time sweep would need ~1.1 TB.
 - A sweep variant whose simulation no other variant reuses is compacted after its report: Vm kept for its analysis frames (`vm_analysis.npz`), `vm.igb` and `phie.igb` deleted, electrode signals already extracted. The baseline simulation, shared by the electrode, noise and analysis variants, is never compacted. Estimated sweep total ~200 GB. Raw output is regenerated from the resolved .par files.

@@ -13,9 +13,11 @@ This implementation (assumptions, fixed.analysis.peakFrequency):
   * frequencies minimumHz..maximumHz in stepHz steps;
   * PF trace: at each sample, the frequency of the largest |W|; samples whose largest |W| is below
     magnitudeGateFraction of the window maximum are ignored;
-  * PF = highest remaining trace value, t_PF = its time (if several samples share it, the one with
-    the largest |W|);
-  * global alternative (reported, not primary): frequency of the largest |W| in the window.
+  * 'ensite' PF = highest remaining trace value, t_PF = its time (if several samples share it, the
+    one with the largest |W|);
+  * 'global' PF = frequency of the largest |W| in the window. Co-primary with 'ensite' (FM-27):
+    with white noise the highest trace value is drawn toward high frequencies as the signal falls,
+    the global maximum much less so.
 The transform runs over the whole filtered segment (filter history + window) and is read only
 inside the measurement window, so low-frequency wavelets are not cut at the window start.
 """
@@ -38,30 +40,40 @@ def scalogram(signals, sampleRateHz, frequencies, omega0):
     return np.abs(np.fft.ifft(spectrum[:, None, :] * wavelet[None, :, :], axis=-1)[..., :length])
 
 
-def peakFrequency(signals, sampleRateHz, window, settings, block=32):
-    """PF (Hz), t_PF (sample index in the segment) and the global alternative for each signal (N, T).
+def windowed(array, starts, length):
+    """array (N, ..., T) -> (N, ..., length), each row from its own start sample."""
+    starts = np.broadcast_to(np.asarray(starts, int), (array.shape[0],))
+    index = starts[:, None] + np.arange(length)[None, :]
+    index = index.reshape((array.shape[0],) + (1,) * (array.ndim - 2) + (length,))
+    return np.take_along_axis(array, index, axis=-1)
 
-    window: slice of the samples inside the measurement window. Signals with window peak-to-peak
-    below settings['minimumPpMv'] get NaN (undetectable). The caller passes the band-passed segment.
+
+def peakFrequency(signals, sampleRateHz, starts, length, settings, block=32):
+    """PF (Hz), t_PF (sample index in the segment) and the global PF for each signal (N, T).
+
+    starts, length: each signal's measurement window inside its segment (first sample, number of
+    samples). Signals with window peak-to-peak below settings['minimumPpMv'] get NaN (undetectable).
+    The caller passes the band-passed segment.
     """
     signals = np.atleast_2d(np.asarray(signals, float))
     frequencies = frequenciesHz(settings)
     count = len(signals)
+    starts = np.broadcast_to(np.asarray(starts, int), (count,))
     pf, index, pfGlobal = np.full(count, np.nan), np.full(count, -1), np.full(count, np.nan)
-    detectable = np.ptp(signals[:, window], axis=1) >= settings["minimumPpMv"]
+    detectable = np.ptp(windowed(signals, starts, length), axis=1) >= settings["minimumPpMv"]
     for first in range(0, count, block):
         rows = np.arange(first, min(first + block, count))
         rows = rows[detectable[rows]]
         if not len(rows):
             continue
-        magnitude = scalogram(signals[rows], sampleRateHz, frequencies, settings["morletOmega0"])[..., window]  # (n, F, W)
+        magnitude = windowed(scalogram(signals[rows], sampleRateHz, frequencies, settings["morletOmega0"]), starts[rows], length)  # (n, F, W)
         best = magnitude.max(axis=1)                                               # (n, W)
         trace = frequencies[magnitude.argmax(axis=1)]                              # (n, W)
         kept = best >= settings["magnitudeGateFraction"] * best.max(axis=1, keepdims=True)
         masked = np.where(kept, trace, -np.inf)
         highest = masked.max(axis=1)
         tieBreak = np.where(masked == highest[:, None], best, -np.inf)
-        pf[rows], index[rows] = highest, window.start + tieBreak.argmax(axis=1)
+        pf[rows], index[rows] = highest, starts[rows] + tieBreak.argmax(axis=1)
         flat = magnitude.reshape(len(rows), -1).argmax(axis=1)
         pfGlobal[rows] = frequencies[np.unravel_index(flat, magnitude.shape[1:])[0]]
     return pf, index, pfGlobal

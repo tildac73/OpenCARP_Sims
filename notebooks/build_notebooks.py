@@ -55,8 +55,8 @@ Two files define the model (plan claude/final_model_plan_2026-11-03.md, FM-01, F
 | Notebook | Stages | What it does |
 | --- | --- | --- |
 | 01 | preflight, conditioning, tune, simulation | beta tuning and the openCARP runs (hours on the workstation) |
-| 02 | physiology, window | activation checks; measurement window |
-| 03 | electrograms | unipolar phi_e at every electrode (node-set electrodes) |
+| 02 | physiology, window | activation checks; per-placement measurement windows |
+| 03 | leadFields, electrograms | openCARP lead field per electrode; unipolar signals by reciprocity (sigma_i source) |
 | 04 | measurements, export, changePoints | acquisition chain, PP, peak frequency; Wang's code |
 | 05 | groundTruth | contributing tissue: classes, depth profile, 3D fields |
 | 06 | report | acceptance, report.md, figures |
@@ -81,7 +81,8 @@ notebook("01_simulate.ipynb", [
 * **tune**: beta for the CV target on a strip at the production mesh (FM-18); uses `config/tuning.json`
   if `python -m efov tune --write-par` was run for this mesh and target.
 * **simulation**: `efov/opencarp/slab_experiment.py` (carputils) for the intact and lesion slab. Every
-  openCARP launch reads one resolved parameter file (`simulations/<condition>/prepace.par`, `run.par`).
+  run is monodomain (FM-23) and reads one resolved parameter file (`simulations/<condition>/run.par`). In the
+  lesion run a 5.6 mm ablation strip separates the paced tissue from isolated viable tissue (FM-24).
 
 Long runs are safer from the terminal: `nohup python -m efov run --out runs/v4_reference --np 24 --until simulation > runs/sim.log 2>&1 &`.""",
     """run.runStage("preflight")""",
@@ -99,8 +100,8 @@ notebook("02_physiology_and_window.ipynb", [
 On catheter-facing tissue nodes of the last three beats: one activation per beat, repolarisation inside
 the response window, quiet lesion core, planar wave in the intended direction, stable latency,
 amplitude and APD90. The surface CV is reported; the CV gate is the tune stage. Engineering criteria,
-not validated biological limits. The window is derived from the intact activation under the grid
-before any electrogram is read (DL-2026-10-28-08).""",
+not validated biological limits. Each placement's window is derived from the intact activation under
+it before any electrogram is read (DL-2026-10-28-08, FM-28).""",
     """physiology = run.runStage("physiology")
 pd.DataFrame({c: v["criteria"] for c, v in physiology["conditions"].items()})""",
     """pd.read_csv(run.shared / "physiology" / "physiologyChecks.csv")""",
@@ -113,9 +114,11 @@ display(Image(str(activationFigure(run, run.folder("figures")))))""",
 notebook("03_electrograms.ipynb", [
     """# 3. Electrograms
 
-Each electrode is the set of mesh nodes inside its 1 mm cylinder; its unipolar signal is the mean of
-openCARP's phi_e over that set (FM-14). Only the last beat's window plus twice the filter history is
-extracted. The independent forward-model check was removed (FM-13).""",
+Each electrode is the set of bath mesh nodes inside its 1 mm cylinder (FM-14). Every distinct electrode
+gets an openCARP Laplace lead field z (cached per conductor); its unipolar signal is phi(t) = -z^T S_i Vm(t),
+the bidomain extracellular potential with the sigma_i source recovered from the monodomain Vm (FM-23).
+Only the last beat's windows plus twice the filter history are computed.""",
+    """run.runStage("leadFields")""",
     """run.runStage("electrograms")""",
     """egm = np.load(run.out / "electrograms" / "intact.npz")
 print({k: egm[k].shape for k in egm.files})""",
@@ -126,12 +129,12 @@ notebook("04_measurements_and_change_points.ipynb", [
 
 Acquisition chain (FM-09, FM-22): resample to 2 kHz, Gaussian noise per electrode, 30-500 Hz band-pass
 for bipoles and omnipoles. Peak frequency (FM-10): Morlet wavelet approximation of EnSite OT Near
-Field; bipolar/omnipolar PP within +-30 ms of the peak-frequency time (FM-11). The gain sets the median
-reference bipole to 1.44 mV (Wang Table 2), or is fixed from the reference run in sweeps (FM-19).
+Field, two co-primary definitions (FM-27); bipolar/omnipolar PP within +-30 ms of the peak-frequency
+time (FM-11). Amplitudes stay in model units; Wang's 1.44 mV is shown beside them, never applied (FM-25).
 The export writes Wang's EnSite columns; her Rmd then runs unchanged except six one-slab functions
 (R/wang_replication.R, FM-12).""",
     """measures = run.runStage("measurements")
-measures["calibration"], measures["checks"]""",
+measures["amplitudes"], measures["checks"]""",
     """points = pd.read_csv(run.out / "measurements" / "lesionPoints.csv")
 points[points.noiseRepeat == 0].groupby("kind")[["ppMv", "pfHz", "pfGlobalHz"]].describe().T""",
     """run.runStage("export")""",
@@ -146,8 +149,8 @@ notebook("05_ground_truth.ipynb", [
     """# 5. Ground truth: the contributing tissue
 
 For every recording at the ground-truth placements, each tissue element's signed share of the signal
-energy, from openCARP Laplace lead fields (FM-14). Shares sum to 1; nothing is cut off; negative
-shares (cancellation) are kept. Reported: near/far x endocardial/epicardial classes (FM-15), the
+energy, from the same openCARP lead fields as the electrograms (FM-14, FM-23). Shares sum to 1; nothing is cut off; negative
+shares (cancellation) are kept. Reported: near/far (4 mm convention, FM-30) x endocardial/epicardial classes (FM-15), the
 transmural profile per 0.1 mm layer, lateral reach, shape descriptors, and the full 3D fields
 (`groundTruth/fields_<condition>.npz`, `groundTruth/shares_<condition>_gap<g>mm.vtk` for ParaView).""",
     """checks = run.runStage("groundTruth")
@@ -163,7 +166,7 @@ for path in makeGroundTruthFigures(run, run.folder("figures")):
 notebook("06_report.ipynb", [
     """# 6. Report and acceptance
 
-`acceptance.json` lists every check; **modelAccepted** = tuning, ground-truth reconstruction,
+`acceptance.json` lists every check; **modelAccepted** = tuning, ground-truth share sum,
 physiology and profile checks all passed. `report.md` and `figures/` summarise the run; assumptions
 still in force are listed.""",
     """result = run.runStage("report")
@@ -179,9 +182,13 @@ notebook("07_sweeps.ipynb", [
 
 `nohup python -m efov sweep config/sweeps/oat_baseline.json --out runs/oat --np 24 > runs/oat.log 2>&1 &`
 
-The baseline runs first and fixes the gain for every variant (FM-19). Variants that change only
-electrodes, noise or analysis reuse the baseline simulation; the others compact their raw output after
-their report (FM-20). Failed variants are recorded and never pooled.""",
+Amplitudes are in model units in every variant (FM-25). Variants that change only electrodes, noise or
+analysis reuse the baseline simulation; lead fields are shared by every variant with the same conductor
+(FM-23); the others compact their raw output after their report (FM-20). Failed variants are recorded
+and never pooled. `noiseDoubling.csv` is the pre-registered primary test (FM-25): the change-point shift
+per doubling of noise.""",
+    """path = REPOSITORY / "runs" / "oat" / "noiseDoubling.csv"
+pd.read_csv(path) if path.exists() else "noiseDoubling.csv not written yet\"""",
     """SWEEP_OUT = REPOSITORY / "runs" / "oat"
 status = json.loads((SWEEP_OUT / "sweepStatus.json").read_text()) if (SWEEP_OUT / "sweepStatus.json").exists() else {}
 pd.DataFrame({k: dict(status=v["status"], overrides=v.get("overrides")) for k, v in status.items()}).T""",

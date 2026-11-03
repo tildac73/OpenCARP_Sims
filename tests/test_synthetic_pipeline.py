@@ -1,11 +1,11 @@
 """The analysis stages on a synthetic openCARP-format run (no openCARP needed).
 
-The small test mesh (config/test_small.json) is built with efov.meshbuild; Vm is an analytic planar
-wave (four beats, x direction), and phi_e at the output nodes is the exact solution of the discrete
-pseudo-bidomain problem K phi = -S_m Vm with the corner ground. The stages window -> electrograms ->
-measurements -> export -> groundTruth (Python lead fields) then run on these files. Passing means the
-stages agree with each other: node order, electrode node sets, time axes, the acquisition chain and
-the reconstruction of every ground-truth recording.
+The small test mesh (config/test_small.json) is built with efov.meshbuild, with the lesion strip
+and isolated tissue beyond it (FM-24); Vm is an analytic planar wave (four beats, x direction; no
+activation at y < 0 in the lesion condition). The stages window -> leadFields (Python route) ->
+electrograms -> measurements -> export -> groundTruth -> figures then run on these files. One
+electrode's electrogram is checked against a direct frame-by-frame solve of K phi = -S_i Vm (our
+reciprocity code against our own direct solve; no openCARP output involved).
 """
 import json
 
@@ -14,7 +14,7 @@ import pytest
 from scipy.sparse.linalg import splu
 
 from efov import config as cfg, electrograms, export, groundtruth, leadfield, measurements, meshbuild, physiology, simulation
-from efov.io import saveJson, writeMesh, writeVertices
+from efov.io import readVertices, saveJson, writeMesh, writeVertices
 from helpers import SMALL
 
 
@@ -35,10 +35,9 @@ def actionPotential(t, arrival):
     return -80 + 110 * up * np.exp(-np.clip(dt, 0, None) / 150.0)
 
 
-def writeCondition(config, job, lesion):
-    """Mesh, Vm, activation times and exact phi_e of one synthetic condition in openCARP's file layout."""
+def buildMesh(config, lesion):
+    """Kuhn-tetrahedral slab with bath on every side, run through efov.meshbuild (no-flux epicardium, fibres)."""
     import itertools
-    job.mkdir(parents=True)
     size, spacing, bath = cfg.slabSizeMm(config), cfg.spacingMm(config), config["fixed"]["bath"]["thicknessMm"]
     lower, upper = -size / 2 - bath, size / 2 + bath
     axes = [np.linspace(lo, hi, int(round((hi - lo) / s)) + 1) for lo, hi, s in zip(lower, upper, spacing)]
@@ -54,49 +53,54 @@ def writeCondition(config, job, lesion):
     positions, elements = grid.reshape(-1, 3), np.concatenate(tets)
     centres = positions[elements].mean(axis=1)
     inside = np.all(np.abs(centres) < size / 2, axis=1)
-    isLesion = lesion & (centres[:, 1] < config["fixed"]["tissue"]["boundaryYmm"])
+    boundary, width = config["fixed"]["tissue"]["boundaryYmm"], config["fixed"]["tissue"]["lesionWidthMm"]
+    isLesion = lesion & (centres[:, 1] < boundary) & (centres[:, 1] > boundary - width)
     tags = np.where(inside, np.where(isLesion, 5, 1), 0)
-    positions, elements, tags, fibres = meshbuild.runMesh(positions, elements, tags, size[2], "none", config["values"]["fibres"])
+    return meshbuild.runMesh(positions, elements, tags, size[2], "none", config["values"]["fibres"])
+
+
+def writeCondition(config, job, lesion):
+    """Mesh, Vm and activation times of one synthetic condition in openCARP's file layout."""
+    job.mkdir(parents=True)
+    positions, elements, tags, fibres = buildMesh(config, lesion)
     meshBase = writeMesh(job / "mesh" / "slab", positions, elements, tags, fibres)
-    ground = meshbuild.groundNodes(positions, elements, tags, config["fixed"]["bath"]["groundCubeMm"])
-    writeVertices(job / "ground.vtx", ground)
-    phieNodes = meshbuild.boxNodes(positions, *cfg.phieBoxMm(config))
-    np.save(job / "phieNodes.npy", phieNodes)
+    writeVertices(job / "ground.vtx", meshbuild.groundNodes(positions, elements, tags, config["fixed"]["bath"]["groundCubeMm"]))
     tissueNodes = np.unique(elements[tags != 0])
-    viable = np.isin(tissueNodes, np.unique(elements[tags == 1]))
     p = positions[tissueNodes]
+    active = np.isin(tissueNodes, np.unique(elements[tags == 1]))
+    if lesion:
+        active &= p[:, 1] >= config["fixed"]["tissue"]["boundaryYmm"]          # isolated tissue never activates
+    size = cfg.slabSizeMm(config)
     cycle, beats, step = cfg.cycleLengthMs(config), cfg.beatCount(config), cfg.sampleStepMs(config)
     times = np.round(np.arange(0, beats * cycle + 1e-9, step), 6)
     arrivals = [b * cycle + 5 + (p[:, 0] + size[0] / 2) / 0.9 for b in range(beats)]
     vm = np.full((len(times), len(tissueNodes)), -80.0)
     for arrival in arrivals:
-        vm[:, viable] = np.maximum(vm[:, viable], actionPotential(times[:, None], arrival[None, viable]))
+        vm[:, active] = np.maximum(vm[:, active], actionPotential(times[:, None], arrival[None, active]))
     writeIgb(job / "vm.igb", vm, 0.0, step)
-    rows = [(n, a[n]) for a in arrivals for n in np.flatnonzero(viable)]
+    rows = [(n, a[n]) for a in arrivals for n in np.flatnonzero(active)]
     np.savetxt(job / "act-thresh.dat", np.array(rows), fmt=["%d", "%.6f"], delimiter="\t")
-    restart = cfg.restartTimeMs(config)
-    inTissue = tags != 0
+    saveJson(job / "runRecord.json", dict(meshBase=str(meshBase), nodeSets=dict(nodes=len(positions))))
+
+
+def directElectrogram(config, tissue, ground, nodes, job, timesMs):
+    """Mean phi over one electrode from K phi = -S_i Vm, solved frame by frame (independent of reciprocity)."""
+    tags, inTissue = tissue["tags"], tissue["tags"] != 0
     _, gBath = leadfield.principalConductivities(config)
     bulk = np.repeat((gBath * np.eye(3))[None], len(tags), axis=0)
-    bulk[inTissue] = leadfield.tissueTensors(config, tags[inTissue], fibres[inTissue], "bulk")
+    bulk[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], "bulk")
     source = np.zeros_like(bulk)
-    source[inTissue] = leadfield.tissueTensors(config, tags[inTissue], fibres[inTissue], "monodomain")
-    K = leadfield.assemble(positions, elements, bulk)
-    S = leadfield.assemble(positions, elements, source)
-    free = np.setdiff1d(np.arange(len(positions)), ground)
+    source[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], "intracellular")
+    K, S = leadfield.assemble(tissue["positions"], tissue["elements"], bulk), leadfield.assemble(tissue["positions"], tissue["elements"], source)
+    count = len(tissue["positions"])
+    free = np.setdiff1d(np.arange(count), ground)
     solve = splu(K[free][:, free].tocsc()).solve
-    frames = np.flatnonzero(times >= restart - 1e-9)
-    phie = np.zeros((len(frames), len(phieNodes)), np.float32)
-    for first in range(0, len(frames), 250):                      # blocks of frames keep memory small
-        block = frames[first:first + 250]
-        full = np.zeros((len(positions), len(block)))
-        full[tissueNodes] = vm[block].T
-        phi = np.zeros_like(full)
-        phi[free] = solve(-(S @ full)[free])
-        phie[first:first + len(block)] = phi[phieNodes].T
-    writeIgb(job / "phie.igb", phie, restart, step)
-    saveJson(job / "restart.json", dict(restartMs=restart, phieStartMs=restart))
-    saveJson(job / "runRecord.json", dict(meshBase=str(meshBase), nodeSets=dict(nodes=len(positions))))
+    vm, _ = electrograms.readVmFrames(job, timesMs[0], timesMs[-1])
+    full = np.zeros((count, len(vm)))
+    full[tissue["tissueNodes"]] = vm.T
+    phi = np.zeros_like(full)
+    phi[free] = solve(-(S @ full)[free])
+    return phi[nodes].mean(axis=0)
 
 
 @pytest.fixture(scope="module")
@@ -110,23 +114,42 @@ def syntheticRun(tmp_path_factory):
 
 
 def test_analysis_stages_agree_on_a_synthetic_run(syntheticRun):
+    import pandas as pd
     config, root = syntheticRun
     jobs = {c: root / "simulations" / c for c in ("intact", "lesion")}
     tissues = {c: simulation.tissueModel(j) for c, j in jobs.items()}
-    window = physiology.deriveWindow(config, jobs["intact"], tissues["intact"])["windowMs"]
+    window = physiology.deriveWindow(config, jobs["intact"], tissues["intact"])
+    windows = window["windowsMs"]
+    assert len(windows) == len(cfg.centreYmm(config)) * len(config["values"]["gapsMm"]) and len({tuple(w) for w in windows}) == 1
+    leadFolder = root / "leadFields"; leadFolder.mkdir()
+    fields = electrograms.runLeadFields(config, jobs, tissues, root / "leadFieldCache", leadFolder, log=lambda *_: None)
+    assert fields["conditions"]["lesion"]["computedNow"] == fields["conditions"]["lesion"]["electrodes"]
     egms = root / "electrograms"; egms.mkdir()
-    info = electrograms.runElectrograms(config, jobs, tissues, window, egms)
+    info = electrograms.runElectrograms(config, jobs, tissues, windows, leadFolder, egms)
     assert info["lesion"]["nodesPerElectrodeMin"] > 0
+    # Reciprocity against a direct solve, at one electrode over the lesion (code check, Python only)
+    archive = np.load(egms / "lesion.npz")
+    sets = electrograms.nodeSetsFromArchive(archive)
+    k = int(np.argmin(np.linalg.norm(archive["uniqueCentres"][:, :2] - [0.0, -2.0], axis=1)))
+    p, e = np.argwhere(archive["electrodeIndex"] == k)[0]
+    frames = slice(len(archive["timeMs"]) - 300, len(archive["timeMs"]))
+    direct = directElectrogram(config, tissues["lesion"], readVertices(jobs["lesion"] / "ground.vtx"), sets[k], jobs["lesion"], archive["timeMs"][frames])
+    np.testing.assert_allclose(archive["uni"][p, e, frames], direct, rtol=1e-4, atol=1e-5 * np.abs(direct).max())
     folder = root / "measurements"; folder.mkdir()
-    points, calibration, status = measurements.runMeasurements(config, egms, window, folder)
-    assert abs(calibration["targetBipolarMv"] - 1.44) < 1e-12 and status["filterHistory"]
+    points, amplitudes, status = measurements.runMeasurements(config, egms, windows, folder)
+    assert status["filterHistory"] and amplitudes["wangBipolarMedianMv"] == 1.44
     datasets = export.runExport(config, folder, root / "export")
-    assert len(datasets) == len(config["values"]["gapsMm"]) * (config["fixed"]["analysis"]["noise"]["repeats"] + 1)
+    assert len(datasets) == len(config["values"]["gapsMm"]) * (config["fixed"]["analysis"]["noise"]["repeats"] + 1) * 2
     gt = root / "groundTruth"; gt.mkdir()
-    checks = groundtruth.runGroundTruth(config, jobs, tissues, egms, folder, calibration["gain"], window, gt)
+    checks = groundtruth.runGroundTruth(config, jobs, tissues, egms, folder, windows, gt)
     assert checks["passed"], checks
-    summary = __import__("pandas").read_csv(gt / "summary.csv")
+    summary = pd.read_csv(gt / "summary.csv")
     assert set(summary.kind) == {"uni", "bi", "omni"} and (gt / "shares_lesion_gap0.25mm.vtk").exists()
+    # the ground-truth signal is the measured clean signal (same lead fields, same chain)
+    clean = np.load(folder / "lesionTraces.npz")["cleanMv"]
+    lesionPoints = pd.read_csv(folder / "lesionPoints.csv").set_index("recordingId")
+    row = summary[summary.condition == "lesion"].iloc[0]
+    assert np.isclose(row.signalPpMv, np.ptp(clean[int(lesionPoints.loc[row.recordingId].traceIndex)]), rtol=1e-4)
     # Ground-truth figures from the same outputs (a minimal stand-in for pipeline.Run)
     from types import SimpleNamespace
     from efov.groundtruth_figures import makeGroundTruthFigures

@@ -15,15 +15,16 @@
 
 # ---- formulation and solver ----
 experiment   = 0          # normal simulation
-bidomain     = 2          # pseudo-bidomain: monodomain Vm, phi_e from one elliptic solve per output step (DL-2026-11-02-01)
+bidomain     = 0          # monodomain Vm only (FM-23). Electrograms are NOT computed by openCARP's
+                          # pseudo-bidomain (its phi_e source is sigma_m, VL-2026-11-01-02): they come from
+                          # reciprocity lead fields with the sigma_i source (config/leadfield.par, efov/leadfield.py)
 parab_solve  = 1          # Crank-Nicolson
 mass_lumping = 1          # openCARP default for tetrahedral monodomain
 cg_tol_parab = 1e-8
-cg_tol_ellip = 1e-8
 
 # ---- time ----
 dt      = 20              # us; ODE and PDE step (FM-03; 1 Nov final-settings rule outcome, not re-tested)
-spacedt = 0.2             # ms; Vm and phi_e output step = 5 kHz (earlier verified setting), resampled to 2 kHz in the analysis (FM-09, FM-22)
+spacedt = 0.2             # ms; Vm output step = 5 kHz (earlier verified setting), resampled to 2 kHz in the analysis (FM-09, FM-22)
 timedt  = 1               # ms; progress output
 tend    = 2000            # ms = 4 beats x 500 ms (FM-03)
 
@@ -44,8 +45,10 @@ gregion[0].g_in       = 0.06
 gregion[0].g_el       = 0.117
 gregion[0].g_et       = 0.08
 gregion[0].g_en       = 0.08
-# Lesion (tag 5): [sweep: scar] baseline "ablation" = inexcitable, no intracellular coupling,
-# extracellular tensor of healthy tissue (FM-07). Variants (model.json): ablationPorated, insulating.
+# Lesion (tag 5): the ablation strip, boundary - lesionWidthMm <= y < boundary (FM-24; model.json).
+# Tissue beyond the strip is viable but isolated (tag 1, never stimulated), as after single-ring isolation.
+# [sweep: scar] baseline "ablation" = inexcitable, no intracellular coupling, extracellular tensor of
+# healthy tissue (FM-07). Variants (model.json): ablationPorated, insulating.
 gregion[1].num_IDs    = 1
 gregion[1].ID[0]      = 5
 gregion[1].g_il       = 1e-06
@@ -76,6 +79,7 @@ phys_region[1].ID[2]      = 0
 # ---- stimuli ----
 # stim[0]: transmembrane current on the viable-tissue strip of the wave angle (vertex file written per run).
 # stim[1]: extracellular ground on a 1 mm cube at the (max x, max y, max z) bath corner (Leenknegt et al. 2023).
+#          Not used by the monodomain solve; the same vertices ground the lead-field runs.
 num_stim               = 2
 stim[0].crct.type      = 0
 stim[0].pulse.shape    = 0
@@ -94,4 +98,4 @@ lats[0].all        = 1
 lats[0].measurand  = 0
 lats[0].threshold  = -20
 lats[0].mode       = 0
-dataout_e          = 3     # phi_e only on the listed bath nodes (electrode envelope box, FM-20)
+dataout_e          = 0     # no phi_e output: electrograms come from lead fields (FM-23)

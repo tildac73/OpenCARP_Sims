@@ -122,7 +122,7 @@
         0.02
       ],
       "actsOn": "measurements (analysis)",
-      "_source": "Gaussian white noise per electrode at the acquisition rate. Assumption [VERIFY]: no source (FM-19)."
+      "_source": "Gaussian white noise per electrode at the acquisition rate, in model mV (no calibration, FM-25). Assumption [VERIFY]: no source. The planned values form a doubling series; the pre-registered primary test is the change-point shift per doubling of noise (FM-25)."
     },
     "cvTargetMPerS": {
       "baseline": 0.9,
@@ -149,7 +149,8 @@
       "spacingInPlaneMm": 0.5,
       "spacingTransmuralMm": 0.25,
       "boundaryYmm": 0.0,
-      "_about": "Slab x in [-Lx/2, Lx/2], y in [-Ly/2, Ly/2], z in [-wall/2, wall/2]; catheter on +z. Lesion = tissue with y < boundaryYmm, transmural (FM-07). Mesh 0.25 mm in-plane, 0.1 mm through the wall (FM-04)."
+      "_about": "Slab x in [-Lx/2, Lx/2], y in [-Ly/2, Ly/2], z in [-wall/2, wall/2]; catheter on +z. Lesion condition: transmural ablation strip boundaryYmm - lesionWidthMm <= y < boundaryYmm (tag 5); tissue beyond it is viable but isolated (tag 1, not stimulated), as after single-ring isolation (FM-24). lesionWidthMm 5.6 = mean ablation lesion width in Wang's supplement (5.6 +- 1.2 mm, Friedman et al. 2021 as cited there). Mesh 0.25 mm in-plane, 0.1 mm through the wall (FM-04).",
+      "lesionWidthMm": 5.6
     },
     "bath": {
       "thicknessMm": 2.5,
@@ -158,18 +159,16 @@
     },
     "stimulus": {
       "stripWidthMm": 0.5,
-      "_about": "Transmembrane current on viable-tissue nodes within stripWidth of the trailing edge of the wave direction (FM-17); nodes touching a lesion element are excluded."
+      "_about": "Transmembrane current on viable-tissue nodes within stripWidth of the trailing edge of the wave direction (FM-17); nodes touching a lesion element, and the isolated tissue beyond the lesion (y < boundary), are excluded."
     },
     "conditioning": {
       "beats": 20,
       "_about": "Single Courtemanche cell paced with bench at the model.par cycle length (openCARP limit-cycle workflow)."
     },
     "numerics": {
-      "prepacing": true,
-      "prepacingMarginMs": 50.0,
       "solverFlavor": "boomeramg",
       "fallbackSolverFlavor": "petsc",
-      "_about": "Beats before the analysis run monodomain (no bath solve), then restart with the bath (DL-2026-11-01-06, VL-2026-11-01-04). boomeramg: DL-2026-11-01-07."
+      "_about": "Monodomain throughout (FM-23), so no prepacing restart is needed. boomeramg: DL-2026-11-01-07."
     },
     "electrodes": {
       "centreXmm": 0.0,
@@ -178,14 +177,14 @@
         "toMm": 4.0,
         "stepMm": 1.0
       },
-      "_about": "4 x 4 grid, rows along y, columns along x; cylinders with axes along x. An electrode is the set of mesh nodes inside its cylinder (FM-14); its potential is the mean phi_e over that set."
+      "_about": "4 x 4 grid, rows along y, columns along x; cylinders with axes along x. An electrode is the set of bath mesh nodes inside its cylinder (FM-14); its signal is the mean extracellular potential over that set, computed by reciprocity from its lead field (FM-23)."
     },
     "analysis": {
       "window": {
         "leadMs": 15.0,
         "trailMs": 30.0,
         "minimumAfterStimulusMs": 5.0,
-        "_about": "DL-2026-10-28-08: from intact last-beat activation of catheter-facing nodes under the grid (half extent 1.5 x grid spacing + electrode length / 2)."
+        "_about": "FM-28 (rule of DL-2026-10-28-08 applied per placement): from intact last-beat activation of catheter-facing nodes under each placement (|x - centre x| <= 1.5 x grid spacing + electrode length / 2, |y - centre y| <= 1.5 x grid spacing + electrode radius). Every placement gets the same window length."
       },
       "filterHistoryMs": 200.0,
       "acquisitionRateHz": 2000.0,
@@ -194,17 +193,10 @@
         500.0
       ],
       "filterOrder": 2,
-      "_filters": "FM-09, FM-22: rational resampling of every unipole from the 5 kHz simulation output to the EnSite X acquisition rate (scipy.signal.resample_poly, Kaiser-window FIR anti-alias; Europace 2024;26:euae154), then 30-500 Hz causal Butterworth band-pass for bipolar and omnipolar (Wang supplement). Clinical unipolar filter unknown [VERIFY]: unipoles get only the resampling filter.",
+      "_filters": "FM-09, FM-22: rational resampling of every unipole from the 5 kHz simulation output to the EnSite X acquisition rate (scipy.signal.resample_poly, Kaiser-window FIR anti-alias; Europace 2024;26:euae154), with resampleMarginMs of signal kept beyond the last window (the FIR half-length is 5 ms), then 30-500 Hz causal Butterworth band-pass for bipolar and omnipolar (Wang supplement). Clinical unipolar filter unknown [VERIFY]: unipoles get only the resampling filter.",
       "recordings": "all",
       "omniAngleStepDeg": 2,
       "ppWindowAroundPfMs": 30.0,
-      "calibration": {
-        "targetBipolarMv": 1.44,
-        "referenceCentreYmm": 0.0,
-        "referenceGapMm": 0.25,
-        "fixedGain": null,
-        "_about": "FM-19. 1.44 mV = Wang Table 2 median healthy-tissue bipolar voltage, inferior wall. The gain is computed once in the inferior reference run (fixedGain null) and passed unchanged to every other run by the sweep runner."
-      },
       "noise": {
         "repeats": 1,
         "seed": 1701
@@ -216,12 +208,24 @@
         "morletOmega0": 6.0,
         "magnitudeGateFraction": 0.1,
         "minimumPpMv": 0.04,
-        "_about": "FM-10. EnSite OT Near Field approximation: complex Morlet CWT (L1-normalised), PF trace = frequency of the largest magnitude per sample, samples below magnitudeGateFraction of the window maximum ignored, PF = highest remaining trace value. PF undetectable when PP < 0.04 mV (Europace 2024). Wavelet, scales and gate are assumptions."
+        "_about": "FM-10, FM-27. EnSite OT Near Field approximation: complex Morlet CWT (L1-normalised), PF trace = frequency of the largest magnitude per sample, samples below magnitudeGateFraction of the window maximum ignored. Two co-primary definitions: 'ensite' = highest remaining trace value (the published description); 'global' = frequency of the largest magnitude in the window (robust to noise-driven high-frequency trace values). PF undetectable when PP < 0.04 mV (Europace 2024). Wavelet, scales and gate are assumptions."
+      },
+      "resampleMarginMs": 10.0,
+      "wangReference": {
+        "bipolarMedianMv": {
+          "inferior": 1.44,
+          "roof": 0.97
+        },
+        "_about": "Wang Table 2 median healthy-tissue bipolar voltage per region. Reported beside the model's physical amplitudes only; never applied to the signals (FM-25)."
       }
     },
     "export": {
       "boundaryOffsetMm": 3.0,
-      "_about": "Wang's DistAcrossPath = distance from the lesion-centre line; her BOUNDARY_OFFSET is 3 mm, so DistAcrossPath = distance inside the lesion - 3 mm."
+      "_about": "Wang's DistAcrossPath = distance from the lesion-centre line; her BOUNDARY_OFFSET is 3 mm, so DistAcrossPath = distance inside the lesion - 3 mm. One dataset per gap, noise realisation and peak-frequency definition (FM-27).",
+      "peakFrequencyDefinitions": {
+        "ensite": "pfHz",
+        "global": "pfGlobalHz"
+      }
     },
     "groundTruth": {
       "placementsYmm": {
@@ -249,7 +253,7 @@
         0.8,
         0.9
       ],
-      "_about": "FM-15, FM-16, FM-21. Shares s_e for every recording at these placements (classes, profiles, shape descriptors); full element fields (.vtk, npz) for fieldRecordings. leadFieldMethod 'python' is the pre-declared fallback of FM-14."
+      "_about": "FM-15, FM-16, FM-21, FM-30. Shares s_e for every recording at these placements (classes, profiles, shape descriptors); full element fields (.vtk, npz) for fieldRecordings. nearFieldRadiusMm = one HD Grid electrode spacing: a stated convention, not a literature value; the continuous depth and lateral curves are the primary result. leadFieldMethod 'python' (own P1 solver) is for the unit tests and the pre-declared fallback of FM-14 only."
     },
     "tune": {
       "stripSizeMm": [
@@ -290,12 +294,11 @@
         "farRegionMm": 3.0,
         "maximumFarRelativeRange": 0.15,
         "minimumTransitionFraction": 0.2,
-        "maximumFilterHistoryError": 0.001
+        "maximumFilterHistoryError": 0.001,
+        "_about": "Descriptive prerequisites for interpreting change points (project criteria)."
       },
       "groundTruth": {
-        "shareSumDeviation": 1e-06,
-        "reconstructionResidual": 0.001,
-        "scaleOverGainDeviation": 0.001
+        "shareSumDeviation": 1e-06
       }
     },
     "compactAfterReport": false
@@ -315,7 +318,7 @@
     },
     "noise": {
       "status": "assumption",
-      "source": "5 uV [VERIFY]"
+      "source": "5 uV in model mV [VERIFY]; noise doubling series is the primary SNR test (FM-25)"
     },
     "unipolarFilter": {
       "status": "assumption",
@@ -324,6 +327,14 @@
     "peakFrequencyWavelet": {
       "status": "assumption",
       "source": "FM-10; EnSite algorithm proprietary"
+    },
+    "lesion": {
+      "status": "decided",
+      "source": "FM-24: 5.6 mm ablation strip (Wang supplement, citing Friedman et al. 2021); isolated viable tissue beyond"
+    },
+    "amplitude": {
+      "status": "decided",
+      "source": "FM-25: physical model units, no calibration to Wang's voltages"
     }
   }
 }

@@ -13,9 +13,8 @@ def test_model_config_is_valid_and_matches_the_plan():
     assert c["values"]["scar"] == "ablation" and c["parOverrides"] == {}
     np.testing.assert_allclose(cfg.spacingMm(c), [0.25, 0.25, 0.1])
     assert cfg.beatCount(c) == 4 and cfg.cycleLengthMs(c) == 500 and cfg.sampleStepMs(c) == 0.2
-    assert cfg.restartTimeMs(c) == 1050.0
-    lower, upper = cfg.phieBoxMm(c)
-    assert upper[2] < cfg.slabSizeMm(c)[2] / 2 + c["fixed"]["bath"]["thicknessMm"]
+    assert cfg.par(c, "bidomain", int) == 0 and c["fixed"]["tissue"]["lesionWidthMm"] == 5.6
+    assert "calibration" not in c["fixed"]["analysis"]
 
 
 def test_small_config_is_valid():
@@ -49,9 +48,18 @@ def test_fingerprints_separate_simulation_from_analysis():
     assert chain(cfg.loadConfig(MODEL, {"noiseSdMv": 0.01})) == chain(base)
     assert chain(cfg.loadConfig(MODEL, {"wallMm": 2.0})) != chain(base)
     assert chain(cfg.loadConfig(MODEL, {"scar": "insulating"})) != chain(base)
-    assert cfg.fingerprint(cfg.loadConfig(MODEL, {"gapsMm": [2.0]}), "electrograms") != cfg.fingerprint(base, "electrograms")
+    assert cfg.fingerprint(cfg.loadConfig(MODEL, {"gapsMm": [2.0]}), "leadFields") != cfg.fingerprint(base, "leadFields")
     tuned = cfg.withParOverrides(base, {"imp_region[0].cellSurfVolRatio": 0.03})
     assert chain(tuned) == chain(base)                                           # beta is the tune stage's output
+
+
+def test_lead_fields_are_shared_by_variants_that_keep_the_conductor():
+    base = cfg.fingerprint(cfg.loadConfig(MODEL), "conductor")
+    for same in ({"waveAngleDeg": 60.0}, {"cvTargetMPerS": 0.7}, {"gapsMm": [2.0]}, {"noiseSdMv": 0.01}):
+        assert cfg.fingerprint(cfg.loadConfig(MODEL, same), "conductor") == base, same
+    for different in ({"wallMm": 2.0}, {"scar": "insulating"}, {"fibres": {"model": "uniform", "angleDeg": 0.0}},
+                      {"epicardialMedium": "blood"}):
+        assert cfg.fingerprint(cfg.loadConfig(MODEL, different), "conductor") != base, different
 
 
 def test_tuning_record_round_trip(tmp_path):

@@ -44,7 +44,7 @@ Estimate only, from the pilot (0.352 m/s at monodomain sigma_l 0.136 S/m, 0.5 mm
 0.90 m/s needs a monodomain sigma_l of about 0.9 S/m, i.e. about 10x the Roberts and Scher magnitudes
 (sigma_el ~1.2 S/m). The CV stage will give the actual factor. Two points follow:
 1. An extracellular longitudinal conductivity above blood (0.74 S/m) is physically implausible. In the unbounded homogeneous
-   medium, at a given CV, the magnitudes only scale the electrogram amplitude (absorbed by the gain calibration);
+   medium, at a given CV, the magnitudes only scale the electrogram amplitude (no calibration since FM-25: amplitudes are reported in model units);
    once a bath is added (Step 6) the tissue-to-blood conductivity ratio changes the field itself.
 2. CV depends on sigma / (beta * Cm). The same CV could instead be reached by keeping measured conductivities
    and lowering the surface-to-volume ratio beta (openCARP default 0.14 um^-1). Which to adjust is a
@@ -58,3 +58,12 @@ Estimate only, from the pilot (0.352 m/s at monodomain sigma_l 0.136 S/m, 0.5 mm
 | Bipolar/omnipolar filter | 30-500 Hz | 30-500 Hz | Wang supplement | Sourced. |
 | OT Near Field wavelet, scales, gate | Morlet omega0 = 6, 30-500 Hz, 10 % gate | proprietary | Abbott | Assumption. |
 | Near-field cut-off | 4 mm | 4 mm (human atrium) | Schlageter et al. 2024, as cited in Wang's manuscript | Sourced (secondary). |
+
+## Added 3 Nov 2026 (revision FM-23 to FM-30)
+| Quantity | Model value | Sourced value | Source | Status |
+| --- | --- | --- | --- | --- |
+| Ablation lesion width | 5.6 mm strip | 5.6 +- 1.2 mm | Wang supplement, citing Friedman et al. 2021 (not read directly) | decided, [VERIFY] primary source |
+| Clinical bipolar voltage | not applied | 1.44 mV inferior, 0.97 mV roof (healthy, median) | Wang Table 2 | reference only (FM-25) |
+| Near/far lateral cut-off | 4 mm | none | one HD Grid electrode spacing; Schlageter et al. 2024's 4 mm is electrode-to-tissue distance | convention (FM-30) |
+| Forward model | monodomain Vm, sigma_i source | monodomain + forward model: electrograms indistinguishable from bidomain | Potse et al. 2006, IEEE TBME (abstract read; volume/pages [VERIFY]) | decided (FM-23) |
+

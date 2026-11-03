@@ -1,8 +1,9 @@
-"""Electrogram measures at every catheter placement: acquisition chain, calibration, noise, recordings,
-peak-to-peak voltage and peak frequency.
+"""Electrogram measures at every catheter placement: acquisition chain, noise, recordings,
+peak-to-peak voltage and peak frequency. Amplitudes stay in the model's physical units (mV); they
+are never scaled to clinical values (FM-25).
 
 Acquisition chain (FM-09), identical for every signal:
-  1. unipolar phi_e at the simulation output rate (4 kHz), scaled by the calibration gain;
+  1. unipolar phi_e at the simulation output rate (5 kHz);
   2. rational resampling to the acquisition rate (2 kHz; EnSite X, Europace 2024;26:euae154) with
      scipy.signal.resample_poly, whose Kaiser-window FIR is the anti-alias filter (FM-22: dt 20 us
      and the 5 kHz output step of earlier verified runs are kept, so the ratio is 2/5);
@@ -10,14 +11,13 @@ Acquisition chain (FM-09), identical for every signal:
      (values.noiseSdMv; repeat 0 is clean);
   4. differential recordings (bipoles, omnipoles) from the 30-500 Hz causal Butterworth band-pass
      of the unipoles (the filter is linear, so filtering then differencing equals the reverse).
-Measures (FM-10, FM-11):
+Measures (FM-10, FM-11, FM-27), each inside its placement's own window (FM-28):
   * unipolar PP: max - min over the measurement window;
-  * bipolar / omnipolar peak frequency (efov.peakfrequency) on the band-passed segment; PP within
-    t_PF +- ppWindowAroundPfMs inside the window, or over the whole window when PF is undetectable
-    (the row says which);
+  * bipolar / omnipolar peak frequency (efov.peakfrequency, both definitions) on the band-passed
+    segment; PP within t_PF +- ppWindowAroundPfMs inside the window, or over the whole window when PF
+    is undetectable (the row says which);
   * the selected weights are also applied to the clean signals, and clean PP uses the same PP window.
-Calibration (FM-19): fixedGain if given, otherwise the gain that sets the median PP of the nine
-selected bipoles at the intact reference placement to targetBipolarMv (imposed normalisation).
+Wang's clinical voltages are reported beside the model's (amplitudes.json) and never applied.
 Noise realisations are measurement repeats, never biological replicates.
 """
 import hashlib
@@ -32,8 +32,8 @@ from scipy.signal import butter, resample_poly, sosfilt
 from .config import beatCount, cycleLengthMs
 from .geometry import recordingGeometry
 from .io import saveJson
-from .peakfrequency import peakFrequency
-from .recordings import bipole, makeRecordings, recordingLabels
+from .peakfrequency import peakFrequency, windowed
+from .recordings import makeRecordings, recordingLabels
 
 
 # ----------------------------------------------------------------- acquisition chain
@@ -54,43 +54,27 @@ def acquire(config, signals, timeMs):
     return resampled, timeMs[0] + np.arange(resampled.shape[-1]) * 1000.0 / rate
 
 
-def measurementSlices(timeMs, config, windowMs):
-    """(raw, measure): raw = filter history + window on timeMs; measure = the window inside raw."""
+def placementIndices(timeMs, config, windows):
+    """raw: slice of timeMs from (earliest window start - filter history) to the latest window end;
+    starts: first sample of each placement's window inside raw; length: samples per window."""
+    windows = np.atleast_2d(np.asarray(windows, float))
     beatStart = (beatCount(config) - 1) * cycleLengthMs(config)
-    start, end = beatStart + windowMs[0], beatStart + windowMs[1]
     history = config["fixed"]["analysis"]["filterHistoryMs"]
-    first, begin, stop = (int(np.searchsorted(timeMs, t - 1e-9)) for t in (start - history, start, end + 1e-9))
-    if start - history < timeMs[0] - 1e-9 or end > timeMs[-1] + 1e-9 or stop - begin < 2:
-        raise ValueError("Electrograms do not contain the window and its filter history")
-    return slice(first, stop), slice(begin - first, stop - first)
+    begin, end = beatStart + windows[:, 0], beatStart + windows[:, 1]
+    if begin.min() - history < timeMs[0] - 1e-9 or end.max() > timeMs[-1] + 1e-9:
+        raise ValueError("Electrograms do not contain every window and its filter history")
+    first = int(np.searchsorted(timeMs, begin.min() - history - 1e-9))
+    stop = int(np.searchsorted(timeMs, end.max() + 1e-9))
+    starts = np.searchsorted(timeMs, begin - 1e-9) - first
+    lengths = np.searchsorted(timeMs, end + 1e-9) - first - starts
+    if lengths.min() != lengths.max() or lengths[0] < 2:
+        raise ValueError("Placement windows must have the same length on the acquisition grid")
+    return slice(first, stop), starts.astype(int), int(lengths[0])
 
 
 def stableSeed(baseSeed, condition, repeat):
     """Seed from text, so each noise stream is independent of call order."""
     return int.from_bytes(hashlib.sha256(f"{baseSeed}:{condition}:{repeat}".encode()).digest()[:8], "little")
-
-
-# ----------------------------------------------------------------- calibration
-def calibrateGain(config, egm, windowMs):
-    c = config["fixed"]["analysis"]["calibration"]
-    if c["fixedGain"] is not None:
-        return dict(gain=float(c["fixedGain"]), source="fixedGain (from the inferior reference run, FM-19)",
-                    interpretation="Imposed amplitude calibration, not an independent physiological validation")
-    placements = egm["placements"]
-    reference = np.isclose(placements[:, 1], c["referenceCentreYmm"]) & np.isclose(placements[:, 2], c["referenceGapMm"])
-    if reference.sum() != 1:
-        raise ValueError("Calibration must identify exactly one intact placement")
-    uni, times = acquire(config, egm["uni"][reference].astype(float), egm["timeMs"])
-    raw, measure = measurementSlices(times, config, windowMs)
-    filtered = sosfilt(differentialFilter(config), uni[..., raw], axis=-1)[..., measure]
-    corners = [4 * r + k for r in range(3) for k in range(3)]
-    values = [np.ptp(bipole(filtered, f"E{c0}-E{c0 + 1}|E{c0 + 4}")[0], axis=-1)[0] for c0 in corners]
-    median = float(np.median(values))
-    if not np.isfinite(median) or median <= 1e-12:
-        raise ValueError("Calibration signal is absent or negligible")
-    return dict(gain=c["targetBipolarMv"] / median, rawReferenceMedianMv=median, targetBipolarMv=c["targetBipolarMv"],
-                centreYmm=c["referenceCentreYmm"], gapMm=c["referenceGapMm"], source="computed in this run",
-                interpretation="Imposed amplitude calibration, not an independent physiological validation")
 
 
 # ----------------------------------------------------------------- measures
@@ -102,33 +86,35 @@ def ppAroundPeak(trace, measure, pfIndex, halfSamples):
     return float(np.ptp(trace[lo:hi])), "peakFrequency"
 
 
-def measureCondition(config, condition, egm, gain, windowMs):
+def measureCondition(config, condition, egm, windows):
     """Points table (one row per recording, placement and noise realisation) and the window traces."""
     a, v = config["fixed"]["analysis"], config["values"]
-    uniAcq, times = acquire(config, gain * egm["uni"].astype(float), egm["timeMs"])
-    raw, measure = measurementSlices(times, config, windowMs)
+    uniAcq, times = acquire(config, egm["uni"].astype(float), egm["timeMs"])
+    raw, starts, length = placementIndices(times, config, windows)
     clean = uniAcq[..., raw]
     segmentTimes = times[raw]
     sections, rate = differentialFilter(config), a["acquisitionRateHz"]
     cleanDiff = sosfilt(sections, clean, axis=-1)
     half = int(round(a["ppWindowAroundPfMs"] * rate / 1000.0))
     labels = recordingLabels(a["recordings"])
-    rows, measured, cleanTraces = [], [], []
+    rows, measured, cleanTraces, traceStarts = [], [], [], []
     for repeat in range(a["noise"]["repeats"] + 1):
         noise = np.zeros_like(clean)
         if repeat:
             noise = np.random.default_rng(stableSeed(a["noise"]["seed"], condition, repeat)).normal(0, v["noiseSdMv"], clean.shape)
         uni = clean + noise
         diff = sosfilt(sections, uni, axis=-1)
-        for kind, label, _, weights in makeRecordings(uni[..., measure], diff[..., measure], labels, a["omniAngleStepDeg"]):
+        for kind, label, _, weights in makeRecordings(windowed(uni, starts, length), windowed(diff, starts, length),
+                                                      labels, a["omniAngleStepDeg"]):
             source, cleanSource = (uni, clean) if kind == "uni" else (diff, cleanDiff)
             traces = np.einsum("pe,pet->pt", weights, source)
             cleanAtWeights = np.einsum("pe,pet->pt", weights, cleanSource)
             if kind == "uni":
                 pf, pfIndex, pfGlobal = (np.full(len(traces), np.nan), np.full(len(traces), -1), np.full(len(traces), np.nan))
             else:
-                pf, pfIndex, pfGlobal = peakFrequency(traces, rate, measure, a["peakFrequency"])
+                pf, pfIndex, pfGlobal = peakFrequency(traces, rate, starts, length, a["peakFrequency"])
             for p in range(len(traces)):
+                measure = slice(int(starts[p]), int(starts[p]) + length)
                 if kind == "uni":
                     pp, cleanPp, ppWindow = float(np.ptp(traces[p, measure])), float(np.ptp(cleanAtWeights[p, measure])), "window"
                 else:
@@ -145,21 +131,44 @@ def measureCondition(config, condition, egm, gain, windowMs):
                     **recordingGeometry(egm["centres"][p], kind, label, weights[p], config["fixed"]["tissue"]["boundaryYmm"]),
                     **{f"weightE{k}": float(weights[p, k]) for k in range(16)}))
                 measured.append(traces[p, measure]); cleanTraces.append(cleanAtWeights[p, measure])
-    return pd.DataFrame(rows), np.asarray(measured, np.float32), np.asarray(cleanTraces, np.float32), segmentTimes[measure], (uniAcq, times)
+                traceStarts.append(float(segmentTimes[measure][0]))
+    traceInfo = dict(windowStartMs=np.asarray(traceStarts), stepMs=1000.0 / rate)
+    return pd.DataFrame(rows), np.asarray(measured, np.float32), np.asarray(cleanTraces, np.float32), traceInfo, (uniAcq, times)
 
 
-def filterHistoryCheck(config, acquired, windowMs):
+def filterHistoryCheck(config, acquired, windows):
     """Max |difference| between band-passing with one and with two filter histories, relative to the largest clean PP."""
     uniAcq, times = acquired
-    raw, measure = measurementSlices(times, config, windowMs)
+    raw, starts, length = placementIndices(times, config, windows)
     sections = differentialFilter(config)
-    short = sosfilt(sections, uniAcq[..., raw], axis=-1)[..., measure]
+    short = sosfilt(sections, uniAcq[..., raw], axis=-1)[..., starts.min():]
     longer = sosfilt(sections, uniAcq[..., :raw.stop], axis=-1)[..., -short.shape[-1]:]
     error = float(np.max(np.abs(short - longer)) / max(np.max(np.ptp(short, axis=-1)), 1e-12))
     rate = config["fixed"]["analysis"]["acquisitionRateHz"]
     available = raw.start >= int(round(config["fixed"]["analysis"]["filterHistoryMs"] * rate / 1000)) - 1
     return dict(relativeError=error, doubleHistoryAvailable=bool(available),
                 passed=bool(available and error <= config["fixed"]["acceptance"]["profile"]["maximumFilterHistoryError"]))
+
+
+def amplitudeSummary(points, config):
+    """Model amplitudes (physical mV) far into viable tissue beside Wang's clinical medians; nothing is scaled (FM-25)."""
+    far = config["fixed"]["acceptance"]["profile"]["farRegionMm"]
+    region = config["values"]["region"]
+    rows = []
+    for (kind, gap), group in points[(points.noiseRepeat == 0) & (points.condition == "intact") & (points.distanceInsideMm <= -far)].groupby(["kind", "gapMm"]):
+        rows.append(dict(kind=kind, gapMm=float(gap), medianCleanPpMv=float(group.cleanPpMv.median()), recordings=int(len(group))))
+    return dict(modelFarViable=rows, wangBipolarMedianMv=config["fixed"]["analysis"]["wangReference"]["bipolarMedianMv"].get(region),
+                region=region, note="Reported for comparison only; the model's amplitudes are not calibrated to these values (FM-25).")
+
+
+def pfNoiseRobustness(points):
+    """Median clean and noisy PF (both definitions) by recording kind, gap, condition and 1 mm distance bin (descriptive, FM-27)."""
+    differential = points[points.kind != "uni"].copy()
+    differential["distanceBinMm"] = np.round(differential.distanceInsideMm)
+    differential["noisy"] = differential.noiseRepeat > 0
+    table = differential.groupby(["condition", "kind", "gapMm", "distanceBinMm", "noisy"])[["pfHz", "pfGlobalHz"]].median().unstack("noisy")
+    table.columns = [f"{column}_{'noisy' if noisy else 'clean'}" for column, noisy in table.columns]
+    return table.reset_index()
 
 
 def profileChecks(points, config):
@@ -186,23 +195,24 @@ def profileChecks(points, config):
     return pd.DataFrame(rows)
 
 
-def runMeasurements(config, egmFolder, windowMs, folder):
+def runMeasurements(config, egmFolder, windows, folder):
     folder = Path(folder)
     egms = {c: dict(np.load(Path(egmFolder) / f"{c}.npz")) for c in ("intact", "lesion")}
-    calibration = calibrateGain(config, egms["intact"], windowMs)
-    saveJson(folder / "calibration.json", calibration)
     tables, filterChecks = [], {}
     for condition, egm in egms.items():
-        table, measured, clean, times, acquired = measureCondition(config, condition, egm, calibration["gain"], windowMs)
-        filterChecks[condition] = filterHistoryCheck(config, acquired, windowMs)
+        table, measured, clean, traceInfo, acquired = measureCondition(config, condition, egm, windows)
+        filterChecks[condition] = filterHistoryCheck(config, acquired, windows)
         table.to_csv(folder / f"{condition}Points.csv", index=False)
-        np.savez_compressed(folder / f"{condition}Traces.npz", timeMs=times, measuredMv=measured, cleanMv=clean)
+        np.savez_compressed(folder / f"{condition}Traces.npz", measuredMv=measured, cleanMv=clean, **traceInfo)
         tables.append(table)
     points = pd.concat(tables, ignore_index=True)
     checks = profileChecks(points, config)
     checks.to_csv(folder / "profileChecks.csv", index=False)
+    pfNoiseRobustness(points).to_csv(folder / "pfNoiseRobustness.csv", index=False)
+    amplitudes = amplitudeSummary(points, config)
+    saveJson(folder / "amplitudes.json", amplitudes)
     saveJson(folder / "filterHistoryCheck.json", filterChecks)
     status = dict(filterHistory=all(c["passed"] for c in filterChecks.values()),
                   stableFarRegion=bool(checks.farStable.all()),
                   lesionTransition=bool(checks[checks.condition == "lesion"].transitionObserved.all()))
-    return points, calibration, status
+    return points, amplitudes, status

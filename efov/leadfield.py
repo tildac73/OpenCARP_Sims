@@ -1,30 +1,40 @@
-"""Lead fields of the electrodes by reciprocity, and each element's contribution coefficients (FM-14).
+"""Lead fields of the electrodes by reciprocity, and the electrograms and contributions they give (FM-14, FM-23).
 
-openCARP route (fixed.groundTruth.leadFieldMethod = "openCARP"), one Laplace solve per electrode:
-  * config/leadfield.par (experiment 2) plus run lines: the run mesh, the run's ground vertices,
-    the electrode's node set as an extracellular current stimulus with a total current of 1 uA, and
-    conductivity regions whose extracellular values are g_i + g_e of the run (tissue and lesion) and
-    g_bath, so the Laplace operator is div((sigma_i + sigma_e) grad) - the operator of openCARP's
-    pseudo-bidomain phi_e.
-  * The potential at every node is the lead field z (mV per uA).
-Python route ("python", the pre-declared fallback of FM-14): the same discrete problem, assembled
-here with P1 elements and solved with sparse LU or pyamg-preconditioned CG (verified earlier against
-closed-form solutions, VL-2026-10-28-07, and against openCARP, VL-2026-11-02-01).
+Forward model (FM-23). Vm is openCARP's monodomain solution. The extracellular potential of the
+bidomain with a bath obeys
 
-Reciprocity (both routes): an electrode with node set S records phi = mean over S of phi_e. With
-K phi = -S_m Vm (S_m assembled with sigma_m) and K z = w (w = 1/|S| on S), phi = -z^T S_m Vm, so
-element e contributes c_e(t) = coeff_e . Vm_e(t), coeff_e = -vol_e (grad N)^T sigma_m,e grad z.
-Units: z in mV/uA, positions in mm, sigma in S/m and Vm in mV give c in mV (the factors cancel:
+    div((sigma_i + sigma_e) grad phi_e) = -div(sigma_i grad Vm)   in tissue,   div(g_bath grad phi_e) = 0 in the bath,
+
+discretised with P1 elements as K phi = -S_i Vm (K with sigma_i + sigma_e in tissue and lesion and
+g_bath in the bath, S_i with sigma_i on tissue and lesion elements, phi = 0 on the corner ground).
+This is the classical recovery of phi_e from a monodomain Vm. openCARP's pseudo-bidomain uses
+sigma_m as the source instead (VL-2026-11-01-02), which weights fibre-parallel and cross-fibre
+sources differently whenever the intra- and extracellular anisotropy ratios differ.
+
+Reciprocity: an electrode with node set S records phi = mean over S of phi_e. With K z = w
+(w = 1/|S| on S; a 1 uA total current injected over S), phi = -z^T S_i Vm. So
+  * the electrogram is a fixed weighting of Vm on the tissue nodes: phi(t) = w_tissue . Vm(t),
+    w_tissue = -S_i z (nodalWeights);
+  * element e contributes c_e(t) = coeff_e . Vm_e(t), coeff_e = -vol_e (grad N)^T sigma_i,e grad z
+    (coefficients); the coefficients of an element sum to zero, so a uniform Vm contributes nothing.
+Units: z in mV/uA, positions in mm, sigma in S/m and Vm in mV give phi in mV (the factors cancel:
 1e3 [V/A per mV/uA] x 1e6 [two gradients] x 1e-9 [mm^3] x 1e-3 [V per mV] x 1e3 [mV per V] = 1).
+
+Lead fields come from openCARP Laplace solves (config/leadfield.par, one per electrode node set;
+fixed.groundTruth.leadFieldMethod = "openCARP"). "python" assembles and solves the same discrete
+problem here; it serves the unit tests and is the pre-declared fallback of FM-14.
+Only z on the tissue nodes is kept (float32): that is all the source term reads. Lead fields are
+cached by node set under a folder named by the conductor fingerprint (efov.config.conductor), so
+variants that change only the wave, beta, electrodes, noise or analysis reuse them.
 """
+import hashlib
 import os
 from pathlib import Path
-import subprocess
 
 import numpy as np
 
-from .config import CONDUCTIVITY_NAMES, par
-from .io import igbHeader, readIgb, saveJson, writeVertices
+from .config import par
+from .io import igbHeader, loadJson, readIgb, saveJson, writeVertices
 from .parfile import writeResolved
 
 BATH_TAG, TISSUE_TAG, LESION_TAG = 0, 1, 5
@@ -86,6 +96,7 @@ def openCarpLeadField(config, meshBase, groundVertices, electrodeNodes, nodeCoun
     if runLogged(command, folder / "laplace.log") != 0:
         raise RuntimeError(f"openCARP Laplace run failed; see {folder / 'laplace.log'}")
     z, name = laplaceOutput(folder, nodeCount)
+    (folder / name).unlink()                       # the whole-mesh potential is large; the tissue part is kept by the caller
     saveJson(folder / "leadfield.json", dict(output=name, electrodeNodes=len(electrodeNodes), currentUA=1.0))
     return z
 
@@ -119,17 +130,24 @@ def tensors(principal, frames):
 
 
 def tissueTensors(config, tags, fibres, which):
-    """Per-element tensors on tissue and lesion elements: which = 'monodomain' (sigma_m) or 'bulk' (sigma_i + sigma_e)."""
+    """Per-element tensors on tissue and lesion elements.
+
+    which = 'intracellular' (sigma_i, the source), 'bulk' (sigma_i + sigma_e, the Laplace operator)
+    or 'monodomain' (sigma_m = sigma_i sigma_e / (sigma_i + sigma_e), openCARP's propagation tensor).
+    """
     regions, _ = principalConductivities(config)
     principal = np.zeros((len(tags), 3))
     for name, tag in (("tissue", TISSUE_TAG), ("lesion", LESION_TAG)):
         gi, ge = regions[name]
-        principal[tags == tag] = gi * ge / (gi + ge) if which == "monodomain" else gi + ge
+        principal[tags == tag] = {"intracellular": gi, "bulk": gi + ge, "monodomain": gi * ge / (gi + ge)}[which]
     return tensors(principal, localFrames(fibres))
 
 
 class ContributionModel:
-    """Tissue elements of a run and their sigma_m tensors: turns a lead field into contribution coefficients."""
+    """Tissue elements of a run with their sigma_i tensors: turns a lead field into electrogram weights and contributions.
+
+    Lead fields are given on the tissue nodes only, in vm.igb column order (tissue["tissueNodes"]).
+    """
 
     def __init__(self, config, tissue):
         tissueElements = tissue["tags"] != BATH_TAG
@@ -138,16 +156,22 @@ class ContributionModel:
         self.positions = tissue["positions"]
         self.centres = self.positions[self.elements].mean(axis=1)
         self.volumes, self.gradients = elementGradients(self.positions, self.elements)
-        self.sigmaM = tissueTensors(config, self.tags, tissue["fibres"][tissueElements], "monodomain")
+        self.sigmaI = tissueTensors(config, self.tags, tissue["fibres"][tissueElements], "intracellular")
         self.tissueNodes = tissue["tissueNodes"]
         local = np.full(len(self.positions), -1, np.int64)
         local[self.tissueNodes] = np.arange(len(self.tissueNodes))
         self.localElements = local[self.elements]                 # element corners as indices into vm.igb columns
+        self.sourceStiffness = assemble(np.asarray(self.positions)[self.tissueNodes], self.localElements, self.sigmaI)
 
-    def coefficients(self, leadFieldOnNodes):
-        """(E_tissue, 4): phi = sum_e coeff_e . Vm_e for a lead field given on all mesh nodes (mV/uA)."""
-        minusGradZ = -np.einsum("eij,ej->ei", self.gradients, leadFieldOnNodes[self.elements])
-        return np.einsum("ec,ecd,edj,e->ej", minusGradZ, self.sigmaM, self.gradients, self.volumes)
+    def nodalWeights(self, leadFieldOnTissue):
+        """(tissue nodes,): phi(t) = weights . Vm(t), weights = -S_i z."""
+        return -(self.sourceStiffness @ np.asarray(leadFieldOnTissue, float))
+
+    def coefficients(self, leadFieldOnTissue):
+        """(E_tissue, 4): phi = sum_e coeff_e . Vm_e."""
+        z = np.asarray(leadFieldOnTissue, float)[self.localElements]
+        minusGradZ = -np.einsum("eij,ej->ei", self.gradients, z)
+        return np.einsum("ec,ecd,edj,e->ej", minusGradZ, self.sigmaI, self.gradients, self.volumes)
 
 
 # ----------------------------------------------------------------- Python route (fallback)
@@ -196,3 +220,43 @@ class PythonLeadFieldSolver:
         z = np.zeros(self.count)
         z[self.free] = self._solve(load[self.free])
         return z
+
+
+# ----------------------------------------------------------------- cached lead fields of electrode node sets
+def nodeSetKey(nodes):
+    return hashlib.sha256(np.asarray(nodes, np.int64).tobytes()).hexdigest()[:20]
+
+
+def electrodeLeadFields(config, tissue, groundVertices, nodeSets, folder, processCount=1, log=print):
+    """Lead field on the tissue nodes (float32 .npy, mV/uA) of every node set; computed once per conductor and node set.
+
+    folder is <lead-field cache>/<conductor fingerprint>/<condition>. Its manifest records the mesh it
+    belongs to; a cache built on a different mesh is refused.
+    """
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    manifest = dict(meshBase=str(tissue["meshBase"]), nodes=int(len(tissue["positions"])), tissueNodes=int(len(tissue["tissueNodes"])),
+                    method=config["fixed"]["groundTruth"]["leadFieldMethod"], groundVertices=int(len(groundVertices)))
+    if (folder / "manifest.json").exists():
+        recorded = loadJson(folder / "manifest.json")
+        if {k: recorded[k] for k in ("nodes", "tissueNodes", "method", "groundVertices")} != \
+                {k: manifest[k] for k in ("nodes", "tissueNodes", "method", "groundVertices")}:
+            raise ValueError(f"Lead-field cache {folder} belongs to a different mesh or method")
+    else:
+        saveJson(folder / "manifest.json", manifest)
+    method, solver, paths, computed = manifest["method"], None, [], 0
+    for nodes in nodeSets:
+        path = folder / f"{nodeSetKey(nodes)}.npy"
+        if not path.exists():
+            if method == "openCARP":
+                z = openCarpLeadField(config, tissue["meshBase"], groundVertices, nodes, len(tissue["positions"]),
+                                      folder / "runs" / path.stem, processCount)
+            else:
+                solver = solver or PythonLeadFieldSolver(config, tissue, groundVertices)
+                z = solver.leadField(nodes)
+            np.save(path, z[tissue["tissueNodes"]].astype(np.float32))
+            computed += 1
+            if computed % 50 == 0:
+                log(f"  lead fields: {computed} computed in {folder}")
+        paths.append(path)
+    return paths, computed

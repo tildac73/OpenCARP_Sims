@@ -123,54 +123,6 @@ def gridOffsetsMm(spacing):
     return (np.arange(4) - 1.5) * float(spacing)
 
 
-def restartTimeMs(config):
-    """Prepacing checkpoint: early enough that phi_e exists for every frame the analysis reads.
-
-    The analysis reads the last beat from (window start - 2 x filter history); the earliest window
-    start is stimulus end + minimumAfterStimulus. A margin is subtracted and the result floored to 10 ms.
-    """
-    if not config["fixed"]["numerics"]["prepacing"]:
-        return None
-    analysis = config["fixed"]["analysis"]
-    earliest = (beatCount(config) - 1) * cycleLengthMs(config) + stimulusDurationMs(config) + analysis["window"]["minimumAfterStimulusMs"]
-    restart = earliest - 2 * analysis["filterHistoryMs"] - config["fixed"]["numerics"]["prepacingMarginMs"]
-    restart = float(np.floor(restart / 10.0) * 10.0)
-    return restart if restart > 0 else None
-
-
-def _sweepValues(config, name):
-    """Baseline, planned and current values of a sweep variable, flattened (lists of gaps are expanded)."""
-    spec = config["sweep"][name]
-    flat = []
-    for item in [spec["baseline"]] + list(spec["planned"]) + [config["values"][name]]:
-        flat += [float(v) for v in item] if isinstance(item, list) else [float(item)]
-    return flat
-
-
-def phieBoxMm(config):
-    """(lower, upper) corners of the bath box where openCARP writes phi_e (mm).
-
-    Sized for every electrode placement of the one-at-a-time sweep plan (FM-17, FM-20): each extent
-    is the largest over variants that change one electrode variable from its baseline, plus one mesh
-    step. A sweep within the Methodology plan therefore reuses the same simulation.
-    """
-    sweep, e, spacing = config["sweep"], config["fixed"]["electrodes"], spacingMm(config)
-    base = {name: sweep[name]["baseline"] for name in ("gapsMm", "electrodeRadiusMm", "electrodeLengthMm", "gridSpacingMm")}
-    baseGap = max(base["gapsMm"])
-    reach = lambda gap, radius: gap + 2 * radius
-    height = max([reach(g, base["electrodeRadiusMm"]) for g in _sweepValues(config, "gapsMm")]
-                 + [reach(baseGap, r) for r in _sweepValues(config, "electrodeRadiusMm")]
-                 + [reach(max(config["values"]["gapsMm"]), config["values"]["electrodeRadiusMm"])])
-    lateral = lambda s, length: 1.5 * s + length / 2
-    halfX = abs(e["centreXmm"]) + max([lateral(s, base["electrodeLengthMm"]) for s in _sweepValues(config, "gridSpacingMm")]
-                                      + [lateral(base["gridSpacingMm"], length) for length in _sweepValues(config, "electrodeLengthMm")])
-    halfY = np.abs(centreYmm(config)).max() + max(1.5 * s for s in _sweepValues(config, "gridSpacingMm")) \
-        + max(_sweepValues(config, "electrodeRadiusMm"))
-    top = slabSizeMm(config)[2] / 2
-    return (np.array([-halfX - spacing[0], -halfY - spacing[1], top]),
-            np.array([halfX + spacing[0], halfY + spacing[1], top + height + spacing[2]]))
-
-
 def meshNodeCount(config):
     """Nodes of the tissue + bath mesh (regular block), for planning."""
     size, spacing, bath = slabSizeMm(config), spacingMm(config), config["fixed"]["bath"]["thicknessMm"]
@@ -203,7 +155,11 @@ def validateConfig(config):
     need(g["g_it"] == g["g_in"] and g["g_et"] == g["g_en"],
          "One fibre vector per element: tissue must be transversely isotropic (t = n)")
     need(par(config, "imp_region[0].cellSurfVolRatio") > 0, "cellSurfVolRatio must be positive")
-    need(par(config, "bidomain", int) == 2, "The final model uses pseudo-bidomain (bidomain = 2; DL-2026-11-02-01)")
+    need(par(config, "bidomain", int) == 0, "The final model is monodomain (bidomain = 0); electrograms come from lead fields (FM-23)")
+    need(par(config, "dataout_e", int) == 0, "No phi_e output in the monodomain model (dataout_e = 0, FM-23)")
+    lesionLower = f["tissue"]["boundaryYmm"] - f["tissue"]["lesionWidthMm"]
+    need(f["tissue"]["lesionWidthMm"] > 0 and lesionLower > -size[1] / 2,
+         "The lesion strip must be wider than zero and leave isolated tissue beyond it (FM-24)")
     need(np.isclose(par(config, "tend"), beatCount(config) * cycleLengthMs(config)), "tend must equal npls x bcl")
     need(beatCount(config) >= 3, "Physiology checks compare the last three beats: npls >= 3")
     step, dt = sampleStepMs(config), timeStepUs(config)
@@ -220,14 +176,14 @@ def validateConfig(config):
     need(pf["minimumHz"] >= band[0] and pf["maximumHz"] <= band[1], "Peak-frequency range must lie inside the analysed band")
     need(min(v["gapsMm"]) > 0 and v["electrodeRadiusMm"] > 0 and v["electrodeLengthMm"] > 0, "Invalid electrode size or gap")
     need(v["gridSpacingMm"] > max(v["electrodeLengthMm"], 2 * v["electrodeRadiusMm"]), "Electrodes of the grid would overlap")
-    lower, upper = phieBoxMm(config)
-    need(np.all(np.abs(lower[:2]) < size[:2] / 2) and upper[2] < size[2] / 2 + f["bath"]["thicknessMm"],
-         "The phi_e output box must lie inside the bath above the tissue")
-    calibration = a["calibration"]
-    need(np.any(np.isclose(centreYmm(config), calibration["referenceCentreYmm"])), "Calibration centre must be a catheter placement")
+    reachY = np.abs(centreYmm(config)).max() + 1.5 * v["gridSpacingMm"] + v["electrodeRadiusMm"]
+    reachX = abs(f["electrodes"]["centreXmm"]) + 1.5 * v["gridSpacingMm"] + v["electrodeLengthMm"] / 2
+    need(reachX < size[0] / 2 and reachY < size[1] / 2, "Every electrode must lie above the tissue")
+    need(max(v["gapsMm"]) + 2 * v["electrodeRadiusMm"] < f["bath"]["thicknessMm"], "Every electrode must lie inside the bath")
+    need(a["resampleMarginMs"] >= 5.0, "Keep at least the 5 ms resampling-filter half-length beyond the last window (FM-29)")
+    need(set(f["export"]["peakFrequencyDefinitions"].values()) <= {"pfHz", "pfGlobalHz"}, "Unknown peak-frequency column in export")
     need(all(np.any(np.isclose(centreYmm(config), c)) for c in groundTruthCentresYmm(config)), "Ground-truth centres must be catheter placements")
     need(f["groundTruth"]["leadFieldMethod"] in ("openCARP", "python"), "leadFieldMethod must be 'openCARP' or 'python'")
-    need(restartTimeMs(config) is not None or not f["numerics"]["prepacing"], "No room for prepacing before the analysis frames")
     from .fibres import validateSpec
     validateSpec(v["fibres"], size[2])
     return config
@@ -239,12 +195,14 @@ STAGE_INPUTS = {
     "tune": ["values.cvTargetMPerS", "values.ionicModel", "fixed.tissue", "fixed.tune", "parNoBeta"],
     "conditioning": ["values.ionicModel", "fixed.conditioning", "parConditioning"],
     "simulation": ["values.wallMm", "values.fibres", "values.epicardialMedium", "values.scar", "values.waveAngleDeg",
-                   "fixed.tissue", "fixed.bath", "fixed.stimulus", "fixed.numerics", "fixed.analysis.window",
-                   "fixed.analysis.filterHistoryMs", "phieBox", "parNoBeta"],
+                   "fixed.tissue", "fixed.bath", "fixed.stimulus", "fixed.numerics", "parNoBeta"],
     "physiology": ["fixed.acceptance.physiology"],
-    "window": ["fixed.analysis.window", "values.gridSpacingMm"],
-    "electrograms": ["values.gapsMm", "values.electrodeRadiusMm", "values.electrodeLengthMm", "values.gridSpacingMm",
-                     "fixed.electrodes", "fixed.analysis.filterHistoryMs"],
+    "window": ["fixed.analysis.window", "values.gridSpacingMm", "values.electrodeRadiusMm", "values.electrodeLengthMm",
+               "values.gapsMm", "fixed.electrodes"],
+    "conductor": ["conductor"],
+    "leadFields": ["conductor", "values.gapsMm", "values.electrodeRadiusMm", "values.electrodeLengthMm", "values.gridSpacingMm",
+                   "fixed.electrodes"],
+    "electrograms": ["fixed.analysis.filterHistoryMs", "fixed.analysis.resampleMarginMs"],
     "measurements": ["values.noiseSdMv", "fixed.analysis", "fixed.acceptance.profile"],
     "export": ["values.region", "fixed.export"],
     "changePoints": [],
@@ -252,9 +210,20 @@ STAGE_INPUTS = {
 }
 
 
+def conductor(config):
+    """Everything a lead field depends on (FM-23): mesh, fibres, conductivities, Laplace settings and method.
+
+    Variants that change only the wave angle, beta, electrodes, noise or analysis share lead fields.
+    """
+    keys = sorted(k for k in config["par"] if k.startswith("gregion"))
+    return dict(wallMm=config["values"]["wallMm"], fibres=config["values"]["fibres"], epicardialMedium=config["values"]["epicardialMedium"],
+                tissue=config["fixed"]["tissue"], bath=config["fixed"]["bath"], conductivities={k: config["par"][k] for k in keys},
+                leadFieldPar=Path(config["leadFieldPar"]).read_text(), method=config["fixed"]["groundTruth"]["leadFieldMethod"])
+
+
 def section(config, dotted):
-    if dotted == "phieBox":
-        return [list(map(float, c)) for c in phieBoxMm(config)]
+    if dotted == "conductor":
+        return conductor(config)
     if dotted == "parNoBeta":                # beta is the tune stage's output, so it is a parent, not an input
         return {k: v for k, v in config["par"].items() if k != "imp_region[0].cellSurfVolRatio"}
     if dotted == "parConditioning":

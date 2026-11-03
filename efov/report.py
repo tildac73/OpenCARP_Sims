@@ -13,7 +13,7 @@ def acceptance(run):
     tuneResult, groundTruth = run.result("tune"), run.result("groundTruth")
     checks = {
         "tune.cvWithinTolerance": bool(tuneResult.get("passed", True)),
-        "implementation.groundTruthReconstruction": bool(groundTruth["passed"]),
+        "implementation.groundTruthShareSum": bool(groundTruth["passed"]),
         **{f"physiology.{c}.{name}": value for c, item in physiology["conditions"].items() for name, value in item["criteria"].items()},
         **{f"profile.{name}": value for name, value in measures.items()},
     }
@@ -59,17 +59,20 @@ def writeReport(run):
     for condition, c in physiology["conditions"].items():
         lines.append(f"- {condition}: last-beat surface CV {c['lastBeatSurfaceSpeedMPerS']:.3f} m/s (reported, not gated), "
                      f"{c['regionNodes']} nodes in the check region")
-    lines += ["", f"Measurement window: {window['windowMs'][0]}-{window['windowMs'][1]} ms after the last stimulus "
-              f"(grid activation {window['gridFirstActivationMs']:.1f}-{window['gridLastActivationMs']:.1f} ms). {window['note']}", ""]
-    cal = measures["calibration"]
-    lines += ["## Calibration", "", f"Gain {cal['gain']:.6g} ({cal['source']}). {cal['interpretation']}.", ""]
+    lines += ["", f"Measurement windows: {window['windowLengthMs']:g} ms per placement, starts {window['windowMs'][0]}-"
+              f"{max(w[0] for w in window['windowsMs'])} ms after the last stimulus (first activation under a placement "
+              f"{window['firstActivationMs'][0]:.1f}-{window['firstActivationMs'][1]:.1f} ms). {window['note']}", ""]
+    amplitudes = measures["amplitudes"]
+    lines += ["## Amplitudes (model units, not calibrated)", "", "| kind | gap (mm) | median clean PP far in viable tissue (mV) |",
+              "| --- | --- | --- |"] + [f"| {r['kind']} | {r['gapMm']:g} | {r['medianCleanPpMv']:.3g} |" for r in amplitudes["modelFarViable"]]
+    lines += ["", f"Wang's clinical median bipolar voltage ({amplitudes['region']}): {amplitudes['wangBipolarMedianMv']} mV. "
+              f"{amplitudes['note']}", ""]
     lines += ["## Change points (Wang's code, one slab)", "",
               f"Eligible for interpretation: {fmt(changes['eligibleForInterpretation'])} "
               f"(prerequisites: {', '.join(f'{k} {fmt(v)}' for k, v in changes['prerequisites'].items())}).", ""]
     lines += changePointTable(run) + [""]
-    lines += ["## Ground truth", "", f"{gt['recordings']} recordings ({gt['leadFieldMethod']} lead fields); share-sum deviation "
-              f"{gt['shareSumMaxDeviation']:.2g}, reconstruction residual {gt['reconstructionResidualMax']:.2g}, "
-              f"scale/gain deviation {gt['scaleOverGainMaxDeviation']:.2g}.",
+    lines += ["## Ground truth", "", f"{gt['recordings']} recordings ({gt['leadFieldMethod']} lead fields, the same as the "
+              f"electrograms'); share-sum deviation {gt['shareSumMaxDeviation']:.2g}.",
               "Per-recording classes, profiles and shape descriptors: `groundTruth/summary.csv`, `groundTruth/profiles.npz`. "
               "Full element fields: `groundTruth/fields_<condition>.npz` and `groundTruth/shares_<condition>_gap<g>mm.vtk` (ParaView).", ""]
     if accepted["assumptions"]:
@@ -86,7 +89,8 @@ def makeFigures(run):
     from .groundtruth_figures import makeGroundTruthFigures
     folder = run.folder("figures")
     made = [activationFigure(run, folder), profileFigure(run, folder, "ppMv", "PP (mV)", "02_voltage_profiles.png"),
-            profileFigure(run, folder, "pfHz", "peak frequency (Hz)", "03_peak_frequency_profiles.png", log=False),
+            profileFigure(run, folder, "pfHz", "peak frequency, EnSite-style (Hz)", "03_peak_frequency_profiles.png", log=False),
+            profileFigure(run, folder, "pfGlobalHz", "peak frequency, global maximum (Hz)", "03b_peak_frequency_global_profiles.png", log=False),
             tracesFigure(run, folder)]
     made += makeGroundTruthFigures(run, folder)
     return [f for f in made if f is not None]
@@ -102,7 +106,9 @@ def activationFigure(run, folder):
         top = np.isclose(p[:, 2], p[:, 2].max())
         t = lastBeatActivation(run.config, run.jobs[condition], tissue)
         image = axis.scatter(p[top, 0], p[top, 1], c=t[top], s=1, cmap="viridis")
-        axis.axhline(run.config["fixed"]["tissue"]["boundaryYmm"], color="k", lw=0.8, ls="--")
+        tissueSettings = run.config["fixed"]["tissue"]
+        for y in (tissueSettings["boundaryYmm"], tissueSettings["boundaryYmm"] - tissueSettings["lesionWidthMm"]):
+            axis.axhline(y, color="k", lw=0.8, ls="--")
         axis.set(title=f"{condition}: last-beat activation, catheter-facing surface", xlabel="x (mm)", aspect="equal")
     axes[0].set_ylabel("y (mm)")
     fig.colorbar(image, ax=axes, label="ms after stimulus")
@@ -125,6 +131,7 @@ def profileFigure(run, folder, column, label, name, log=True):
             subset = points[(points.condition == condition) & (points.kind == key["kind"]) & (points.gapMm == key["gapMm"])]
             axis.scatter(subset.distanceInsideMm, subset[column], s=3, color=colour, label=condition, alpha=0.5)
         axis.axvline(0, color="k", lw=0.6)
+        axis.axvline(run.config["fixed"]["tissue"]["lesionWidthMm"], color="k", lw=0.6, ls="--")
         axis.set(yscale="log" if log else "linear", ylabel=label, title=f"{key['kind']} (all recordings), gap {key['gapMm']:g} mm")
         axis.legend(fontsize=7)
     axes[-1, 0].set_xlabel("distance inside lesion (mm)")
@@ -145,7 +152,9 @@ def tracesFigure(run, folder):
             chosen = points[(points.noiseRepeat == 0) & (points.label == label) & (points.gapMm == gap) & np.isclose(points.centreYmm, 0)]
             if chosen.empty:
                 continue
-            axis.plot(archive["timeMs"], archive["cleanMv"][int(chosen.iloc[0].traceIndex)], color=colour, label=condition)
+            index = int(chosen.iloc[0].traceIndex)
+            trace = archive["cleanMv"][index]
+            axis.plot(archive["windowStartMs"][index] + np.arange(len(trace)) * float(archive["stepMs"]), trace, color=colour, label=condition)
         axis.set(title=f"{kind} {label}, centre y = 0, gap {gap:g} mm", xlabel="time (ms)", ylabel="mV")
         axis.legend(fontsize=7)
     fig.tight_layout()

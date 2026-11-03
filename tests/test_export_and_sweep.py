@@ -13,6 +13,8 @@ def test_wang_rows_follow_her_column_conventions():
     assert list(rows.uni1_bi2_omni3) == [1, 2, 3] and list(rows.DistAcrossPath) == [-1.0, -4.0, 2.0]
     assert rows.inf0_roof1.unique().tolist() == [1] and rows.patientID.unique().tolist() == [1]
     assert pd.isna(rows.PFreq[0]) and rows.PFreq[1] == 300.0 and rows.PFreq[2] == 0.0   # undetectable PF = 0
+    assert export.wangRows(points, "roof", 3.0, "pfGlobalHz").PFreq[1] == 290.0
+    assert export.parseDatasetName(export.datasetName(0.25, 2, "global")) == (0.25, 2, "global")
 
 
 def test_sweep_variants_from_the_plan():

@@ -3,14 +3,16 @@
     preflight     software versions, repository commit, solver flavour check, R availability
     conditioning  bench single-cell limit cycle
     tune          beta for the CV target at the production mesh (FM-18); the CV gate
-    simulation    openCARP intact and lesion runs (pseudo-bidomain, bath, prepacing)
+    simulation    openCARP intact and lesion runs (monodomain, FM-23; lesion strip, FM-24)
     physiology    activation, planarity, direction and stability checks
-    window        measurement window from intact activation (before any electrogram is read)
-    electrograms  unipolar phi_e at every electrode (node-set electrodes)
-    measurements  acquisition chain, gain, noise, recordings, PP, peak frequency, profile checks
-    export        Wang-format datasets (one per gap and noise realisation)
+    window        measurement window of every placement from intact activation (FM-28), before any electrogram
+    leadFields    openCARP Laplace lead field of every distinct electrode (cached per conductor, FM-23)
+    electrograms  unipolar phi at every electrode by reciprocity (sigma_i source)
+    measurements  acquisition chain, noise, recordings, PP, peak frequency (two definitions), profile checks;
+                  physical units, no calibration (FM-25)
+    export        Wang-format datasets (one per gap, noise realisation and PF definition)
     changePoints  Wang's Rmd on each dataset (R/wang_replication.R)
-    groundTruth   openCARP lead fields, contribution fields, classes, profiles, shape; checks
+    groundTruth   contribution fields from the same lead fields: classes, profiles, shape
     report        acceptance.json, report.md, figures
     compact       optional: keep Vm only where the analysis can read it (FM-20)
 
@@ -19,7 +21,9 @@ the configuration it used (and of its parents). A rerun skips a stage whose fing
 refuses outputs made with different settings. conditioning, tune, simulation and physiology depend
 only on the simulation settings; with a simulation cache (sweeps, FM-17) their records and outputs
 live in <cache>/<simulation fingerprint>/ and are shared by every variant that does not change them.
-Checks of a broken setup (ground-truth reconstruction, CV tuning) stop the run; scientific checks
+Lead fields live in <lead-field cache>/<conductor fingerprint>/<condition>/ and are shared by every
+variant with the same mesh, fibres and conductivities.
+Checks of a broken setup (share sum, CV tuning) stop the run; scientific checks
 (physiology, profile prerequisites) are recorded and decide eligibility for interpretation.
 
 Python (notebooks):   run = Run(config, "runs/v4_reference", processCount=24); run.all()
@@ -37,14 +41,15 @@ import traceback
 import pandas as pd
 
 from . import electrograms, export, groundtruth, measurements, physiology, report, simulation, tune
-from .config import REPOSITORY, beatCount, cycleLengthMs, fingerprint, par, tunedBetaFor, withParOverrides
+from .config import REPOSITORY, fingerprint, par, tunedBetaFor, withParOverrides
 from .io import loadJson, saveJson
 
-STAGES = ["preflight", "conditioning", "tune", "simulation", "physiology", "window", "electrograms", "measurements",
+STAGES = ["preflight", "conditioning", "tune", "simulation", "physiology", "window", "leadFields", "electrograms", "measurements",
           "export", "changePoints", "groundTruth", "report", "compact"]
 PARENTS = {"preflight": [], "conditioning": [], "tune": ["conditioning"], "simulation": ["tune"], "physiology": ["simulation"],
-           "window": ["simulation"], "electrograms": ["window"], "measurements": ["electrograms"], "export": ["measurements"],
-           "changePoints": ["export", "physiology"], "groundTruth": ["measurements"],
+           "window": ["simulation"], "leadFields": ["simulation"], "electrograms": ["window", "leadFields"],
+           "measurements": ["electrograms"], "export": ["measurements"],
+           "changePoints": ["export", "physiology"], "groundTruth": ["measurements", "leadFields"],
            "report": ["physiology", "measurements", "changePoints", "groundTruth"], "compact": ["report"]}
 SHARED = ("conditioning", "tune", "simulation", "physiology")
 
@@ -66,9 +71,11 @@ def now():
 
 
 class Run:
-    def __init__(self, config, outputFolder, processCount=1, simulationCache=None, durationMs=None, log=print):
+    def __init__(self, config, outputFolder, processCount=1, simulationCache=None, durationMs=None, log=print, leadFieldCache=None):
         self.config, self.out, self.np = config, Path(outputFolder).resolve(), int(processCount)
         self.durationMs, self.log = durationMs, log
+        self.leadFieldCache = Path(leadFieldCache or (Path(simulationCache).parent / "leadFieldCache" if simulationCache
+                                                       else self.out / "leadFieldCache")).resolve()
         self._tissues = {}
         self.out.mkdir(parents=True, exist_ok=True)
         self.shared = sharedFolder(config, self.out, simulationCache)
@@ -145,7 +152,8 @@ class Run:
         return self._tissues[condition]
 
     def window(self):
-        return self.result("window")["windowMs"]
+        """Measurement windows of every placement (P, 2), ms after the last stimulus."""
+        return self.result("window")["windowsMs"]
 
     def _applyBeta(self, beta):
         if abs(par(self.config, tune.BETA_KEY) - beta) > 0:
@@ -202,14 +210,18 @@ class Run:
         saveJson(self.folder("electrograms") / "window.json", window)
         return window
 
+    def stage_leadFields(self):
+        return electrograms.runLeadFields(self.config, self.jobs, {c: self.tissue(c) for c in simulation.CONDITIONS},
+                                          self.leadFieldCache, self.folder("leadFields"), self.np, self.log)
+
     def stage_electrograms(self):
         return electrograms.runElectrograms(self.config, self.jobs, {c: self.tissue(c) for c in simulation.CONDITIONS},
-                                            self.window(), self.folder("electrograms"))
+                                            self.window(), self.out / "leadFields", self.folder("electrograms"))
 
     def stage_measurements(self):
-        points, calibration, status = measurements.runMeasurements(self.config, self.out / "electrograms", self.window(),
-                                                                   self.folder("measurements"))
-        return dict(calibration=calibration, checks=status, recordings=int(len(points)))
+        points, amplitudes, status = measurements.runMeasurements(self.config, self.out / "electrograms", self.window(),
+                                                                  self.folder("measurements"))
+        return dict(amplitudes=amplitudes, checks=status, recordings=int(len(points)))
 
     def stage_export(self):
         return dict(datasets=export.runExport(self.config, self.out / "measurements", self.folder("export")))
@@ -242,11 +254,10 @@ class Run:
 
     def stage_groundTruth(self):
         checks = groundtruth.runGroundTruth(self.config, self.jobs, {c: self.tissue(c) for c in simulation.CONDITIONS},
-                                            self.out / "electrograms", self.out / "measurements",
-                                            self.result("measurements")["calibration"]["gain"], self.window(),
-                                            self.folder("groundTruth"), self.np)
+                                            self.out / "electrograms", self.out / "measurements", self.window(),
+                                            self.folder("groundTruth"))
         if not checks["passed"]:
-            raise RuntimeError(f"Ground-truth fields do not reproduce the electrograms: {checks}")
+            raise RuntimeError(f"Ground-truth shares do not sum to 1: {checks}")
         return checks
 
     def stage_report(self):
@@ -256,11 +267,10 @@ class Run:
         """Delete raw output of a simulation no other variant reuses (the sweep runner decides; FM-20)."""
         if not self.config["fixed"]["compactAfterReport"]:
             return dict(compacted=False, reason="fixed.compactAfterReport is false")
-        beatStart = (beatCount(self.config) - 1) * cycleLengthMs(self.config)
-        window, history = self.window(), self.config["fixed"]["analysis"]["filterHistoryMs"]
+        start, end = electrograms.analysisTimes(self.config, self.window())
         done = {}
         for condition, job in self.jobs.items():
             if (job / "vm.igb").exists():
-                simulation.compactRun(job, beatStart + window[0] - 2 * history, beatStart + window[1])
+                simulation.compactRun(job, start, end)
             done[condition] = loadJson(job / "compact.json")
         return dict(compacted=True, conditions=done)

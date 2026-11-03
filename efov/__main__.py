@@ -45,12 +45,12 @@ def main():
     config = cfg.loadConfig(args.config)
     if args.command == "plan":
         size, spacing = cfg.slabSizeMm(config), cfg.spacingMm(config)
-        lower, upper = cfg.phieBoxMm(config)
         print(f"{config['modelName']}: slab {size[0]:g} x {size[1]:g} x {size[2]:g} mm at {spacing[0]:g} / {spacing[2]:g} mm, "
               f"epicardial medium {config['values']['epicardialMedium']} -> {cfg.meshNodeCount(config):,} nodes")
         print(f"{cfg.beatCount(config)} beats at {cfg.cycleLengthMs(config):g} ms; dt {cfg.timeStepUs(config):g} us; "
-              f"output {cfg.sampleStepMs(config):g} ms; prepacing restart {cfg.restartTimeMs(config)} ms")
-        print(f"phi_e box {lower.round(2).tolist()} to {upper.round(2).tolist()} mm")
+              f"output {cfg.sampleStepMs(config):g} ms; monodomain")
+        from .geometry import electrodeLayout
+        print(f"{len(electrodeLayout(config)['uniqueCentres'])} distinct electrodes per condition: one Laplace lead field each (FM-23)")
         print(f"{len(cfg.centreYmm(config)) * len(config['values']['gapsMm'])} catheter placements; "
               f"ground truth at {len(cfg.groundTruthCentresYmm(config))} centres")
         beta = cfg.tunedBetaFor(config)

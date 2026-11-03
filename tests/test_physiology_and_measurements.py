@@ -36,13 +36,14 @@ def test_resampling_preserves_amplitude_and_timing():
     assert np.max(np.abs(resampled[0, middle] - expected)) < 0.005
 
 
-def syntheticEgm(config, windowMs):
+def syntheticEgm(config, windows):
     """Planar wave in +x past every electrode: a biphasic deflection at each electrode's arrival time."""
+    from efov.electrograms import analysisTimes
     from efov.geometry import electrodeLayout
     layout = electrodeLayout(config)
     beatStart = (cfg.beatCount(config) - 1) * cfg.cycleLengthMs(config)
-    history = config["fixed"]["analysis"]["filterHistoryMs"]
-    times = np.round(np.arange(beatStart + windowMs[0] - 2 * history, beatStart + windowMs[1] + 1e-9, 0.2), 6)
+    times = np.round(np.arange(*analysisTimes(config, windows), 0.2), 6)
+    times = np.append(times, round(times[-1] + 0.2, 6))
     arrival = beatStart + 20 + (layout["centres"][..., 0] + 8) / 0.9
     lesion = np.where(layout["centres"][..., 1] < 0, 0.05, 1.0)                   # smaller signals over the lesion
     dt = times[None, None, :] - arrival[..., None]
@@ -50,19 +51,24 @@ def syntheticEgm(config, windowMs):
     return dict(uni=uni.astype(np.float32), timeMs=times, placements=layout["placements"], centres=layout["centres"])
 
 
-def test_calibration_and_measurement_rows():
+def test_measurement_rows_in_model_units_with_per_placement_windows():
     config = cfg.loadConfig(SMALL)
-    window = [5.0, 45.0]
-    egm = syntheticEgm(config, window)
-    calibration = measurements.calibrateGain(config, egm, window)
-    table, measured, clean, times, acquired = measurements.measureCondition(config, "lesion", egm, calibration["gain"], window)
+    placements = len(cfg.centreYmm(config)) * len(config["values"]["gapsMm"])
+    windows = np.tile([5.0, 45.0], (placements, 1))
+    windows[1] += 3.0                                                               # one placement with a later window
+    egm = syntheticEgm(config, windows)
+    table, measured, clean, traceInfo, acquired = measurements.measureCondition(config, "lesion", egm, windows)
     bipoles = table[(table.kind == "bi") & (table.noiseRepeat == 0) & np.isclose(table.centreYmm, 0) & np.isclose(table.gapMm, 0.25)]
-    assert len(bipoles) == 9 and abs(np.median(bipoles.ppMv) - 1.44) < 0.2           # PP around t_PF vs window PP at calibration
+    assert len(bipoles) == 9 and np.median(bipoles.ppMv) > 0.5                     # physical units: unscaled synthetic amplitude
     differential = table[table.kind != "uni"]
-    assert differential.pfHz.notna().any() and set(differential.ppWindow) <= {"peakFrequency", "window"}
+    assert differential.pfHz.notna().any() and differential.pfGlobalHz.notna().any()
+    assert set(differential.ppWindow) <= {"peakFrequency", "window"}
     assert table[table.kind == "uni"].pfHz.isna().all()
     assert set(table.kind) == {"uni", "bi", "omni"} and table.label.nunique() == 16 + 9 + 36
-    assert measurements.filterHistoryCheck(config, acquired, window)["doubleHistoryAvailable"]
-    fixed = cfg.loadConfig(SMALL)
-    fixed["fixed"]["analysis"]["calibration"]["fixedGain"] = 2.5
-    assert measurements.calibrateGain(fixed, egm, window)["gain"] == 2.5
+    beatStart = (cfg.beatCount(config) - 1) * cfg.cycleLengthMs(config)
+    starts = table.groupby("placement").windowStartMs.first()
+    assert np.isclose(starts[1] - starts[0], 3.0) and np.isclose(starts[0], beatStart + 5.0)
+    assert measured.shape[1] == clean.shape[1] == 81                               # 40 ms at 2 kHz, both ends included
+    assert measurements.filterHistoryCheck(config, acquired, windows)["doubleHistoryAvailable"]
+    robustness = measurements.pfNoiseRobustness(table)
+    assert {"pfHz_clean", "pfHz_noisy", "pfGlobalHz_clean", "pfGlobalHz_noisy"} <= set(robustness.columns)

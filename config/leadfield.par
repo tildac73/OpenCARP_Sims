@@ -7,8 +7,9 @@
 # The conductivity regions are NOT set here. efov/leadfield.py writes them into each resolved
 # lead-field file from the run's resolved model parameters, with every extracellular conductivity
 # of tissue and lesion set to g_i + g_e. The Laplace operator is then div((sigma_i + sigma_e) grad),
-# the operator of openCARP's pseudo-bidomain phi_e, so the lead field and the electrograms belong
-# to one discrete problem. The reconstruction check of every run tests this.
+# the operator of the bidomain extracellular equation. efov/leadfield.py combines the lead field
+# with the sigma_i source and the monodomain Vm (FM-23): phi = -z^T S_i Vm, exact for the discrete
+# problem div((sigma_i + sigma_e) grad phi_e) = -div(sigma_i grad Vm) with the corner ground.
 #
 # Basis: openCARP 19.0.0 binary help text (Laplace experiment; "extracellular current (in uA/cm^3)";
 # crct.total_current "Treat strengths as total current (uA) and not density") and the openCARP
@@ -18,7 +19,7 @@
 
 experiment   = 2          # Laplace solve only
 bidomain     = 1          # required by the Laplace mode (openCARP sets it otherwise, with a warning)
-cg_tol_ellip = 1e-10      # tighter than the simulation: the ground truth is a reconstruction
+cg_tol_ellip = 1e-10      # relative residual of the Laplace solve
 dt           = 20
 tend         = 1
 timedt       = 1

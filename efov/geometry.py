@@ -5,9 +5,10 @@ wall; the catheter-facing tissue surface is z = +wall/2. Distance convention: po
 lesion (y < boundary); the intact run uses the same virtual boundary.
 
 Electrodes (FM-14): each electrode is a cylinder (axis along x, radius r, length L) whose centre sits
-gap + r above the tissue. Its sensing set is every mesh node inside the cylinder; its recorded
+gap + r above the tissue. Its sensing set is every bath mesh node inside the cylinder; its recorded
 potential is the mean phi_e over that set, and its lead field is the response to a total current
-injected over the same set, so reciprocity holds for the discrete problem.
+injected over the same set, so reciprocity holds for the discrete problem (efov.leadfield). This is a
+passive sensing approximation, not an equipotential conducting electrode.
 """
 import re
 
@@ -55,21 +56,9 @@ def electrodeNodeSets(positionsMm, candidateNodes, uniqueCentres, radiusMm, leng
         inside = (np.abs(local[:, 0]) <= lengthMm / 2 + 1e-9) & (np.hypot(local[:, 1], local[:, 2]) <= radiusMm + 1e-9)
         nodes = np.sort(candidates[near[inside]])
         if not len(nodes):
-            raise ValueError(f"Electrode at {centre} mm contains no mesh node of the phi_e output box")
+            raise ValueError(f"Electrode at {centre} mm contains no bath mesh node above the tissue")
         sets.append(nodes)
     return sets
-
-
-def electrodeAveraging(nodeSets, columnOfNode):
-    """Sparse (U x columns) matrix: mean over each electrode's nodes, columns = positions in the phi_e output."""
-    from scipy import sparse
-    rows, cols, values = [], [], []
-    for k, nodes in enumerate(nodeSets):
-        columns = columnOfNode[nodes]
-        if np.any(columns < 0):
-            raise ValueError("An electrode node is not in the phi_e output (enlarge the output box)")
-        rows += [k] * len(nodes); cols += list(columns); values += [1.0 / len(nodes)] * len(nodes)
-    return sparse.csr_matrix((values, (rows, cols)), shape=(len(nodeSets), int(columnOfNode.max()) + 1))
 
 
 def recordingGeometry(electrodeCentres, kind, label, weights, boundaryYmm):

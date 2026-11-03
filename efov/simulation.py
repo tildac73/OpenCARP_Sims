@@ -4,10 +4,10 @@
     runSpec(config, condition, state, ...)      what slab_experiment.py needs that is not in model.par
     runCondition(config, condition, ...)        carputils slab_experiment.py; refuses stale or partial runs
     tissueModel(job)                            tissue nodes (vm.igb order) and their positions
-    compactRun(job, keepFrames)                 keep only the analysis frames of Vm (FM-20)
+    compactRun(job, startMs, endMs)             keep only the analysis frames of Vm (FM-20)
 
-openCARP writes vm.igb and LATs for tissue nodes only, in ascending global node order; phie.igb
-covers the listed output nodes (phieNodes.npy), also in ascending order (checked 1 Nov 2026).
+The tissue runs are monodomain (FM-23): openCARP writes vm.igb and LATs for tissue nodes only, in
+ascending global node order (checked 1 Nov 2026). Electrograms come from lead fields (efov.leadfield).
 """
 import json
 import os
@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-from .config import beatCount, cycleLengthMs, par, phieBoxMm, restartTimeMs, slabSizeMm, spacingMm, stimulusDurationMs, timeStepUs
+from .config import cycleLengthMs, par, slabSizeMm, spacingMm, stimulusDurationMs, timeStepUs
 from .io import igbHeader, igbTimes, loadJson, readIgb, readMesh, saveJson
 
 EXPERIMENT = Path(__file__).resolve().parent / "opencarp" / "slab_experiment.py"
@@ -91,33 +91,30 @@ def runSpec(config, condition, initialState, meshRoot, kind="slab", durationMs=N
     """Everything slab_experiment.py needs that model.par does not hold (geometry, paths, overrides)."""
     v, f = config["values"], config["fixed"]
     size = slabSizeMm(config) if kind == "slab" else np.asarray(f["tune"]["stripSizeMm"], float)
-    lower, upper = phieBoxMm(config)
     spec = dict(kind=kind, condition=condition, modelPar=config["modelPar"], parOverrides=config["parOverrides"],
                 tissueSizeMm=size.tolist(), spacingMm=spacingMm(config).tolist(),
                 bathThicknessMm=f["bath"]["thicknessMm"], groundCubeMm=f["bath"]["groundCubeMm"],
-                epicardialMedium=v["epicardialMedium"], boundaryYmm=f["tissue"]["boundaryYmm"], fibres=v["fibres"],
+                epicardialMedium=v["epicardialMedium"], boundaryYmm=f["tissue"]["boundaryYmm"],
+                lesionWidthMm=f["tissue"]["lesionWidthMm"], fibres=v["fibres"],
                 waveAngleDeg=v["waveAngleDeg"] if kind == "slab" else 0.0, stripWidthMm=f["stimulus"]["stripWidthMm"],
-                phieBoxMm=[lower.tolist(), upper.tolist()], restartMs=restartTimeMs(config) if kind == "slab" else None,
                 initialState=str(initialState), meshRoot=str(meshRoot))
     if kind == "strip":
         spec["durationMs"] = f["tune"]["beats"] * cycleLengthMs(config)
     if durationMs is not None:                                      # short verification runs only
-        spec["durationMs"], spec["restartMs"] = float(durationMs), None
+        spec["durationMs"] = float(durationMs)
     return spec
 
 
-def expectedFrames(config, spec, fromMs=0.0):
+def expectedFrames(config, spec):
     end = spec.get("durationMs") or par(config, "tend")
-    return int(round((end - fromMs) / par(config, "spacedt"))) + 1
+    return int(round(end / par(config, "spacedt"))) + 1
 
 
 def runComplete(config, job, spec):
     job = Path(job)
-    needed = [("vm.igb", 0.0)] + ([("phie.igb", spec.get("restartMs") or 0.0)] if spec["kind"] == "slab" else [])
-    for name, start in needed:
-        if not (job / name).exists() or igbHeader(job / name)[2] != expectedFrames(config, spec, start):
-            return False
-    return (job / "act-thresh.dat").exists() and (not spec.get("restartMs") or (job / "restart.json").exists())
+    if not (job / "vm.igb").exists() or igbHeader(job / "vm.igb")[2] != expectedFrames(config, spec):
+        return False
+    return (job / "act-thresh.dat").exists()
 
 
 def runCondition(config, condition, initialState, simulationFolder, processCount=1, flavor=None, durationMs=None,
@@ -145,23 +142,22 @@ def runCondition(config, condition, initialState, simulationFolder, processCount
     if code != 0 or not runComplete(config, job, spec):
         raise RuntimeError(f"openCARP run '{condition}' failed (exit {code}); see {log}")
     launches = log.read_text(errors="replace").count("*** Launching simulation ***")
-    expected = 2 if spec.get("restartMs") else 1
-    if launches != expected:
-        raise RuntimeError(f"{condition}: {launches} openCARP launch messages, expected {expected} (MPI launcher mismatch?)")
+    if launches != 1:
+        raise RuntimeError(f"{condition}: {launches} openCARP launch messages, expected 1 (MPI launcher mismatch?)")
     timing = dict(wallSeconds=round(time.time() - started, 1), processCount=processCount, solverFlavor=flavor)
     saveJson(simulationFolder / f"{condition}.timing.json", timing)
     return timing
 
 
 def solverFlavorWorks(config, outputFolder, flavor, processCount=1):
-    """5 ms pseudo-bidomain run of a tiny slab: does this openCARP build support the solver flavour?"""
+    """5 ms run of a tiny slab: does this openCARP build support the solver flavour?"""
     from .config import loadConfig
     folder = Path(outputFolder).resolve() / "solverCheck" / flavor
     if folder.exists():
         shutil.rmtree(folder)
     small = loadConfig(config["source"], config["overrides"], config["parOverrides"])
     small["fixed"] = json.loads(json.dumps(small["fixed"]))
-    small["fixed"]["tissue"]["sizeMm"] = [6.0, 6.0]
+    small["fixed"]["tissue"].update(sizeMm=[6.0, 6.0], lesionWidthMm=1.0)
     small["fixed"]["electrodes"]["centreYmm"] = [0.0]
     small["fixed"]["conditioning"]["beats"] = 3
     small["fixed"]["bath"].update(thicknessMm=2.0)
@@ -183,25 +179,25 @@ def tissueModel(job):
     meshBase = runRecord(job)["meshBase"]
     positions, elements, tags, fibres = readMesh(meshBase)
     tissueNodes = np.unique(elements[tags != BATH_TAG])
-    if igbHeader(Path(job) / "vm.igb")[1] != len(tissueNodes):
+    if (Path(job) / "vm.igb").exists() and igbHeader(Path(job) / "vm.igb")[1] != len(tissueNodes):
         raise ValueError(f"{job}: vm.igb node count differs from the mesh's tissue nodes")
     return dict(meshBase=meshBase, positions=positions, elements=elements, tags=tags, fibres=fibres,
                 tissueNodes=tissueNodes, tissuePositions=positions[tissueNodes], lesionElements=tags == LESION_TAG)
 
 
 def compactRun(job, startMs, endMs):
-    """Keep Vm only for [startMs, endMs] (vm_analysis.npz); delete vm.igb and phie.igb (FM-20).
+    """Keep Vm only for [startMs, endMs] (vm_analysis.npz); delete vm.igb (FM-20).
 
-    Only for a simulation that no other variant reuses: its electrode signals are already extracted
+    Only for a simulation that no other variant reuses: its electrode signals are already computed
     (electrograms/<condition>.npz) and the ground truth reads Vm from vm_analysis.npz. Recorded in
-    compact.json; the raw output is regenerated by rerunning the resolved .par files.
+    compact.json; the raw output is regenerated by rerunning the resolved .par file.
     """
     job = Path(job)
     times = igbTimes(job / "vm.igb")
     frames = slice(int(np.searchsorted(times, startMs - 1e-9)), int(np.searchsorted(times, endMs + 1e-9)))
     np.savez_compressed(job / "vm_analysis.npz", vm=readIgb(job / "vm.igb", frames), timeMs=times[frames])
     removed = []
-    for name in ("vm.igb", "phie.igb"):
+    for name in ("vm.igb",):
         if (job / name).exists():
             (job / name).unlink(); removed.append(name)
     saveJson(job / "compact.json", dict(keptVmMs=[float(times[frames][0]), float(times[frames][-1])], removed=removed,

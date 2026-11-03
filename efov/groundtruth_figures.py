@@ -28,6 +28,13 @@ def voxelField(positions, elements, values, config):
     return np.bincount(flat, weights=values, minlength=int(np.prod(shape))).reshape(shape), lower, spacing
 
 
+def lesionEdges(config, axis, vertical=False):
+    """Dashed lines at the lesion boundary and the far edge of the lesion strip (FM-24)."""
+    tissue = config["fixed"]["tissue"]
+    for y in (tissue["boundaryYmm"], tissue["boundaryYmm"] - tissue["lesionWidthMm"]):
+        (axis.axvline if vertical else axis.axhline)(y, color="k", lw=0.6, ls="--")
+
+
 def _norm(field):
     import matplotlib.colors as colors
     limit = float(np.abs(field).max()) or 1.0
@@ -50,13 +57,13 @@ def sectionsFigure(run, condition, recordingId, path):
     fig, axes = plt.subplots(1, 5, figsize=(22, 4.2), gridspec_kw=dict(width_ratios=[1, 1, 1, 1.4, 1.4]))
     for axis, (layer, name) in zip(axes[:3], [(nz - 1, "endocardial surface"), (nz // 2, "mid-wall"), (0, "epicardial surface")]):
         image = axis.imshow(field[:, :, layer].T, origin="lower", extent=[lower[0], upper[0], lower[1], upper[1]], cmap="RdBu_r", norm=norm)
-        axis.axhline(run.config["fixed"]["tissue"]["boundaryYmm"], color="k", lw=0.6, ls="--")
+        lesionEdges(run.config, axis)
         axis.plot(record.anchorXmm, record.anchorYmm, "k+")
         axis.set(title=f"x-y, {name}", xlabel="x (mm)", ylabel="y (mm)")
     axes[3].imshow(field[:, j, :].T, origin="lower", extent=[lower[0], upper[0], lower[2], upper[2]], cmap="RdBu_r", norm=norm, aspect="auto")
     axes[3].set(title=f"x-z at y = {record.anchorYmm:.1f} mm", xlabel="x (mm)", ylabel="z (mm)")
     axes[4].imshow(field[i, :, :].T, origin="lower", extent=[lower[1], upper[1], lower[2], upper[2]], cmap="RdBu_r", norm=norm, aspect="auto")
-    axes[4].axvline(run.config["fixed"]["tissue"]["boundaryYmm"], color="k", lw=0.6, ls="--")
+    lesionEdges(run.config, axes[4], vertical=True)
     axes[4].set(title=f"y-z at x = {record.anchorXmm:.1f} mm", xlabel="y (mm)", ylabel="z (mm)")
     fig.colorbar(image, ax=axes, label="signed share per voxel (sum = 1)")
     fig.suptitle(f"{condition}: {record.kind} {record.label}, gap {record.gapMm:g} mm, distance inside lesion {record.distanceInsideMm:+.1f} mm")
@@ -79,7 +86,7 @@ def boundarySequence(run, condition, kind, label, gapMm, path):
         field, lower, spacing = voxelField(tissue["positions"], archive["elements"], archive["shares"][ids.index(record.recordingId)], run.config)
         upper = lower + np.asarray(field.shape) * spacing
         axis.imshow(field.sum(axis=2).T, origin="lower", extent=[lower[0], upper[0], lower[1], upper[1]], cmap="RdBu_r", norm=_norm(field.sum(axis=2)))
-        axis.axhline(run.config["fixed"]["tissue"]["boundaryYmm"], color="k", lw=0.6, ls="--")
+        lesionEdges(run.config, axis)
         axis.set(title=f"d = {record.distanceInsideMm:+.1f}", xticks=[], yticks=[])
         axis.set_ylim(record.anchorYmm - 12, record.anchorYmm + 12); axis.set_xlim(record.anchorXmm - 12, record.anchorXmm + 12)
     fig.suptitle(f"{condition}: {kind} {label}, gap {gapMm:g} mm, share summed through the wall, by distance inside the lesion (mm)")
@@ -115,6 +122,7 @@ def profilesFigure(run, path):
     for name in CLASSES:
         axes[2].plot(grouped.index, grouped[f"mass_{name}"], label=name)
     axes[2].axvline(0, color="k", lw=0.6)
+    axes[2].axvline(run.config["fixed"]["tissue"]["lesionWidthMm"], color="k", lw=0.6, ls="--")   # far edge of the lesion strip
     axes[2].set(xlabel="distance inside lesion (mm)", ylabel="|c|-mass fraction (median over bipoles)", title=f"Contribution classes, lesion, gap {gap:g} mm")
     for axis in axes:
         axis.legend(fontsize=7)

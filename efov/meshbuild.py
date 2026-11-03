@@ -3,9 +3,10 @@
     runMesh(blockMesh, spec)        trim the epicardial bath (FM-05) and write the fibre field (FM-06)
     stimulusNodes(...)              viable-tissue band at the trailing edge of the wave direction (FM-17)
     groundNodes(...)                bath nodes of the corner cube (Leenknegt et al. 2023)
-    boxNodes(...)                   nodes inside the phi_e output box (FM-20)
+    catheterSideNodes(...)          bath nodes above the tissue: candidates for electrode node sets (FM-14)
 
-Tags: 0 = bath (zero fibre vector, so openCARP applies g_bath), 1 = viable tissue, 5 = lesion.
+Tags: 0 = bath (zero fibre vector, so openCARP applies g_bath), 1 = viable tissue (including the
+isolated tissue beyond the lesion strip, FM-24), 5 = lesion.
 """
 import numpy as np
 
@@ -46,17 +47,21 @@ def tissueNodeMask(nodeCount, elements, tags):
     return mask
 
 
-def stimulusNodes(positions, elements, tags, waveAngleDeg, stripWidthMm):
+def stimulusNodes(positions, elements, tags, waveAngleDeg, stripWidthMm, isolatedBelowYmm=None):
     """Viable-tissue nodes within stripWidth of the trailing edge, along d = (cos a, -sin a).
 
     a = 0: the strip at x min (wave along +x, parallel to the boundary). a = 90: the strip at y max
     (wave toward the lesion, -y). Oblique angles stimulate a corner band. Nodes touching a lesion
-    element are excluded, so the lesion is never stimulated directly.
+    element are excluded, so the lesion is never stimulated directly. With isolatedBelowYmm (the
+    lesion condition: the boundary), nodes with y below it are excluded too: the tissue beyond the
+    lesion strip is isolated and must never be excited (FM-24).
     """
     angle = np.radians(waveAngleDeg)
     viable = np.zeros(len(positions), bool)
     viable[np.unique(elements[tags == TISSUE_TAG])] = True
     viable[np.unique(elements[tags == LESION_TAG])] = False
+    if isolatedBelowYmm is not None:
+        viable &= positions[:, 1] >= isolatedBelowYmm - 1e-9
     if not viable.any():
         raise ValueError("No viable tissue nodes")
     projection = positions[:, 0] * np.cos(angle) - positions[:, 1] * np.sin(angle)
@@ -80,7 +85,7 @@ def groundNodes(positions, elements, tags, cubeMm, allowTissue=False):
     return nodes
 
 
-def boxNodes(positions, lower, upper):
-    """Nodes inside the axis-aligned box [lower, upper] (mm)."""
-    lower, upper = np.asarray(lower) - 1e-9, np.asarray(upper) + 1e-9
-    return np.flatnonzero(np.all((positions >= lower) & (positions <= upper), axis=1))
+def catheterSideNodes(positions, elements, tags, wallMm):
+    """Bath nodes strictly above the catheter-facing tissue surface (z > wall/2): where electrodes may sit."""
+    tissue = tissueNodeMask(len(positions), elements, tags)
+    return np.flatnonzero(~tissue & (positions[:, 2] > wallMm / 2 + 1e-9))

@@ -1,4 +1,4 @@
-"""Reciprocity, shares and classes on a small box with the Python lead-field route (no openCARP)."""
+"""Reciprocity, electrogram weights, shares and classes on a small box with the Python lead-field route (no openCARP)."""
 import numpy as np
 from scipy.sparse.linalg import splu
 
@@ -10,21 +10,22 @@ from helpers import SMALL, boxWithBath
 def tissueModel():
     positions, elements, tags = boxWithBath([6, 6], 1.0, 1.0, 0.25)
     centres = positions[elements].mean(axis=1)
-    tags = np.where((tags == 1) & (centres[:, 1] < -1.5), 5, tags)                 # a lesion strip
+    tags = np.where((tags == 1) & (centres[:, 1] < -1.5) & (centres[:, 1] > -2.5), 5, tags)   # a lesion strip, isolated tissue beyond
     fibres = np.where(tags[:, None] == 0, 0.0, [1.0, 0.0, 0.0])
+    fibres[(tags != 0) & (centres[:, 2] < 0)] = [0.0, 1.0, 0.0]                                 # bilayer: sigma_i and sigma_m differ
     return dict(positions=positions, elements=elements, tags=tags, fibres=fibres, tissueNodes=np.unique(elements[tags != 0]))
 
 
-def forwardSignal(config, tissue, ground, nodes, vm):
-    """Reference: mean phi over the electrode nodes from K phi = -S_m Vm (same discrete problem as openCARP)."""
+def forwardSignal(config, tissue, ground, nodes, vm, source="intracellular"):
+    """Reference: mean phi over the electrode nodes from K phi = -S Vm, solved directly frame by frame."""
     tags, inTissue = tissue["tags"], tissue["tags"] != 0
     _, bath = leadfield.principalConductivities(config)
     bulk = np.repeat((bath * np.eye(3))[None], len(tags), axis=0)
     bulk[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], "bulk")
-    source = np.zeros_like(bulk)
-    source[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], "monodomain")
+    sourceTensor = np.zeros_like(bulk)
+    sourceTensor[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], source)
     K = leadfield.assemble(tissue["positions"], tissue["elements"], bulk)
-    S = leadfield.assemble(tissue["positions"], tissue["elements"], source)
+    S = leadfield.assemble(tissue["positions"], tissue["elements"], sourceTensor)
     free = np.setdiff1d(np.arange(len(tissue["positions"])), ground)
     solve = splu(K[free][:, free].tocsc()).solve
     full = np.zeros((len(tissue["positions"]), vm.shape[1]))
@@ -34,23 +35,31 @@ def forwardSignal(config, tissue, ground, nodes, vm):
     return phi[nodes].mean(axis=0)
 
 
-def test_contributions_reproduce_the_forward_signal_and_classes_partition():
+def test_reciprocity_weights_and_shares_with_the_sigma_i_source():
     config = cfg.loadConfig(SMALL, {"wallMm": 1.0})
     tissue = tissueModel()
     p = tissue["positions"][tissue["tissueNodes"]]
     t = np.linspace(0, 30, 61)
     vm = -80 + 100 / (1 + np.exp(-(t[None, :] - 10 - (p[:, :1] + 3) / 0.9) / 0.5))          # planar wave in +x
     ground = meshbuild.groundNodes(tissue["positions"], tissue["elements"], tissue["tags"], 0.5)
-    bath = np.flatnonzero(tissue["positions"][:, 2] > 0.5)
+    bath = meshbuild.catheterSideNodes(tissue["positions"], tissue["elements"], tissue["tags"], 1.0)
     sets = electrodeNodeSets(tissue["positions"], bath, np.array([[0.0, 0.0, 1.0], [0.0, 1.0, 1.0]]), 0.3, 0.6)
     solver = leadfield.PythonLeadFieldSolver(config, tissue, ground)
     za, zb = solver.leadField(sets[0]), solver.leadField(sets[1])
     np.testing.assert_allclose(za[sets[1]].mean(), zb[sets[0]].mean(), rtol=1e-9)           # reciprocity
+    za, zb = za[tissue["tissueNodes"]], zb[tissue["tissueNodes"]]                            # what the pipeline stores
     model = leadfield.ContributionModel(config, tissue)
+    reference = {k: forwardSignal(config, tissue, ground, sets[k], vm) for k in (0, 1)}
+    np.testing.assert_allclose(model.nodalWeights(za) @ vm, reference[0], rtol=1e-7, atol=1e-9 * np.abs(reference[0]).max())
+    # the sigma_m source (openCARP pseudo-bidomain) gives a different signal on this bilayer slab
+    sigmaM = forwardSignal(config, tissue, ground, sets[0], vm, "monodomain")
+    assert np.linalg.norm(sigmaM - reference[0]) > 0.05 * np.linalg.norm(reference[0])
+    coefficients = model.coefficients(za)
+    np.testing.assert_allclose(coefficients.sum(axis=1), 0, atol=1e-12 * np.abs(coefficients).max())   # uniform Vm contributes nothing
     for weights in ([1.0, 0.0], [1.0, -1.0]):
-        coefficients = weights[0] * model.coefficients(za) + weights[1] * model.coefficients(zb)
-        shares, mass, phi, total = groundtruth.shares(model, coefficients, vm)
-        direct = weights[0] * forwardSignal(config, tissue, ground, sets[0], vm) + weights[1] * forwardSignal(config, tissue, ground, sets[1], vm)
+        combined = weights[0] * model.coefficients(za) + weights[1] * model.coefficients(zb)
+        shares, mass, phi, total = groundtruth.shares(model, combined, vm)
+        direct = weights[0] * reference[0] + weights[1] * reference[1]
         np.testing.assert_allclose(phi, direct, rtol=1e-7, atol=1e-9 * np.abs(direct).max())
         assert abs(total - 1) < 1e-10 and np.all(mass >= 0)
         lateral, depth, layer = groundtruth.elementGeometry(model, config, [0.0, 0.0])
@@ -60,3 +69,18 @@ def test_contributions_reproduce_the_forward_signal_and_classes_partition():
         assert layer.min() == 0 and layer.max() == 3                                         # 1 mm wall, 0.25 mm layers
         shape = groundtruth.shapeDescriptors(model, shares, lateral, depth, [0.0, 0.0], [0.5, 0.9])
         assert shape["p50_volumeMm3"] <= shape["p90_volumeMm3"]
+
+
+def test_lead_field_cache_reuses_and_refuses(tmp_path):
+    import pytest
+    config = cfg.loadConfig(SMALL, {"wallMm": 1.0})
+    config["fixed"]["groundTruth"]["leadFieldMethod"] = "python"
+    tissue = dict(tissueModel(), meshBase="box")
+    ground = meshbuild.groundNodes(tissue["positions"], tissue["elements"], tissue["tags"], 0.5)
+    bath = meshbuild.catheterSideNodes(tissue["positions"], tissue["elements"], tissue["tags"], 1.0)
+    sets = electrodeNodeSets(tissue["positions"], bath, np.array([[0.0, 0.0, 1.0]]), 0.3, 0.6)
+    paths, computed = leadfield.electrodeLeadFields(config, tissue, ground, sets, tmp_path, log=lambda *_: None)
+    assert computed == 1 and np.load(paths[0]).shape == (len(tissue["tissueNodes"]),)
+    assert leadfield.electrodeLeadFields(config, tissue, ground, sets, tmp_path, log=lambda *_: None)[1] == 0
+    with pytest.raises(ValueError, match="different mesh"):
+        leadfield.electrodeLeadFields(config, tissue, ground[:-1], sets, tmp_path)

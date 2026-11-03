@@ -160,31 +160,46 @@ def commonStepMs(*steps):
 
 
 def deriveWindow(config, job, tissue):
-    """Measurement window (ms after the last beat's stimulus) from intact top-surface activation under the grid.
+    """Measurement window of every placement (ms after the last beat's stimulus), from intact activation (FM-28).
 
-    start = max(first - lead, stimulus end + minimum), end = last + trail; rounded outward to the output
-    step. Decided before any electrogram is read (DL-2026-10-28-08).
+    For each catheter placement: catheter-facing tissue nodes under it (|x - centre x| <= 1.5 x grid
+    spacing + electrode length / 2, |y - centre y| <= 1.5 x grid spacing + electrode radius), their
+    earliest and latest last-beat activation. start = max(earliest - lead, stimulus end + minimum),
+    rounded down to a step on both the output and the acquisition grids; every placement gets the
+    same length, the smallest whole number of steps that ends every window at least trailMs after
+    the latest activation under it. Decided before any electrogram is read
+    (DL-2026-10-28-08). For a wave along x (angle 0) all placements get the same window.
     """
+    from .geometry import electrodeLayout
     rule = config["fixed"]["analysis"]["window"]
     v = config["values"]
-    halfExtent = abs(config["fixed"]["electrodes"]["centreXmm"]) + 1.5 * v["gridSpacingMm"] + v["electrodeLengthMm"] / 2
+    halfX = 1.5 * v["gridSpacingMm"] + v["electrodeLengthMm"] / 2
+    halfY = 1.5 * v["gridSpacingMm"] + v["electrodeRadiusMm"]
     positions = tissue["tissuePositions"]
     first = lastBeatActivation(config, job, tissue)
-    under = np.isclose(positions[:, 2], positions[:, 2].max()) & (np.abs(positions[:, 0]) <= halfExtent)
-    if not np.isfinite(first[under]).all():
-        raise ValueError("Not every surface node under the grid activated in the last beat")
-    earliest, latest = float(first[under].min()), float(first[under].max())
+    surface = np.isclose(positions[:, 2], positions[:, 2].max())
+    placements = electrodeLayout(config)["placements"]
+    centres, inverse = np.unique(placements[:, :2], axis=0, return_inverse=True)
+    earliest, latest, nodes = [], [], []
+    for cx, cy in centres:
+        under = surface & (np.abs(positions[:, 0] - cx) <= halfX + 1e-9) & (np.abs(positions[:, 1] - cy) <= halfY + 1e-9)
+        if not under.any() or not np.isfinite(first[under]).all():
+            raise ValueError(f"Not every surface node under the placement at ({cx}, {cy}) mm activated in the last beat")
+        earliest.append(first[under].min()); latest.append(first[under].max()); nodes.append(int(under.sum()))
+    earliest, latest = np.asarray(earliest), np.asarray(latest)
     cycle, stimulus = cycleLengthMs(config), stimulusDurationMs(config)
     step = commonStepMs(sampleStepMs(config), 1000.0 / config["fixed"]["analysis"]["acquisitionRateHz"])
-    start = max(earliest - rule["leadMs"], stimulus + rule["minimumAfterStimulusMs"])
-    end = latest + rule["trailMs"]
-    # Rounded outward to a step on both the output grid and the acquisition grid (FM-22), so every
-    # window boundary is a sample of the openCARP output and of the resampled electrograms.
-    start, end = np.floor(start / step + 1e-9) * step, np.ceil(end / step - 1e-9) * step
-    if not 0 <= start < end < cycle:
-        raise ValueError(f"Derived window {start}-{end} ms does not fit in one cycle")
-    atFloor = bool(np.isclose(start, np.floor((stimulus + rule["minimumAfterStimulusMs"]) / step + 1e-9) * step))
-    return dict(windowMs=[round(float(start), 6), round(float(end), 6)], gridHalfExtentXmm=halfExtent, gridFirstActivationMs=earliest,
-                gridLastActivationMs=latest, nodesUsed=int(under.sum()), startsAtStimulusFloor=atFloor,
-                note=("Window starts at the stimulus floor: far-field from the pacing strip may enter it (DL-2026-10-28-08)."
+    floor = stimulus + rule["minimumAfterStimulusMs"]
+    starts = np.floor(np.maximum(earliest - rule["leadMs"], floor) / step + 1e-9) * step
+    length = float(np.ceil(((latest + rule["trailMs"] - starts) / step - 1e-9).max()) * step)
+    ends = starts + length
+    if starts.min() < 0 or ends.max() >= cycle:
+        raise ValueError(f"Derived windows {starts.min()}-{ends.max()} ms do not fit in one cycle")
+    atFloor = bool(np.any(np.isclose(starts, np.floor(floor / step + 1e-9) * step)))
+    windows = np.round(np.column_stack([starts, ends])[inverse], 6)
+    return dict(windowsMs=windows.tolist(), windowLengthMs=length, windowMs=[float(windows[:, 0].min()), float(windows[:, 1].max())],
+                halfExtentMm=[halfX, halfY], firstActivationMs=[float(earliest.min()), float(earliest.max())],
+                lastActivationMs=[float(latest.min()), float(latest.max())], nodesUnderPlacementMin=int(min(nodes)),
+                startsAtStimulusFloor=atFloor,
+                note=("A window starts at the stimulus floor: far-field from the pacing strip may enter it (DL-2026-10-28-08)."
                       if atFloor else ""))

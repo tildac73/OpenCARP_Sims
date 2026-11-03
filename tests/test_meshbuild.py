@@ -32,12 +32,17 @@ def test_stimulus_band_follows_the_wave_angle_and_avoids_the_lesion():
     assert np.allclose(positions[along, 0].max(), -3.5) and positions[along, 1].min() >= 0
     toward = meshbuild.stimulusNodes(positions, elements, tags, 90.0, 0.5)
     assert positions[toward, 1].min() >= 3.5                                         # far viable edge, travelling to -y
+    # Lesion strip -2 <= y < 0 with isolated viable tissue beyond: never stimulated (FM-24)
+    strip = np.where((tags == 5) & (centres[:, 1] < -2), 1, tags)
+    isolated = meshbuild.stimulusNodes(positions, elements, strip, 0.0, 0.5, isolatedBelowYmm=0.0)
+    assert positions[isolated, 1].min() >= 0
+    assert positions[meshbuild.stimulusNodes(positions, elements, strip, 0.0, 0.5), 1].min() < -2
     np.testing.assert_allclose(meshbuild.waveDirection(90.0), [0, -1], atol=1e-12)
 
 
-def test_ground_cube_and_box_nodes():
+def test_ground_cube_and_catheter_side_nodes():
     positions, elements, tags = boxWithBath([4, 4], 1.0, 1.0, 0.5)
     ground = meshbuild.groundNodes(positions, elements, tags, 0.5)
     assert np.all(positions[ground] >= positions.max(axis=0) - 0.5 - 1e-9)
-    inside = meshbuild.boxNodes(positions, [-1, -1, 0.5], [1, 1, 1.0])
-    assert np.all(np.abs(positions[inside, :2]) <= 1 + 1e-9) and len(inside) == 5 * 5 * 2
+    above = meshbuild.catheterSideNodes(positions, elements, tags, 1.0)
+    assert np.all(positions[above, 2] > 0.5) and len(above) == 13 * 13 * 2

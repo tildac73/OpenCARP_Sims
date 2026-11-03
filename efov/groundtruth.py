@@ -4,7 +4,8 @@ For a recording with electrode weights w, the recorded potential is a sum of ele
 (reciprocity, exact for the discrete problem):
 
     phi(t) = sum_e c_e(t),   c_e(t) = coeff_e . Vm_e(t),   coeff from the recording's lead field
-    z = sum_k w_k z_k (efov.leadfield), with the sigma_m source of openCARP's pseudo-bidomain phi_e.
+    z = sum_k w_k z_k (efov.leadfield), with the sigma_i source (FM-23). These are the same lead
+    fields the electrograms are computed from, so the fields describe exactly the measured signals.
 
 The share of element e over the measurement window is its signed part of the signal energy
 
@@ -24,9 +25,8 @@ Per recording (all recordings at the ground-truth placements, clean signals):
     holding p of sum |s_e| (elements ranked by |s_e| / volume), its volume, x and y extent, maximum
     depth, |s|-weighted centroid offset, in-plane eccentricity and major-axis angle.
 Full element fields (s_e on every tissue element) for fixed.groundTruth.fieldRecordings, as npz and
-legacy VTK files for ParaView.
-Checks (stop the run if they fail): shares sum to 1; summed contributions reproduce the clean
-electrogram the pipeline measured (relative residual), with scale = calibration gain.
+legacy VTK files for ParaView. Each placement uses its own measurement window (FM-28).
+Check (stops the run if it fails): shares sum to 1.
 """
 from pathlib import Path
 
@@ -34,49 +34,33 @@ import numpy as np
 import pandas as pd
 from scipy.signal import sosfilt
 
-from .config import beatCount, cycleLengthMs, groundTruthCentresYmm, slabSizeMm, spacingMm
-from .electrograms import nodeSetsFromArchive
-from .io import igbTimes, readIgb, readVertices, saveJson, writeVtkCells
-from .leadfield import ContributionModel, PythonLeadFieldSolver, openCarpLeadField
-from .measurements import acquire, differentialFilter, measurementSlices
+from .config import groundTruthCentresYmm, slabSizeMm, spacingMm
+from .electrograms import analysisTimes, readVmFrames
+from .io import saveJson, writeVtkCells
+from .leadfield import ContributionModel
+from .measurements import acquire, differentialFilter, placementIndices
 
 CLASSES = ("nearEndocardial", "nearEpicardial", "farEndocardial", "farEpicardial")
 
 
 # ----------------------------------------------------------------- Vm through the acquisition chain
-def readVmFrames(job, startMs, endMs):
-    """Vm (frames, tissue nodes) and times for [startMs, endMs] from vm.igb, or from vm_analysis.npz after compaction."""
-    job = Path(job)
-    if (job / "vm.igb").exists():
-        times = igbTimes(job / "vm.igb")
-        frames = slice(int(np.searchsorted(times, startMs - 1e-9)), int(np.searchsorted(times, endMs + 1e-9)))
-        return readIgb(job / "vm.igb", frames), times[frames]
-    archive = np.load(job / "vm_analysis.npz")
-    times = archive["timeMs"]
-    if times[0] > startMs + 1e-9 or times[-1] < endMs - 1e-9:
-        raise ValueError(f"{job}: compacted Vm covers {times[0]}-{times[-1]} ms, not {startMs}-{endMs} ms")
-    keep = (times >= startMs - 1e-9) & (times <= endMs + 1e-9)
-    return archive["vm"][keep], times[keep]
+def processedVm(config, job, windows, nodeCount, block=40000):
+    """Vm of every tissue node through the acquisition chain, from the earliest window start to the latest end.
 
-
-def processedVm(config, job, windowMs, nodeCount, block=40000):
-    """Vm of every tissue node through the acquisition chain, inside the window: {'uni', 'differential'} (nodes, samples).
-
-    Vm is read once (frames x nodes, float32; ~4 GB on the production mesh) and filtered in node blocks.
+    Returns {'uni', 'differential'} (nodes, samples) float32, 'offsets' (first sample of each
+    placement's window) and 'length'. Vm is read once (frames x nodes, float32) and filtered in node blocks.
     """
-    beatStart = (beatCount(config) - 1) * cycleLengthMs(config)
-    history = config["fixed"]["analysis"]["filterHistoryMs"]
-    vm, times = readVmFrames(job, beatStart + windowMs[0] - 2 * history, beatStart + windowMs[1])
+    vm, times = readVmFrames(job, *analysisTimes(config, windows))
     if vm.shape[1] != nodeCount:
         raise ValueError(f"{job}: Vm has {vm.shape[1]} nodes, the model {nodeCount}")
     sections = differentialFilter(config)
     uni, diff = [], []
     for first in range(0, nodeCount, block):
         acquired, acquisitionTimes = acquire(config, vm[:, first:first + block].T.astype(float), times)    # (nodes, samples)
-        raw, measure = measurementSlices(acquisitionTimes, config, windowMs)
-        uni.append(acquired[:, raw][:, measure].astype(np.float32))
-        diff.append(sosfilt(sections, acquired[:, raw], axis=-1)[:, measure].astype(np.float32))
-    return dict(uni=np.concatenate(uni), differential=np.concatenate(diff))
+        raw, starts, length = placementIndices(acquisitionTimes, config, windows)
+        uni.append(acquired[:, raw][:, starts.min():].astype(np.float32))
+        diff.append(sosfilt(sections, acquired[:, raw], axis=-1)[:, starts.min():].astype(np.float32))
+    return dict(uni=np.concatenate(uni), differential=np.concatenate(diff), offsets=starts - starts.min(), length=length)
 
 
 # ----------------------------------------------------------------- shares and descriptors
@@ -153,73 +137,45 @@ def cumulativeLateral(elementShares, lateral, stepMm):
     return np.where(counts > 0, cumulative[np.maximum(counts - 1, 0)], 0.0)
 
 
-# ----------------------------------------------------------------- lead fields
-def leadFields(config, condition, tissue, job, electrodes, folder, processCount):
-    """Compute (once) and store the lead field (all nodes, mV/uA) of each needed electrode; returns the npy paths."""
-    method = config["fixed"]["groundTruth"]["leadFieldMethod"]
-    folder = Path(folder) / condition
-    folder.mkdir(parents=True, exist_ok=True)
-    ground = readVertices(Path(job) / "ground.vtx")
-    solver = PythonLeadFieldSolver(config, tissue, ground) if method == "python" else None
-    result = {}
-    for index, nodes in electrodes.items():
-        path = folder / f"electrode{index:04d}.npy"
-        if not path.exists():
-            if method == "openCARP":
-                z = openCarpLeadField(config, tissue["meshBase"], ground, nodes, len(tissue["positions"]),
-                                      folder / f"electrode{index:04d}", processCount)
-            else:
-                z = solver.leadField(nodes)
-            np.save(path, z.astype(np.float64))
-        result[index] = path
-    return result
-
-
 # ----------------------------------------------------------------- stage
-def runGroundTruth(config, jobs, tissues, electrogramsFolder, measurementsFolder, gain, windowMs, folder, processCount=1):
+def runGroundTruth(config, jobs, tissues, electrogramsFolder, measurementsFolder, windows, folder):
     """Contribution fields of every recording at the ground-truth placements (clean signals, both conditions)."""
     folder, g = Path(folder), config["fixed"]["groundTruth"]
     gate = config["fixed"]["acceptance"]["groundTruth"]
     centres = groundTruthCentresYmm(config)
+    layers = int(round(slabSizeMm(config)[2] / spacingMm(config)[2]))
     rows, depthRows, lateralRows, fieldValues = [], [], [], {}
     for condition, job in jobs.items():
         tissue = tissues[condition]
         model = ContributionModel(config, tissue)
         archive = np.load(Path(electrogramsFolder) / f"{condition}.npz")
-        nodeSets = nodeSetsFromArchive(archive)
+        files = archive["leadFieldFiles"]
         points = pd.read_csv(Path(measurementsFolder) / f"{condition}Points.csv")
         points = points[(points.noiseRepeat == 0) & np.isclose(points.centreYmm.to_numpy()[:, None], centres).any(axis=1)]
-        placements = sorted(points.placement.unique())
-        needed = sorted({int(archive["electrodeIndex"][p, k]) for p in placements for k in range(16)})
-        fields = leadFields(config, condition, tissue, job, {k: nodeSets[k] for k in needed}, folder / "leadFields", processCount)
-        vm = processedVm(config, job, windowMs, len(model.tissueNodes))
-        traces = np.load(Path(measurementsFolder) / f"{condition}Traces.npz")["cleanMv"]
+        vm = processedVm(config, job, windows, len(model.tissueNodes))
         fieldLabels = {(kind, label) for kind, labels in g["fieldRecordings"].items() for label in labels}
-        for p in placements:
+        for p in sorted(points.placement.unique()):
             coefficientCache = {}                       # per placement only: ~80 MB per electrode on the full mesh
             for k in range(16):
                 index = int(archive["electrodeIndex"][p, k])
                 if index not in coefficientCache:
-                    coefficientCache[index] = model.coefficients(np.load(fields[index]))
+                    coefficientCache[index] = model.coefficients(np.load(files[index]))
+            window = slice(int(vm["offsets"][p]), int(vm["offsets"][p]) + vm["length"])
             for record in points[points.placement == p].to_dict("records"):
                 weights = np.array([record[f"weightE{k}"] for k in range(16)])
                 coefficients = sum(w * coefficientCache[int(archive["electrodeIndex"][p, k])]
                                    for k, w in enumerate(weights) if abs(w) > 1e-12)
-                signal = vm["uni" if record["kind"] == "uni" else "differential"]
+                signal = vm["uni" if record["kind"] == "uni" else "differential"][:, window]
                 elementShares, mass, phi, total = shares(model, coefficients, signal)
-                measured = traces[record["traceIndex"]].astype(float)
-                scale = float(measured @ phi / (phi @ phi))
-                residual = float(np.linalg.norm(measured - scale * phi) / np.linalg.norm(measured))
                 anchor = [record["anchorXmm"], record["anchorYmm"]]
                 lateral, depth, layer = elementGeometry(model, config, anchor)
-                layers = int(round(slabSizeMm(config)[2] / spacingMm(config)[2]))
                 depthRows.append(np.concatenate([np.bincount(layer, elementShares, layers), np.bincount(layer, mass, layers) / mass.sum()]))
                 lateralRows.append(cumulativeLateral(elementShares, lateral, g["curveStepMm"]))
                 rows.append(dict(recordingId=record["recordingId"], condition=condition, kind=record["kind"], label=record["label"],
                                  gapMm=record["gapMm"], centreYmm=record["centreYmm"], anchorXmm=anchor[0], anchorYmm=anchor[1],
                                  distanceInsideMm=record["distanceInsideMm"], shareSum=total,
-                                 shareAbsSum=float(np.abs(elementShares).sum()), reconstructionResidual=residual,
-                                 scaleOverGain=scale / gain, **classSummary(model, config, elementShares, mass, lateral, depth),
+                                 shareAbsSum=float(np.abs(elementShares).sum()), signalPpMv=float(np.ptp(phi)),
+                                 **classSummary(model, config, elementShares, mass, lateral, depth),
                                  **shapeDescriptors(model, elementShares, lateral, depth, anchor, g["shapeLevels"])))
                 if (record["kind"], record["label"]) in fieldLabels:
                     fieldValues.setdefault(condition, {})[record["recordingId"]] = elementShares.astype(np.float32)
@@ -229,13 +185,8 @@ def runGroundTruth(config, jobs, tissues, electrogramsFolder, measurementsFolder
     pad = lambda values: np.array([np.pad(v, (0, max(map(len, values)) - len(v)), constant_values=np.nan) for v in values])
     np.savez_compressed(folder / "profiles.npz", recordingId=table.recordingId.to_numpy().astype(str), depthShareAndMass=np.asarray(depthRows),
                         lateralCumulativeShare=pad(lateralRows), curveStepMm=g["curveStepMm"], layerThicknessMm=spacingMm(config)[2])
-    checks = dict(recordings=len(table), shareSumMaxDeviation=float((table.shareSum - 1).abs().max()),
-                  reconstructionResidualMax=float(table.reconstructionResidual.max()),
-                  scaleOverGainMaxDeviation=float((table.scaleOverGain - 1).abs().max()),
-                  leadFieldMethod=g["leadFieldMethod"])
-    checks["passed"] = bool(checks["recordings"] > 0 and checks["shareSumMaxDeviation"] <= gate["shareSumDeviation"]
-                            and checks["reconstructionResidualMax"] <= gate["reconstructionResidual"]
-                            and checks["scaleOverGainMaxDeviation"] <= gate["scaleOverGainDeviation"])
+    checks = dict(recordings=len(table), shareSumMaxDeviation=float((table.shareSum - 1).abs().max()), leadFieldMethod=g["leadFieldMethod"])
+    checks["passed"] = bool(checks["recordings"] > 0 and checks["shareSumMaxDeviation"] <= gate["shareSumDeviation"])
     saveJson(folder / "checks.json", checks)
     return checks
 

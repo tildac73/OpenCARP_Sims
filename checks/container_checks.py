@@ -5,17 +5,16 @@
     python3 checks/container_checks.py --out runs/checks --np 2
 
 These are the checks of the final model plan that cannot run without openCARP. Criteria were fixed in
-the plan (claude/final_model_plan_2026-11-03.md, Section 4) before any result was seen:
+the plan (claude/final_model_plan_2026-11-03.md, Section 4) before any result was seen. By decision
+FM-26 no check compares openCARP outputs with other openCARP outputs or with our own solver.
   C1  mesher: per-axis resolution; bath above and beside the tissue only; zero bath fibres
-  W0  openCARP lead fields (FM-14): (a) the Laplace mode accepts a total-current extracellular stimulus
-      and writes a whole-mesh potential; (b) reciprocity z_A(B) = z_B(A) within 1e-6 relative;
-      (c) summed contributions reproduce openCARP's pseudo-bidomain phi_e at each electrode
-      (relative residual <= 1e-3, scale 1 +- 1e-3); (d) time per Laplace run (diagnostic).
-      Diagnostic only: the openCARP lead field against the Python one (same discrete problem).
-  C3  the resolved .par alone reproduces the run (Vm max difference 0)
+  W0  openCARP lead fields (FM-14, FM-23): the Laplace mode accepts a total-current extracellular
+      stimulus and writes a whole-mesh potential (finite, not all zero); time per Laplace run and the
+      estimated cost of the production lead fields (diagnostic)
   C4  openCARP reads the written fibre file: with fibres at 90 deg the x-speed falls to the transverse
       speed (ratio within 10 % of sqrt(sigma_m,t / sigma_m,l))
-  C5  the scar types change phi_e over the lesion (relative difference > 1 %), lesion stays quiet
+  C5  lesion strip (FM-24): viable tissue activates every node; neither the lesion strip nor the
+      isolated tissue beyond it activates
   C8  Wang's Rmd runs through R/wang_replication.R on a synthetic dataset; her lm-replaced Table 3
       slope equals a direct least-squares fit
 If W0 fails, the pre-declared fallback is fixed.groundTruth.leadFieldMethod = "python" (FM-14).
@@ -25,7 +24,6 @@ import argparse
 import json
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import time
 import traceback
@@ -34,10 +32,9 @@ import numpy as np
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY))
-from efov import config as cfg, leadfield, meshbuild, simulation  # noqa: E402
-from efov.electrograms import phieTimes  # noqa: E402
-from efov.geometry import electrodeLayout, electrodeNodeSets  # noqa: E402
-from efov.io import readIgb, readVertices, saveJson  # noqa: E402
+from efov import config as cfg, leadfield, simulation  # noqa: E402
+from efov.geometry import electrodeLayout  # noqa: E402
+from efov.io import readVertices, saveJson  # noqa: E402
 
 SMALL = REPOSITORY / "config" / "test_small.json"
 DURATION_MS = 30.0
@@ -66,62 +63,23 @@ def checkMesh(config, job, tissue):
 
 
 def checkLeadFields(config, job, tissue, folder, processCount):
-    layout = electrodeLayout(config)
-    phieNodes = np.load(job / "phieNodes.npy")
-    centres = layout["uniqueCentres"][np.argsort(np.linalg.norm(layout["uniqueCentres"][:, :2], axis=1))][:3]
-    v = config["values"]
-    sets = electrodeNodeSets(tissue["positions"], phieNodes, centres, v["electrodeRadiusMm"], v["electrodeLengthMm"])
+    from efov.electrograms import electrodeSets
+    layout, sets = electrodeSets(config, tissue)
+    nearest = int(np.argmin(np.linalg.norm(layout["uniqueCentres"][:, :2], axis=1)))
     ground = readVertices(job / "ground.vtx")
-    fields, seconds = [], []
-    for k, nodes in enumerate(sets):
-        started = time.time()
-        fields.append(leadfield.openCarpLeadField(config, tissue["meshBase"], ground, nodes, len(tissue["positions"]),
-                                                  folder / f"laplace{k}", processCount))
-        seconds.append(time.time() - started)
-    reciprocity = abs(fields[0][sets[1]].mean() - fields[1][sets[0]].mean()) / abs(fields[1][sets[0]].mean())
-    model = leadfield.ContributionModel(config, tissue)
-    vm = readIgb(job / "vm.igb").T.astype(float)                                  # (tissue nodes, frames)
-    phie = readIgb(job / "phie.igb").astype(float)                                # (frames, output nodes)
-    column = {n: i for i, n in enumerate(phieNodes)}
-    rows = []
-    for k, nodes in enumerate(sets):
-        measured = phie[:, [column[n] for n in nodes]].mean(axis=1)
-        nodal = np.zeros(len(model.tissueNodes))
-        np.add.at(nodal, model.localElements, model.coefficients(fields[k]))
-        reconstructed = nodal @ vm
-        scale = float(measured @ reconstructed / (reconstructed @ reconstructed))
-        residual = float(np.linalg.norm(measured - reconstructed) / np.linalg.norm(measured))
-        rows.append(dict(electrode=k, nodes=len(nodes), scale=scale, relativeResidual=residual))
-    python = leadfield.PythonLeadFieldSolver(config, tissue, ground).leadField(sets[0])
-    agreement = float(np.linalg.norm(python - fields[0]) / np.linalg.norm(python))
-    production = cfg.meshNodeCount(cfg.loadConfig()) / len(tissue["positions"])
-    result = dict(laplaceAcceptsCurrent=True, reciprocityRelativeDifference=float(reciprocity), reconstruction=rows,
-                  secondsPerLaplaceRunSmall=float(np.mean(seconds)),
-                  secondsPerLaplaceRunProductionCrude=float(np.mean(seconds) * production),
-                  diagnosticPythonVsOpenCarpRelative=agreement,
-                  leadFieldOutputFile=json.loads((folder / "laplace0" / "leadfield.json").read_text())["output"])
-    result["passed"] = bool(reciprocity <= 1e-6 and all(r["relativeResidual"] <= 1e-3 and abs(r["scale"] - 1) <= 1e-3 for r in rows))
+    started = time.time()
+    z = leadfield.openCarpLeadField(config, tissue["meshBase"], ground, sets[nearest], len(tissue["positions"]), folder / "laplace0", processCount)
+    seconds = time.time() - started
+    production = cfg.loadConfig()
+    electrodes = len(electrodeLayout(production)["uniqueCentres"])
+    scale = cfg.meshNodeCount(production) / len(tissue["positions"])
+    result = dict(laplaceAcceptsCurrent=True, leadFieldOutputFile=json.loads((folder / "laplace0" / "leadfield.json").read_text())["output"],
+                  finite=bool(np.isfinite(z).all()), nonZero=bool(np.abs(z).max() > 0),
+                  secondsPerLaplaceRunSmall=float(seconds), productionElectrodesPerCondition=electrodes,
+                  productionHoursPerConditionCrude=float(seconds * scale * electrodes / 3600),
+                  note="Crude linear scaling by node count; the production cost is measured by the first production run")
+    result["passed"] = bool(result["finite"] and result["nonZero"])
     return result
-
-
-def checkResolvedPar(config, job, folder, processCount):
-    """Replay the run from its resolved .par: with the recorded carputils solver options (must be identical),
-    and with the .par alone (openCARP's default solver options; difference reported, not gated)."""
-    import os
-    recorded = json.loads((job / "runRecord.json").read_text())["commands"]["run"]
-    results = {}
-    for name, extra in (("withRecordedSolverOptions", recorded[3:]), ("parAlone", [])):
-        replay = folder / f"replay_{name}"
-        replay.mkdir(parents=True, exist_ok=True)
-        (replay / "run.par").write_text((job / "run.par").read_text().replace(f"simID = {job}", f"simID = {replay}"))
-        command = [simulation.findExecutable("openCARP", "OPENCARP_BIN"), "+F", str(replay / "run.par")] + extra
-        if processCount > 1:
-            command = [os.environ.get("MPIEXEC_BIN", "mpiexec"), "-n", str(processCount)] + command
-        if simulation.runLogged(command, replay / "replay.log") != 0:
-            return dict(passed=False, error=f"openCARP replay '{name}' failed; see {replay / 'replay.log'}")
-        results[name] = float(np.max(np.abs(readIgb(replay / "vm.igb") - readIgb(job / "vm.igb"))))
-    return dict(vmMaxDifferenceMv=results, passed=results["withRecordedSolverOptions"] == 0.0,
-                note="carputils adds only solver-flavour options to the resolved .par (recorded in runRecord.json)")
 
 
 def surfaceSpeedX(tissue, job):
@@ -150,26 +108,22 @@ def checkFibres(folder, processCount):
                 passed=bool(abs(ratio - expected) / expected <= 0.10))
 
 
-def checkScarTypes(folder, processCount):
-    signals = {}
-    for scar in ("ablation", "insulating"):
-        config = cfg.loadConfig(SMALL, {"scar": scar})
-        job, tissue = shortRun(config, "lesion", folder / f"scar_{scar}", processCount)
-        phieNodes = np.load(job / "phieNodes.npy")
-        over = phieNodes[(tissue["positions"][phieNodes, 1] < -3) & (np.isclose(tissue["positions"][phieNodes, 2], tissue["positions"][phieNodes, 2].min()))]
-        phie = readIgb(job / "phie.igb").astype(float)
-        column = {n: i for i, n in enumerate(phieNodes)}
-        signals[scar] = phie[:, [column[n] for n in over]]
-        from efov.io import readActivations
-        nodes, _ = readActivations(job / "act-thresh.dat")
-        lesionNodes = np.unique(tissue["elements"][tissue["tags"] == 5])
-        viable = np.unique(tissue["elements"][tissue["tags"] == 1])
-        core = np.setdiff1d(lesionNodes, viable)
-        local = np.searchsorted(tissue["tissueNodes"], core)
-        signals[scar + "_quiet"] = bool(not np.isin(local, nodes).any())
-    difference = float(np.linalg.norm(signals["ablation"] - signals["insulating"]) / np.linalg.norm(signals["insulating"]))
-    return dict(relativeDifferenceOverLesion=difference, lesionQuiet=dict(ablation=signals["ablation_quiet"], insulating=signals["insulating_quiet"]),
-                passed=bool(difference > 0.01 and signals["ablation_quiet"] and signals["insulating_quiet"]))
+def checkLesionStrip(config, job, tissue):
+    """Viable tissue activates; the lesion strip and the isolated tissue beyond it never do (FM-24)."""
+    from efov.io import readActivations
+    nodes, _ = readActivations(job / "act-thresh.dat")
+    activated = np.zeros(len(tissue["tissueNodes"]), bool)
+    activated[np.unique(nodes)] = True
+    y = tissue["tissuePositions"][:, 1]
+    boundary, width = config["fixed"]["tissue"]["boundaryYmm"], config["fixed"]["tissue"]["lesionWidthMm"]
+    spacing = cfg.spacingMm(config)[0]
+    viable, lesion, isolated = y > boundary + spacing, (y < boundary - spacing) & (y > boundary - width + spacing), y < boundary - width - spacing
+    result = dict(viableActivatedFraction=float(activated[viable].mean()), lesionActivatedNodes=int(activated[lesion].sum()),
+                  isolatedActivatedNodes=int(activated[isolated].sum()), isolatedNodes=int(isolated.sum()),
+                  lesionElements=int((tissue["tags"] == 5).sum()))
+    result["passed"] = bool(result["viableActivatedFraction"] == 1.0 and result["lesionActivatedNodes"] == 0
+                            and result["isolatedActivatedNodes"] == 0 and result["isolatedNodes"] > 0)
+    return result
 
 
 def checkWangReplication(folder):
@@ -213,7 +167,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", default=str(REPOSITORY / "runs" / "checks"))
     parser.add_argument("--np", type=int, default=2)
-    parser.add_argument("--only", nargs="*", help="subset of C1 W0 C3 C4 C5 C8")
+    parser.add_argument("--only", nargs="*", help="subset of C1 W0 C4 C5 C8")
     args = parser.parse_args()
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -240,9 +194,8 @@ def main():
 
     record("C1", lambda: checkMesh(config, *baseRun()))
     record("W0", lambda: checkLeadFields(config, *baseRun(), out / "leadfields", args.np))
-    record("C3", lambda: checkResolvedPar(config, baseRun()[0], out, args.np))
     record("C4", lambda: checkFibres(out, args.np))
-    record("C5", lambda: checkScarTypes(out, args.np))
+    record("C5", lambda: checkLesionStrip(config, *baseRun()))
     record("C8", lambda: checkWangReplication(out))
     print("\nSummary:", {k: ("PASS" if v.get("passed") else "FAIL") for k, v in report.items()})
     print(f"Report: {out / 'checks_report.json'}")
