@@ -1,0 +1,21 @@
+# Fixed openCARP solver and output settings of the production slab (read by slab_experiment.py
+# through carputils tools.carp_cmd). Everything else - geometry, conductivities, beta, stimulus,
+# forward model, time step, output step - is passed on the command line from the run spec.
+# Units: mesh um; dt us; times ms; conductivity S/m.
+parab_solve  = 1          # Crank-Nicolson
+cg_tol_parab = 1e-8
+cg_tol_ellip = 1e-8
+mass_lumping = 1
+
+num_imp_regions   = 1
+imp_region[0].im  = Courtemanche
+
+timedt = 1                # progress output every 1 ms
+
+# Local activation times: every upward crossing of -20 mV, written as node<TAB>time rows.
+num_LATs           = 1
+lats[0].ID         = act
+lats[0].all        = 1
+lats[0].measurand  = 0
+lats[0].threshold  = -20
+lats[0].mode       = 0

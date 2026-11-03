@@ -207,3 +207,17 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
 - **Why this placement:** monodomain Vm depends only on sigma / (beta Cm), so propagation is identical either way (checked: Vm within 4e-5 mV, VL-2026-11-02-03). beta does not appear in the pseudo-bidomain extracellular equation or in the contribution field; the conductivity magnitudes do. Putting the calibration factor in beta keeps every quantity that shapes the electrograms at a measured value.
 - **Limitation (state in thesis):** beta = 0.022-0.026 um^-1 is below physiological estimates (openCARP default 0.14 um^-1); it is a calibration parameter absorbing the gap between measured conductivities and the clinical CV with the Courtemanche model at these mesh spacings, not a measurement. Most atrial modelling studies instead tune conductivities to the CV target (e.g. Ferrer et al. 2015; openCARP tuneCV); carputils' CVtuning exposes beta as an input. Roberts and Scher are canine ventricular values (sigma_il > sigma_el); canine atrial measurements (Le Guyader et al. 1995, 1997, seen only in a 2024 review) have sigma_el > sigma_il; a switch would need the primary papers.
 - **Effect on earlier results:** the 1 Nov forward-model comparison used scaled conductivities (same ratios, so sigma_m vs sigma_i is unchanged in relative terms; only the tissue/blood ratio differs). Electrogram amplitudes change (gain calibration absorbs a common factor).
+
+## DL-2026-11-03-01 - Final model branch (finalModel): one configuration, one package, one pipeline
+- **Status:** Decided (Matilda, 3 Nov 2026). **Irreversible:** No.
+- **Decision:** the production model and its analysis are rebuilt as the `efov` package with every scientific value in `config/final_model.json` (with provenance) and one resumable pipeline (`python -m efov run`, notebooks 00-06). Development code (2D sheet, pilot, readiness kit, finalise.py) stays on `pilot_v2` and in the history.
+- **Model content unchanged from v3-reference (b473499):** same carputils slab, bath, forward model, conductivities, beta calibration, electrodes, window rule, recordings, calibration, noise, change points and contribution field.
+- **R10 scar:** insulating (all six conductivities 1e-6 S/m), decided 3 Nov 2026.
+- **Values not yet confirmed from the workstation final settings run** (domain, mesh, time step, output step, beats, beta, stimulus strength): the config holds the expected rule outcomes, flagged `awaitingWorkstation`; `python -m efov import-production-model` replaces them from productionModel.json. `acceptance.json` reports `productionReady = false` until they are confirmed.
+- **Changes in behaviour (review issues I1-I5 of the 2 Nov code review):**
+  - every profile is kept in the change-point tables, including those too short to fit (I1);
+  - physiology now includes a CV check against the target; physiology and profile prerequisites decide `eligibleForInterpretation` (I2, I3);
+  - each stage stores a fingerprint of the settings it used and its parents'; stale outputs are refused, not reused (I4);
+  - ground-truth checks (share sum, reconstruction residual, scale = gain) stop the run if they fail (I5);
+  - the measurement window records whether it starts at the stimulus floor (DL-2026-10-28-08 consequence).
+- **Removed (not needed by the final model):** the unbounded-medium lead-field ground truth and FOV80, the electrode-transfer extracellular electrograms (sigma_i route), the comparison and decision stages of finalise.py, the pilot-style run-folder adapter.

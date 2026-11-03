@@ -33,3 +33,16 @@ Used for: windowed reprocessing, noise sweep, regression tests (`_refinement_wor
 | JAGS | to record (`jags` banner or `rjags::jags.version()`) |
 
 Full session information: `_refinement_work/bayes_*/methodAndSession.txt`, `R_results/sessionInfo.txt`.
+
+## Final-model verification environment (cloud container, 3 Nov 2026)
+
+| Component | Version |
+| --- | --- |
+| openCARP | 19.0.0 (conda-forge `opencarp-19.0.0-h79d7346_0`) |
+| carputils | 19.0.0 (conda-forge) |
+| Python | 3.12 |
+| numpy / scipy / pandas / pyamg | 2.5.4 / 1.18.1 / 3.1.0 / 5.4.1 |
+
+Used for: the `finalModel` unit tests and the real-openCARP end-to-end run of `config/test_small.json`
+(VL-2026-11-03-01). Not the workstation build (`9accae05`); the forward-model check in every run
+verifies the configuration on whichever build runs it.

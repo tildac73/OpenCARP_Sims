@@ -1,39 +1,7 @@
-2D_Meshes
-# simulation outputs and results are large; keep them out of git
-3D_Code/runs/
-results/
+# Simulation outputs are large; they stay on the workstation.
+runs/
+*.igb
 __pycache__/
+.ipynb_checkpoints/
 .DS_Store
-
-# Raw simulation output (~29 GB) stays out of git; small provenance files are kept
-boundaryPilotV2 2/*
-!boundaryPilotV2 2/config.json
-!boundaryPilotV2 2/manifest.json
-!boundaryPilotV2 2/physiologyChecks.csv
-!boundaryPilotV2 2/results/
-boundaryPilotV2 2/results/*
-!boundaryPilotV2 2/results/calibration.json
-!boundaryPilotV2 2/results/pilotStatus.json
-
-# Refinement work: keep code, configs and small summaries; drop data slices and regenerable outputs
-_refinement_work/*.npy
-_refinement_work/*_egm_window.npz
-_refinement_work/*_vm_meta.json
-_refinement_work/run_*/mesh
-_refinement_work/run_*/intact
-_refinement_work/run_*/lesion
-_refinement_work/bayes_*/*.rds
-
-# R outputs: keep scripts, tables, figures (png/pdf); drop fitted-model binaries and large TIFFs
-R_results/cache/
-R_results/**/*.rds
-R_results/**/*.tiff
-
-# Electrode-sampling convergence intermediates (regenerable, ~GB); keep comparison summaries
-_verification/electrode_sampling/s*/
-_verification/electrode_sampling/run_*/
-# Step 4 intermediates (regenerable with removal_prediction.py cache / run_window.py --quadrature)
-_verification/ground_truth_metrics/removal_cache/
-_verification/quadrature/run_w25_100_L2/*
-!_verification/quadrature/run_w25_100_L2/config.json
-!_verification/quadrature/run_w25_100_L2/refinement.json
+*.rds

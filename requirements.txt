@@ -1,0 +1,8 @@
+# Python packages for the analysis (openCARP, carputils, mesher and bench come with the openCARP install).
+numpy>=1.24
+scipy>=1.11
+pandas>=2.0
+matplotlib>=3.7
+pyamg>=5.0          # fast iterative extracellular solves for the full-size mesh (else ILU-GMRES, slower)
+pytest>=7
+nbformat>=5         # notebooks/build_notebooks.py only
