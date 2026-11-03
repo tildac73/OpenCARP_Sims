@@ -65,7 +65,7 @@ def writeReport(run):
               "| Condition | Gap (mm) | Recording | Model | Change point (mm) | Status | Eligible |", "| --- | --- | --- | --- | --- | --- | --- |"]
     for row in changes["primary"]:
         lines.append(f"| {row['condition']} | {row['gapMm']:g} | {row['kind']} {row['label']} | {fmt(row.get('model'))} | "
-                     f"{fmt(row.get('changePointMm'))} | {row['fitStatus']} | {fmt(bool(row['eligibleForInterpretation']))} |")
+                     f"{fmt(row.get('changePointMm'))} | {row['fitStatus']} | {'yes' if row['eligibleForInterpretation'] is True else 'no'} |")
     lines += ["", "Prerequisites for interpretation: " + ", ".join(f"{k} {fmt(v)}" for k, v in changes["prerequisites"].items()), ""]
     lines += ["## Ground truth", "", f"{gt['recordings']} recordings; share-sum deviation {gt['shareSumMaxDeviation']:.2g}, "
               f"reconstruction residual {gt['reconstructionResidualMax']:.2g}, scale/gain deviation {gt['scaleOverGainMaxDeviation']:.2g}.",
@@ -88,7 +88,7 @@ def makeFigures(run):
 def activationFigure(run, folder):
     import matplotlib.pyplot as plt
     from .physiology import lastBeatActivation
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5), sharey=True)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
     for axis, condition in zip(axes, ("intact", "lesion")):
         tissue = run.tissue(condition)
         p = tissue["tissuePositions"]
@@ -96,7 +96,7 @@ def activationFigure(run, folder):
         t = lastBeatActivation(run.config, run.jobs[condition], tissue)
         image = axis.scatter(p[top, 0], p[top, 1], c=t[top], s=4, cmap="viridis")
         axis.axhline(run.config["lesion"]["boundaryYmm"], color="k", lw=0.8, ls="--")
-        axis.set(title=f"{condition}: last-beat activation (top surface)", xlabel="x (mm)", aspect="equal")
+        axis.set(title=f"{condition}: last-beat activation, top surface", xlabel="x (mm)", aspect="equal")
     axes[0].set_ylabel("y (mm)")
     fig.colorbar(image, ax=axes, label="ms after stimulus")
     path = folder / "01_activation.png"

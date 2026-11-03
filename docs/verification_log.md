@@ -244,3 +244,17 @@ numerical verification and physiological validation. Newest last.
 - **Method:** slab.py, 8 x 4 x 1.5 mm, 0.5 mm, pseudo-bidomain, 2 mm bath all round, 20 ms. A: Roberts and Scher conductivities x 6.42, beta 0.14 um^-1 (default). B: Roberts and Scher conductivities, beta 0.14 / 6.42 um^-1. Same stimulus.
 - **Result:** Vm max difference 4.0e-5 mV (range -79.5 to 35.8 mV); activation files identical in length (612 rows); stimulus captures in both. phi_e PP: B / A = 0.66 (the conductivity magnitudes against blood change the extracellular field, as intended).
 - **Final settings run (test slab, 2 Nov):** run050 with surfaceToVolume calibration (Roberts and Scher conductivities, beta 0.0218 um^-1): slab CV 0.9069 m/s, identical to the conductivity-scaled run; physiology passes; gate relative RMS <= 8.1e-7; ground-truth shares sum to 1.
+
+## VL-2026-11-03-01 - finalModel branch: unit tests and a real-openCARP end-to-end run (container)
+- **Type:** Execution and numerical check, openCARP 19.0.0 + carputils 19.0.0 (conda-forge), 2 cores. Small test configuration only (`config/test_small.json`: 20 x 24 x 1.5 mm, 0.5 mm, 2.5 mm bath on every side, 3 beats, 20 conditioning beats, 34 placements); same physics and analysis code as `config/final_model.json`. **Result:** every stage ran; implementation checks pass.
+- **Dry run:** carputils `--dry` commands inspected: lesion region tissue-only (z within the wall, y < 0), beta 0.0218, Roberts and Scher conductivities, lesion 1e-6, g_bath 0.74, ground cube and stimulus vertex files, prepacing monodomain then pseudo-bidomain restart, dataout_e = 3.
+- **Simulation:** 17 min for both conditions (2 cores, boomeramg passed its smoke test).
+- **Physiology:** last-beat CV 0.907 m/s (intact), 0.901 m/s (lesion): beta = 0.0218 um^-1 reaches the 0.90 m/s target within 1 % on this build. All criteria pass except stableApd, expected with 20 instead of 1,000 conditioning beats (the gate works).
+- **Window:** 7.0-48.8 ms; starts at the stimulus floor and is flagged (DL-2026-10-28-08).
+- **Forward-model check:** openCARP phi_e vs the independent sigma_m solve at 2,000 electrode samples x 25 frames: relative RMS max 8.8e-8 (intact), 1.2e-7 (lesion); correlation 1.0000000000. Confirms tags, corner ground, node order and phi_e output layer in the new code.
+- **Ground truth:** 48 recordings; shares sum to 1, reconstruction residual and scale = gain within tolerance (gate passed).
+- **Expected failures on the small slab:** stableFarRegion and lesionTransition (placements reach only ~6 mm into each side), so no change point is eligible for interpretation; the gates propagate as designed.
+- **Provenance protection:** a rerun reused every stage; editing a change-point setting reused measurements and refused changePoints; editing blood conductivity refused the simulation.
+- **Unit tests:** 29 pass (`python -m pytest tests -q`), including the reciprocity identity, method-of-images references, insulating-lesion and sigma_m source tensors, IGB merge, activation merge, recording weights, change-point recovery and eligibility rules.
+- **Notebooks:** 00-06 executed without error against this run.
+- **Not verified here:** full-size timing and memory on the workstation; the workstation build (the forward-model check runs there in every run); values awaiting the final settings run.
