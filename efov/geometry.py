@@ -1,14 +1,19 @@
-"""Lesion distance and the catheter layout. All coordinates in mm.
+"""Lesion distance, the catheter layout and the electrodes as mesh node sets. All coordinates in mm.
 
-Coordinates: x along propagation, y across the lesion boundary, z through the wall; the tissue
-surface facing the catheter is z = +wall/2. Distance convention: positive inside the lesion
-(y < boundary); the intact run uses the same virtual boundary.
+Coordinates: x along the reference wave (wave angle 0), y across the lesion boundary, z through the
+wall; the catheter-facing tissue surface is z = +wall/2. Distance convention: positive inside the
+lesion (y < boundary); the intact run uses the same virtual boundary.
+
+Electrodes (FM-14): each electrode is a cylinder (axis along x, radius r, length L) whose centre sits
+gap + r above the tissue. Its sensing set is every mesh node inside the cylinder; its recorded
+potential is the mean phi_e over that set, and its lead field is the response to a total current
+injected over the same set, so reciprocity holds for the discrete problem.
 """
 import re
 
 import numpy as np
 
-from .config import centreYmm, slabSizeMm
+from .config import centreYmm, gridOffsetsMm, slabSizeMm
 
 
 def signedDistance(pointsMm, boundaryYmm):
@@ -17,32 +22,54 @@ def signedDistance(pointsMm, boundaryYmm):
 
 
 def electrodeLayout(config):
-    """Every catheter placement: electrode centres, surface samples, and a de-duplicated sample list.
+    """Every catheter placement and its 16 electrode centres; electrodes shared by overlapping grids are stored once.
 
-    Electrodes are numbered row-major (E0..E15, x fastest), as the original notebook. Each cylinder
-    (axis along x) is sampled at the midpoints of `axialSamples` strips and `angularSamples` equally
-    spaced angles on its lateral surface. Overlapping grids share physical electrodes, so samples are
-    stored once (samplePoints) and gathered per placement (sampleIndex).
+    Electrodes are numbered row-major (E0..E15, x fastest). Returns placements (P, 3) = (centre x, centre y,
+    gap), centres (P, 16, 3), uniqueCentres (U, 3) and electrodeIndex (P, 16) into uniqueCentres.
     """
-    e = config["electrodes"]
-    offsets = np.asarray(e["gridOffsetsMm"])
-    radius, half = e["radiusMm"], e["lengthMm"] / 2
-    axial = -half + (np.arange(e["axialSamples"]) + 0.5) * (2 * half / e["axialSamples"])
-    angles = np.arange(e["angularSamples"]) * 2 * np.pi / e["angularSamples"]
+    v, e = config["values"], config["fixed"]["electrodes"]
+    offsets = gridOffsetsMm(v["gridSpacingMm"])
     surface = slabSizeMm(config)[2] / 2
-    centres, samples, placements = [], [], []
-    for gap in e["gapsMm"]:
+    placements, centres = [], []
+    for gap in v["gapsMm"]:
         for y in centreYmm(config):
             placements.append([e["centreXmm"], y, gap])
-            gridCentres = [np.array([e["centreXmm"] + dx, y + dy, surface + gap + radius])
-                           for dy in offsets for dx in offsets]
-            centres.append(gridCentres)
-            samples.append([[c + [a, radius * np.cos(t), radius * np.sin(t)] for a in axial for t in angles]
-                            for c in gridCentres])
-    samples = np.asarray(samples)                                     # (placements, 16, samples, 3)
-    unique, inverse = np.unique(samples.reshape(-1, 3), axis=0, return_inverse=True)
-    return dict(centres=np.asarray(centres), samples=samples, placements=np.asarray(placements),
-                samplePoints=unique, sampleIndex=inverse.reshape(samples.shape[:3]))
+            centres.append([[e["centreXmm"] + dx, y + dy, surface + gap + v["electrodeRadiusMm"]] for dy in offsets for dx in offsets])
+    centres = np.round(np.asarray(centres, float), 9)
+    unique, index = np.unique(centres.reshape(-1, 3), axis=0, return_inverse=True)
+    return dict(placements=np.asarray(placements), centres=centres, uniqueCentres=unique,
+                electrodeIndex=index.reshape(centres.shape[:2]))
+
+
+def electrodeNodeSets(positionsMm, candidateNodes, uniqueCentres, radiusMm, lengthMm):
+    """Mesh nodes inside each electrode cylinder (axis along x), from the candidate nodes; list of arrays."""
+    from scipy.spatial import cKDTree
+    candidates = np.asarray(candidateNodes, np.int64)
+    points = positionsMm[candidates]
+    tree = cKDTree(points)
+    reach = float(np.hypot(radiusMm, lengthMm / 2)) + 1e-9
+    sets = []
+    for centre in uniqueCentres:
+        near = np.asarray(tree.query_ball_point(centre, reach), np.int64)
+        local = points[near] - centre
+        inside = (np.abs(local[:, 0]) <= lengthMm / 2 + 1e-9) & (np.hypot(local[:, 1], local[:, 2]) <= radiusMm + 1e-9)
+        nodes = np.sort(candidates[near[inside]])
+        if not len(nodes):
+            raise ValueError(f"Electrode at {centre} mm contains no mesh node of the phi_e output box")
+        sets.append(nodes)
+    return sets
+
+
+def electrodeAveraging(nodeSets, columnOfNode):
+    """Sparse (U x columns) matrix: mean over each electrode's nodes, columns = positions in the phi_e output."""
+    from scipy import sparse
+    rows, cols, values = [], [], []
+    for k, nodes in enumerate(nodeSets):
+        columns = columnOfNode[nodes]
+        if np.any(columns < 0):
+            raise ValueError("An electrode node is not in the phi_e output (enlarge the output box)")
+        rows += [k] * len(nodes); cols += list(columns); values += [1.0 / len(nodes)] * len(nodes)
+    return sparse.csr_matrix((values, (rows, cols)), shape=(len(nodeSets), int(columnOfNode.max()) + 1))
 
 
 def recordingGeometry(electrodeCentres, kind, label, weights, boundaryYmm):
@@ -63,5 +90,4 @@ def recordingGeometry(electrodeCentres, kind, label, weights, boundaryYmm):
         anchor = electrodeCentres[labelled].mean(axis=0)
     return dict(anchorXmm=float(anchor[0]), anchorYmm=float(anchor[1]), anchorZmm=float(anchor[2]),
                 distanceInsideMm=float(signedDistance(anchor, boundaryYmm)),
-                cliqueDistanceInsideMm=float(signedDistance(electrodeCentres[labelled].mean(axis=0), boundaryYmm)),
                 selectedElectrodes=",".join(map(str, selected)))

@@ -38,3 +38,17 @@ def test_activation_merge_and_first_activation(tmp_path):
     nodes, times = io.readActivations(tmp_path / "merged.dat")
     assert sorted(times.tolist()) == [1.0, 2.0, 501.0, 899.0, 1001.0, 1002.0]   # 900 (first run, after restart) dropped
     np.testing.assert_allclose(io.firstActivation(nodes, times, 3, 1000, 1500), [1001.0, 1002.0, np.nan])
+
+
+def test_mesh_round_trip_and_vtk(tmp_path):
+    from helpers import boxWithBath
+    positions, elements, tags = boxWithBath([2, 2], 1.0, 0.5, 0.5)
+    fibres = np.where(tags[:, None] == 0, 0.0, [1.0, 0.0, 0.0])
+    base = io.writeMesh(tmp_path / "mesh" / "slab", positions, elements, tags, fibres)
+    p, e, t, f = io.readMesh(base)
+    np.testing.assert_allclose(p, positions, atol=1e-9)
+    assert np.array_equal(e, elements) and np.array_equal(t, tags)
+    np.testing.assert_allclose(f, fibres)
+    path = io.writeVtkCells(tmp_path / "field.vtk", positions, elements, {"share": np.arange(len(elements), dtype=float)})
+    head = path.read_bytes()[:200]
+    assert b"UNSTRUCTURED_GRID" in head and b"BINARY" in head

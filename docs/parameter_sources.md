@@ -49,3 +49,12 @@ Estimate only, from the pilot (0.352 m/s at monodomain sigma_l 0.136 S/m, 0.5 mm
 2. CV depends on sigma / (beta * Cm). The same CV could instead be reached by keeping measured conductivities
    and lowering the surface-to-volume ratio beta (openCARP default 0.14 um^-1). Which to adjust is a
    modelling decision (extends R4); it needs a sourced beta for human atrium before Step 6.
+
+## Added 3 Nov 2026 (final model v4, FM-08 to FM-10)
+| Quantity | Model value | Sourced value | Source | Status |
+| --- | --- | --- | --- | --- |
+| LA wall thickness by region, CT | inferior 1.1 mm, roof 1.6 mm | median inferior posterior wall 1.14 mm (5-95 %: 0.72-2.71); roof 1.55 mm (0.70-3.72); superior posterior wall 1.73 mm; 193 subjects | Whitaker et al., Int J Cardiol Heart Vasc 2021;32:100694, doi:10.1016/j.ijcha.2020.100694 | Sourced (read in full). Rounded to the 0.1 mm transmural mesh. Contradicts the regional argument in Wang's discussion (inferior thicker, post-mortem source). |
+| EnSite X acquisition rate | 2 kHz | 2000 Hz sampling, nominal 300 Hz digital low-pass, OT Near Field PF: wavelet-derived, PP >= 0.04 mV, voltage +-30 ms of the PF annotation | Europace 2024;26:euae154 (VT study using EnSite X) | Sourced for that study; Wang's own sampling rate not reported [VERIFY]. |
+| Bipolar/omnipolar filter | 30-500 Hz | 30-500 Hz | Wang supplement | Sourced. |
+| OT Near Field wavelet, scales, gate | Morlet omega0 = 6, 30-500 Hz, 10 % gate | proprietary | Abbott | Assumption. |
+| Near-field cut-off | 4 mm | 4 mm (human atrium) | Schlageter et al. 2024, as cited in Wang's manuscript | Sourced (secondary). |

@@ -2,7 +2,7 @@
 
 Every notebook starts with the same settings cell: the config file, the output folder and the MPI
 process count. They can be overridden with the environment variables EFOV_CONFIG, EFOV_OUT, EFOV_NP
-(used to test the notebooks on config/test_small.json).
+(used to test the notebooks on config/test_small.json). Stage names and outputs: efov/pipeline.py.
 """
 from pathlib import Path
 
@@ -18,8 +18,8 @@ REPOSITORY = Path.cwd().parent if Path.cwd().name == "notebooks" else Path.cwd()
 sys.path.insert(0, str(REPOSITORY))
 
 # ---- settings: edit here, or set EFOV_CONFIG / EFOV_OUT / EFOV_NP ----
-CONFIG = os.environ.get("EFOV_CONFIG", str(REPOSITORY / "config" / "final_model.json"))
-OUT    = os.environ.get("EFOV_OUT",    str(REPOSITORY / "runs" / "v3_reference"))
+CONFIG = os.environ.get("EFOV_CONFIG", str(REPOSITORY / "config" / "model.json"))
+OUT    = os.environ.get("EFOV_OUT",    str(REPOSITORY / "runs" / "v4_reference"))
 NP     = int(os.environ.get("EFOV_NP", "24"))      # MPI processes for openCARP
 # openCARP's own MPI launcher (efov-runner image); needed when NP > 1
 os.environ.setdefault("MPIEXEC_BIN", "/usr/local/lib/opencarp/lib/petsc/bin/mpiexec")
@@ -48,79 +48,62 @@ def notebook(name, cells):
 notebook("00_model_and_settings.ipynb", [
     """# 0. The final model and its settings
 
-The model is defined by one file, `config/final_model.json`; the code sets no scientific value.
-This notebook shows that configuration, which values still await confirmation from the workstation
-final settings run, and the openCARP commands it will produce. Nothing is simulated here.
-
-**Order of the notebooks**
+Two files define the model (plan claude/final_model_plan_2026-11-03.md, FM-01, FM-02):
+`config/model.par` holds every openCARP setting; `config/model.json` holds the sweep variables
+(baseline and planned values) and the settings openCARP cannot read. Nothing is simulated here.
 
 | Notebook | Stages | What it does |
 | --- | --- | --- |
-| 01 | preflight, conditioning, simulation | openCARP runs (hours on the workstation) |
+| 01 | preflight, conditioning, tune, simulation | beta tuning and the openCARP runs (hours on the workstation) |
 | 02 | physiology, window | activation checks; measurement window |
-| 03 | electrograms | unipolar phi_e at every electrode; forward-model check |
-| 04 | measurements, changePoints | calibration, recordings, PP, clinical change points |
-| 05 | groundTruth | exact contributing-tissue fields |
+| 03 | electrograms | unipolar phi_e at every electrode (node-set electrodes) |
+| 04 | measurements, export, changePoints | acquisition chain, PP, peak frequency; Wang's code |
+| 05 | groundTruth | contributing tissue: classes, depth profile, 3D fields |
 | 06 | report | acceptance, report.md, figures |
+| 07 | sweeps | the one-at-a-time sweep |
 
-The same stages run in one command: `python -m efov run --out runs/v3_reference --np 24`.
-Every stage is resumable and refuses outputs made with different settings.""",
-    "md:## The configuration, section by section",
-    """for section in ["tissue", "lesion", "bath", "pacing", "numerics", "electrodes"]:
-    values = {k: v for k, v in config[section].items() if not k.startswith("_")}
-    display(Markdown(f"**{section}**"), pd.Series(values, dtype=object).to_frame("value"))""",
-    "md:## Provenance: where each consequential value comes from\n\n`awaitingWorkstation` values are the expected rule outcomes; replace them with the workstation's `productionModel.json` (next cell).",
-    """pd.DataFrame(config["provenance"]).T.drop(index="_about", errors="ignore")""",
-    """# Import the rule-chosen values from the final settings run (pilot_v2: 3D_Code/runs/final_v2/productionModel.json):
-# from efov.config import importProductionModel
-# importProductionModel("path/to/productionModel.json", CONFIG, outputPath=CONFIG)""",
-    "md:## Size of the run",
-    """from efov import config as cfg
-print(f"mesh: {cfg.meshNodeCount(config):,} nodes (tissue + bath)")
-print(f"placements: {len(cfg.centreYmm(config)) * len(config['electrodes']['gapsMm'])}")
-print(f"prepacing restart: {cfg.restartTimeMs(config)} ms of {config['pacing']['beatCount'] * config['pacing']['cycleLengthMs']} ms")""",
-    "md:## openCARP commands (carputils `--dry`): check them before the long run",
-    """from efov import simulation
-state = run.runStage("conditioning")["state"]
-dry = simulation.runCondition(config, "lesion", state, run.out / "dry", NP, dry=True)["dryRun"]
-print("\\n".join(line for line in dry.splitlines() if line.strip())[-6000:])""",
+One command runs the same stages: `python -m efov run --out runs/v4_reference --np 24`.""",
+    "md:## The openCARP parameter file (every simulator setting)",
+    """print(open(config["modelPar"]).read())""",
+    "md:## Sweep variables: baseline and planned values",
+    """pd.DataFrame({k: dict(baseline=v["baseline"], planned=v["planned"], actsOn=v.get("actsOn", ""))
+              for k, v in config["sweep"].items()}).T""",
+    "md:## Size of the run and assumptions in force",
+    """import subprocess
+print(subprocess.run([sys.executable, "-m", "efov", "plan", "--config", CONFIG], cwd=REPOSITORY, capture_output=True, text=True).stdout)""",
 ])
 
 notebook("01_simulate.ipynb", [
-    """# 1. Simulate: conditioning and the two openCARP runs
+    """# 1. Simulate: conditioning, beta tuning and the two openCARP runs
 
-* **preflight** records software versions and the repository commit, and checks that the chosen
-  solver flavour (boomeramg) works on this openCARP build (else petsc).
-* **conditioning** paces one Courtemanche cell 1,000 times with `bench` (limit-cycle state).
-* **simulation** runs `efov/opencarp/slab_experiment.py` (carputils) for the intact and lesion slab:
-  monodomain prepacing to the restart time, then pseudo-bidomain with the bath.
+* **preflight**: software versions, repository commit, solver flavour, R availability.
+* **conditioning**: one cell paced 1,000 times with `bench` (limit cycle).
+* **tune**: beta for the CV target on a strip at the production mesh (FM-18); uses `config/tuning.json`
+  if `python -m efov tune --write-par` was run for this mesh and target.
+* **simulation**: `efov/opencarp/slab_experiment.py` (carputils) for the intact and lesion slab. Every
+  openCARP launch reads one resolved parameter file (`simulations/<condition>/prepace.par`, `run.par`).
 
-On the workstation the full-size runs take hours. Running them from the terminal is safer than a
-notebook kernel: `nohup python -m efov run --out runs/v3_reference --np 24 --until simulation > runs/sim.log 2>&1 &`.
-This notebook then simply reuses the finished runs.""",
+Long runs are safer from the terminal: `nohup python -m efov run --out runs/v4_reference --np 24 --until simulation > runs/sim.log 2>&1 &`.""",
     """run.runStage("preflight")""",
     """run.runStage("conditioning")""",
+    """run.runStage("tune")""",
     """result = run.runStage("simulation")
 pd.DataFrame(result["timing"]).T.join(pd.DataFrame(result["nodes"]).T)""",
-    "md:Each run folder keeps the exact openCARP commands (`runRecord.json`), the spec (`<condition>.json`) and the full log.",
-    """record = json.loads((run.jobs["lesion"] / "runRecord.json").read_text())
-print(" ".join(record["commands"]["run"])[:3000])""",
+    "md:The resolved parameter file of the lesion run: model.par with this run's overrides in place, then the run-specific paths.",
+    """print((run.jobs["lesion"] / "run.par").read_text()[-3000:])""",
 ])
 
 notebook("02_physiology_and_window.ipynb", [
     """# 2. Physiology checks and the measurement window
 
-Checks on the last three beats in a viable region (acceptance.physiology): one activation per beat,
-repolarisation inside the response window, quiet lesion core, planar wave along +x, stable latency,
-amplitude and APD90, and conduction velocity within 2 % of 0.90 m/s. Engineering criteria, not
-validated biological limits.
-
-The measurement window is then derived from the intact last-beat activation of the top surface under
-the grid (DL-2026-10-28-08), before any electrogram is read.""",
+On catheter-facing tissue nodes of the last three beats: one activation per beat, repolarisation inside
+the response window, quiet lesion core, planar wave in the intended direction, stable latency,
+amplitude and APD90. The surface CV is reported; the CV gate is the tune stage. Engineering criteria,
+not validated biological limits. The window is derived from the intact activation under the grid
+before any electrogram is read (DL-2026-10-28-08).""",
     """physiology = run.runStage("physiology")
 pd.DataFrame({c: v["criteria"] for c, v in physiology["conditions"].items()})""",
-    """pd.read_csv(run.out / "physiology" / "physiologyChecks.csv")""",
-    """{c: round(v["lastBeatSpeedMPerS"], 4) for c, v in physiology["conditions"].items()}""",
+    """pd.read_csv(run.shared / "physiology" / "physiologyChecks.csv")""",
     """window = run.runStage("window")
 window""",
     """from efov.report import activationFigure
@@ -128,93 +111,83 @@ display(Image(str(activationFigure(run, run.folder("figures")))))""",
 ])
 
 notebook("03_electrograms.ipynb", [
-    """# 3. Electrograms and the forward-model check
+    """# 3. Electrograms
 
-Unipolar signal of each electrode = openCARP's phi_e (referenced to the grounded bath corner),
-interpolated at its 8 surface samples and averaged. Only the last beat's window plus twice the filter
-history is extracted.
-
-The forward-model check compares openCARP's phi_e with an independent finite-element solve of the same
-discrete problem (sigma_m source, same mesh, conductivities and ground) at every electrode sample.
-It tests the configuration, not the physiology, and stops the run if it fails.""",
-    """result = run.runStage("electrograms")
-pd.DataFrame(result["forwardModelCheck"]).T""",
+Each electrode is the set of mesh nodes inside its 1 mm cylinder; its unipolar signal is the mean of
+openCARP's phi_e over that set (FM-14). Only the last beat's window plus twice the filter history is
+extracted. The independent forward-model check was removed (FM-13).""",
+    """run.runStage("electrograms")""",
     """egm = np.load(run.out / "electrograms" / "intact.npz")
 print({k: egm[k].shape for k in egm.files})""",
-    """import matplotlib.pyplot as plt
-fig, ax = plt.subplots(figsize=(8, 3))
-for condition in ("intact", "lesion"):
-    e = np.load(run.out / "electrograms" / f"{condition}.npz")
-    p = int(np.argmin(np.abs(e["placements"][:, 1]) + e["placements"][:, 2]))   # centre y = 0, smallest gap
-    ax.plot(e["timeMs"], e["uni"][p, 5], label=f"{condition} E5 (model units, before gain)")
-ax.set(xlabel="time (ms)", ylabel="phi_e"); ax.legend(); plt.show()""",
 ])
 
 notebook("04_measurements_and_change_points.ipynb", [
-    """# 4. Measurements and clinical-style change points
+    """# 4. Measurements, peak frequency and Wang's change points
 
-1. Gain: the median of the nine selected bipoles at the intact reference placement is set to
-   1.44 mV (imposed normalisation, not validation).
-2. Per condition and noise realisation (0 = clean, then 3 x 5 uV Gaussian): unipole E5 unfiltered;
-   bipole E5-E6|E9 and omnipoles E5-E6-E9, E9-E10-E5 band-passed 30-450 Hz (causal); peak-to-peak in
-   the window. Selected weights are saved and applied to the clean signals.
-3. Filter-history and profile checks (stable far plateau, lesion transition).
-4. Change points: decay-to-plateau fits as in the clinical analysis, one slab, profile least squares.
-   Results are eligible for interpretation only if every prerequisite passed and the matched intact
-   control has no supported change point.""",
+Acquisition chain (FM-09, FM-22): resample to 2 kHz, Gaussian noise per electrode, 30-500 Hz band-pass
+for bipoles and omnipoles. Peak frequency (FM-10): Morlet wavelet approximation of EnSite OT Near
+Field; bipolar/omnipolar PP within +-30 ms of the peak-frequency time (FM-11). The gain sets the median
+reference bipole to 1.44 mV (Wang Table 2), or is fixed from the reference run in sweeps (FM-19).
+The export writes Wang's EnSite columns; her Rmd then runs unchanged except six one-slab functions
+(R/wang_replication.R, FM-12).""",
     """measures = run.runStage("measurements")
 measures["calibration"], measures["checks"]""",
-    """pd.read_csv(run.out / "measurements" / "profileChecks.csv")""",
+    """points = pd.read_csv(run.out / "measurements" / "lesionPoints.csv")
+points[points.noiseRepeat == 0].groupby("kind")[["ppMv", "pfHz", "pfGlobalHz"]].describe().T""",
+    """run.runStage("export")""",
     """changes = run.runStage("changePoints")
-print("prerequisites:", changes["prerequisites"])
-pd.DataFrame(changes["primary"])""",
+print("eligible:", changes["eligibleForInterpretation"], changes["prerequisites"])
+pd.read_csv(run.out / "changePoints" / "SuppResults5_change_points_all.csv")""",
     """from efov.report import profileFigure
-display(Image(str(profileFigure(run, run.folder("figures")))))""",
-    "md:### Optional: Bayesian change points (R, mcp + JAGS; available in the efov-runner image)",
-    """# import subprocess
-# subprocess.run(["Rscript", str(REPOSITORY / "R" / "bayesian_change_points.R"), str(run.out)], check=True)
-# pd.read_csv(run.out / "changePoints" / "bayesian" / "bayesianChangePoints.csv")""",
+display(Image(str(profileFigure(run, run.folder("figures"), "pfHz", "peak frequency (Hz)", "03_peak_frequency_profiles.png", log=False))))""",
 ])
 
 notebook("05_ground_truth.ipynb", [
-    """# 5. Ground truth: the exact contributing-tissue field
+    """# 5. Ground truth: the contributing tissue
 
-For each ground-truth recording (clean, catheter centres in `groundTruth.centresYmm`, both gaps and
-conditions) the reciprocity lead field gives every element's signed share of the signal energy in the
-window. Shares sum to 1; nothing is cut off; negative shares (cancellation) are kept. Fields are summed
-into 0.5 mm voxels (`groundTruth/contributionField.npz`).
-
-Checks, enforced: shares sum to 1, the field reproduces the measured clean electrogram, and its scale
-equals the calibration gain.""",
+For every recording at the ground-truth placements, each tissue element's signed share of the signal
+energy, from openCARP Laplace lead fields (FM-14). Shares sum to 1; nothing is cut off; negative
+shares (cancellation) are kept. Reported: near/far x endocardial/epicardial classes (FM-15), the
+transmural profile per 0.1 mm layer, lateral reach, shape descriptors, and the full 3D fields
+(`groundTruth/fields_<condition>.npz`, `groundTruth/shares_<condition>_gap<g>mm.vtk` for ParaView).""",
     """checks = run.runStage("groundTruth")
 checks""",
     """summary = pd.read_csv(run.out / "groundTruth" / "summary.csv")
-summary""",
-    """from efov.report import fieldFigure
-path = fieldFigure(run, run.folder("figures"))
-if path: display(Image(str(path)))""",
-    """import matplotlib.pyplot as plt
-field = np.load(run.out / "groundTruth" / "contributionField.npz")
-step = float(field["curveStepMm"])
-fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
-for k, recording in enumerate(field["recordingId"]):
-    if ":0:" in recording and "intact" in recording:
-        axes[0].plot(np.arange(field["lateralCumulativeShare"].shape[1]) * step, field["lateralCumulativeShare"][k], lw=0.8)
-        axes[1].plot(np.arange(field["depthCumulativeShare"].shape[1]) * step, field["depthCumulativeShare"][k], lw=0.8)
-axes[0].set(xlabel="lateral distance from anchor (mm)", ylabel="cumulative share", title="intact recordings")
-axes[1].set(xlabel="depth below the catheter-facing surface (mm)", title="descriptive curves, not a radius")
-plt.show()""",
+classes = [c for c in summary.columns if c.startswith("mass_")]
+summary.groupby(["condition", "kind", "gapMm"])[classes].median()""",
+    """from efov.groundtruth_figures import makeGroundTruthFigures
+for path in makeGroundTruthFigures(run, run.folder("figures")):
+    display(Image(str(path)))""",
 ])
 
 notebook("06_report.ipynb", [
     """# 6. Report and acceptance
 
-`acceptance.json` lists every check. **modelAccepted** = every implementation, physiology and
-profile check passed. **productionReady** additionally needs every configuration value confirmed
-(provenance). `report.md` and `figures/` summarise the run.""",
+`acceptance.json` lists every check; **modelAccepted** = tuning, ground-truth reconstruction,
+physiology and profile checks all passed. `report.md` and `figures/` summarise the run; assumptions
+still in force are listed.""",
     """result = run.runStage("report")
 result""",
     """display(Markdown((run.out / "report.md").read_text()))""",
+])
+
+notebook("07_sweeps.ipynb", [
+    """# 7. The one-at-a-time sweep (FM-17)
+
+`config/sweeps/oat_baseline.json` lists the variables; each takes each planned value from
+`config/model.json` alone, plus the named 'roof' region. Run from the terminal:
+
+`nohup python -m efov sweep config/sweeps/oat_baseline.json --out runs/oat --np 24 > runs/oat.log 2>&1 &`
+
+The baseline runs first and fixes the gain for every variant (FM-19). Variants that change only
+electrodes, noise or analysis reuse the baseline simulation; the others compact their raw output after
+their report (FM-20). Failed variants are recorded and never pooled.""",
+    """SWEEP_OUT = REPOSITORY / "runs" / "oat"
+status = json.loads((SWEEP_OUT / "sweepStatus.json").read_text()) if (SWEEP_OUT / "sweepStatus.json").exists() else {}
+pd.DataFrame({k: dict(status=v["status"], overrides=v.get("overrides")) for k, v in status.items()}).T""",
+    """# Pool the inferior baseline and the roof variant for Wang's regional comparison:
+# subprocess.run([sys.executable, "-m", "efov", "wang-combine", str(SWEEP_OUT / "variants" / "baseline"),
+#                 str(SWEEP_OUT / "variants" / "roof"), "--out", str(SWEEP_OUT / "wang_regions")], cwd=REPOSITORY)""",
 ])
 
 print("notebooks written to", HERE)

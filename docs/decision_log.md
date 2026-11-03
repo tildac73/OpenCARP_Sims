@@ -221,3 +221,28 @@ Open decisions R1-R13 for the reference model are listed in the "Model readiness
   - ground-truth checks (share sum, reconstruction residual, scale = gain) stop the run if they fail (I5);
   - the measurement window records whether it starts at the stimulus floor (DL-2026-10-28-08 consequence).
 - **Removed (not needed by the final model):** the unbounded-medium lead-field ground truth and FOV80, the electrode-transfer extracellular electrograms (sigma_i route), the comparison and decision stages of finalise.py, the pilot-style run-folder adapter.
+
+## DL-2026-11-03-02 - Final model v4 (finalModelV2): decisions FM-01 to FM-22
+- **Status:** Decided 3 Nov 2026. Matilda gave the goals (peak frequency, transmural depth, openCARP lead fields, all simulator settings in a .par, endo/epi/far-field contributions, fibre models, an ablation-like lesion, Wang's change-point code) and delegated the open choices ("what most other researchers would do"). Full reasoning and sources: project document `claude/final_model_plan_2026-11-03.md`. **Irreversible:** none until production runs start.
+- **FM-01** Every openCARP setting in `config/model.par`; each launch reads one resolved file (`<job>/<step>.par`: model.par with overrides in place, then run paths). carputils adds only solver-flavour options (recorded in runRecord.json).
+- **FM-02** `config/model.json`: `sweep` (baseline, planned values, what each acts on) and `fixed` (settings openCARP cannot read). openCARP rejects unknown parameters, so mesher and analysis settings cannot live in the .par.
+- **FM-03** Domain 40 x 60 mm, 4 beats at 500 ms, dt 20 us fixed now (the 1 Nov rule outcomes); the new mesh invalidates the workstation final-settings run. 500 ms cycle length: assumption [VERIFY].
+- **FM-04** Mesh 0.25 mm in-plane, 0.1 mm through the wall (mesher -resolution[2]; AnisotropicBlock). 0.1 mm isotropic rejected (40.7 M nodes).
+- **FM-05** Bath on the catheter side and laterally; no-flux epicardium (bath below the tissue removed after meshing). Blood all round (Leenknegt et al. 2023) kept as sweep variant `epicardialMedium = blood`.
+- **FM-06** Fibre models uniform / bilayer / linearRotation (ported from Shared_Pipeline/fibres.py, DL-2026-10-28-12); .lon written per run from element depth. Angles are assumptions.
+- **FM-07** Lesion `ablation`: no intracellular coupling (1e-6 S/m), healthy extracellular tensor; brackets `ablationPorated` (sigma_i + sigma_e) and `insulating` (earlier reference).
+- **FM-08** Regions: inferior (1.1 mm, bilayer) and roof (1.6 mm, uniform), from Whitaker et al. 2021 (CCTA, n = 193) and Pashakhanloo et al. 2016.
+- **FM-09** Acquisition at 2 kHz (EnSite X; Europace 2024;26:euae154); 30-500 Hz band-pass for differential signals (Wang supplement; replaces the unsourced 450 Hz).
+- **FM-10** Peak frequency: complex Morlet (omega0 = 6, L1), PF trace, 10 % magnitude gate, highest trace value; undetectable when PP < 0.04 mV. Global scalogram peak reported as an alternative.
+- **FM-11** Bipolar/omnipolar PP within t_PF +- 30 ms inside the window (EnSite voltage annotation).
+- **FM-12** Change points by Wang's Rmd itself (R/wang_replication.R: MD5-checked, chunk by chunk, six one-slab replacements: lm for lmer). Python profile least squares removed. All 16 unipoles, 9 bipoles and 36 omnipoles per placement are exported.
+- **FM-13** Independent FEM forward-model check removed.
+- **FM-14** Lead fields from openCARP Laplace solves (experiment 2, 1 uA total-current extracellular stimulus on the electrode's node set, extracellular conductivities g_i + g_e). Electrodes = mesh nodes inside each cylinder (replaces 8 surface samples). Pre-declared fallback: `leadFieldMethod = python` (same discrete problem) if W0 fails.
+- **FM-15** Contribution classes: near/far (lateral 4 mm, Schlageter et al. 2024) x endocardial/epicardial half; signed share and |c|-mass; continuous curves alongside.
+- **FM-16** Ground truth unchanged in definition (DL-2026-11-01-02); every recording at 17 placements (every 2 mm), both gaps.
+- **FM-17** Sweep runner with a simulation cache keyed by the simulation fingerprint; wave angle as a sweep variable (stimulus band at the trailing edge of the wave direction).
+- **FM-18** beta tuned on a strip at the production mesh (method DL-2026-10-28-10); `efov tune --write-par` writes it into model.par and config/tuning.json. The CV gate is the tune stage; slab CV is reported.
+- **FM-19** Gain computed once in the inferior reference run, fixed for all other runs. R7 closed: 1.44 mV = Wang Table 2 inferior healthy bipolar median. Noise 5 uV: assumption [VERIFY].
+- **FM-20** Storage: no output restriction on Vm; a variant whose simulation no other variant reuses is compacted after its report (Vm kept for the analysis frames; vm.igb and phie.igb deleted). The baseline simulation is never compacted.
+- **FM-21** Ground-truth outputs: element shares (npz, legacy VTK for ParaView), sections, depth and lateral profiles, classes, boundary sequence, descriptive shape metrics.
+- **FM-22** (new, found during implementation) A 0.25 ms output step is not a multiple of dt = 20 us. Kept the earlier verified dt 20 us and 0.2 ms output step (5 kHz) and resample to 2 kHz with scipy.signal.resample_poly (2/5, Kaiser-window FIR as the anti-alias filter) instead of integer decimation. Changing dt to 25 us was rejected: unverified numerics.

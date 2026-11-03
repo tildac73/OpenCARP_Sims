@@ -1,109 +1,77 @@
-"""Unipolar electrograms at every electrode, from openCARP's phi_e, and the forward-model check.
+"""Unipolar electrograms at every electrode, from openCARP's pseudo-bidomain phi_e (DL-2026-11-02-01).
 
-The unipolar signal of an electrode is openCARP's phi_e (referenced to the grounded bath corner)
-interpolated (P1) at its surface samples and averaged over them: a passive sensing approximation,
-not an equipotential conducting electrode. Only the frames the analysis reads are extracted:
-the last beat's measurement window plus twice the filter history (the second history is for the
-filter-history check).
+An electrode is the set of mesh nodes inside its cylinder (efov.geometry, FM-14); its unipolar
+signal is the mean phi_e over that set, referenced to the grounded bath corner. This is a passive
+sensing approximation, not an equipotential conducting electrode. Only the frames the analysis
+reads are extracted: the last beat's measurement window plus twice the filter history (the second
+history serves the filter-history check). The independent forward-model check was removed (FM-13).
 """
 from pathlib import Path
 
 import numpy as np
 
-from .forward import pointInterpolator
-from .geometry import electrodeLayout
+from .config import beatCount, cycleLengthMs
+from .geometry import electrodeAveraging, electrodeLayout, electrodeNodeSets
 from .io import igbTimes, loadJson, readIgb, saveJson
 
 
 def analysisTimes(config, windowMs):
     """(start, end) in absolute ms of the frames to extract: window - 2 x history .. window end."""
-    beatStart = (config["pacing"]["beatCount"] - 1) * config["pacing"]["cycleLengthMs"]
-    return beatStart + windowMs[0] - 2 * config["analysis"]["filterHistoryMs"], beatStart + windowMs[1]
+    beatStart = (beatCount(config) - 1) * cycleLengthMs(config)
+    return beatStart + windowMs[0] - 2 * config["fixed"]["analysis"]["filterHistoryMs"], beatStart + windowMs[1]
 
 
 def frameSlice(times, startMs, endMs):
-    start, stop = int(np.searchsorted(times, startMs - 1e-9)), int(np.searchsorted(times, endMs + 1e-9))
     if startMs < times[0] - 1e-9 or endMs > times[-1] + 1e-9:
         raise ValueError(f"Frames {startMs}-{endMs} ms lie outside the recording ({times[0]}-{times[-1]} ms)")
-    return slice(start, stop)
+    return slice(int(np.searchsorted(times, startMs - 1e-9)), int(np.searchsorted(times, endMs + 1e-9)))
 
 
-def readPhie(job, frames):
-    """phie.igb frames addressed on the vm.igb time axis, on whole-mesh numbering (NaN where not written)."""
+def phieTimes(job):
+    """Absolute times (ms) of the phie.igb frames."""
     job = Path(job)
-    offset = 0
+    times = igbTimes(job / "phie.igb")
     if (job / "restart.json").exists():
-        step = float(np.diff(igbTimes(job / "vm.igb")[:2])[0])
-        offset = int(round(loadJson(job / "restart.json")["phieStartMs"] / step))
-    if frames.start < offset:
-        raise ValueError(f"{job}: frame {frames.start} precedes phie.igb (starts at frame {offset}); raise prepacingMarginMs")
-    values = readIgb(job / "phie.igb", slice(frames.start - offset, frames.stop - offset))
-    nodes = np.load(job / "phieNodes.npy")
-    if values.shape[1] != len(nodes):
-        raise ValueError(f"{job}: phie.igb has {values.shape[1]} nodes, phieNodes.npy lists {len(nodes)}")
-    full = np.full((values.shape[0], loadJson(job / "runRecord.json")["nodeSets"]["nodes"]), np.nan, values.dtype)
-    full[:, nodes] = values
-    return full
+        start = loadJson(job / "restart.json")["phieStartMs"]
+        times = times - times[0] + start
+    return times
 
 
-def electrodeInterpolator(tissue, layout):
-    return pointInterpolator(tissue["positions"], tissue["elements"], layout["samplePoints"])
-
-
-def extractElectrograms(config, job, tissue, windowMs, outputPath, interpolator=None, block=200):
-    """Unipolar phi at every electrode for the analysis frames -> npz (uni: placements x 16 x frames, mV)."""
+def electrodeSets(config, tissue, job):
+    """Electrode layout, node sets and the averaging matrix onto phie.igb columns."""
+    v = config["values"]
     layout = electrodeLayout(config)
-    interpolator = interpolator if interpolator is not None else electrodeInterpolator(tissue, layout)
-    times = igbTimes(Path(job) / "vm.igb")
+    phieNodes = np.load(Path(job) / "phieNodes.npy")
+    sets = electrodeNodeSets(tissue["positions"], phieNodes, layout["uniqueCentres"], v["electrodeRadiusMm"], v["electrodeLengthMm"])
+    columnOfNode = np.full(len(tissue["positions"]), -1, np.int64)
+    columnOfNode[phieNodes] = np.arange(len(phieNodes))
+    return layout, sets, electrodeAveraging(sets, columnOfNode)
+
+
+def extractElectrograms(config, job, tissue, windowMs, outputPath, block=400):
+    """Unipolar phi at every electrode for the analysis frames -> npz (uni: placements x 16 x frames, mV)."""
+    layout, sets, averaging = electrodeSets(config, tissue, job)
+    times = phieTimes(job)
     frames = frameSlice(times, *analysisTimes(config, windowMs))
     chunks = []
     for first in range(frames.start, frames.stop, block):
-        part = readPhie(job, slice(first, min(first + block, frames.stop)))
-        samples = interpolator @ part.T.astype(float)                       # (sample points, frames)
-        if not np.isfinite(samples).all():
-            raise ValueError("Electrode sample outside the phi_e output layer (raise numerics.phieOutputHeightMm)")
-        chunks.append(samples[layout["sampleIndex"]].mean(axis=2))          # (placements, 16, frames)
-    np.savez_compressed(outputPath, uni=np.concatenate(chunks, axis=-1).astype(np.float32), timeMs=times[frames],
-                        centres=layout["centres"], samples=layout["samples"], placements=layout["placements"])
-    return outputPath
+        part = readIgb(Path(job) / "phie.igb", slice(first, min(first + block, frames.stop)))   # (frames, output nodes)
+        chunks.append(averaging @ part.T.astype(float))                                      # (unique electrodes, frames)
+    unique = np.concatenate(chunks, axis=1)
+    sizes = np.array([len(s) for s in sets])
+    np.savez_compressed(outputPath, uni=unique[layout["electrodeIndex"]].astype(np.float32), timeMs=times[frames],
+                        centres=layout["centres"], placements=layout["placements"], uniqueCentres=layout["uniqueCentres"],
+                        electrodeIndex=layout["electrodeIndex"], nodeSetNodes=np.concatenate(sets), nodeSetSizes=sizes)
+    return dict(uniqueElectrodes=len(sets), nodesPerElectrodeMin=int(sizes.min()), nodesPerElectrodeMax=int(sizes.max()))
 
 
-def forwardModelCheck(config, job, tissue, model, windowMs, interpolator=None):
-    """openCARP phi_e vs the independent sigma_m solve at all electrode samples, on frames spread over the window.
-
-    Tests the configuration (tags, conductivities, ground, node order), not the physiology. Gate:
-    acceptance.implementation (relative RMS and correlation per sample).
-    """
-    gate = config["acceptance"]["implementation"]
-    interpolator = interpolator if interpolator is not None else electrodeInterpolator(tissue, electrodeLayout(config))
-    times = igbTimes(Path(job) / "vm.igb")
-    beatStart = (config["pacing"]["beatCount"] - 1) * config["pacing"]["cycleLengthMs"]
-    window = frameSlice(times, beatStart + windowMs[0], beatStart + windowMs[1])
-    chosen = np.unique(np.linspace(window.start, window.stop - 1, gate["forwardModelFrames"]).astype(int))
-    carp, fem = [], []
-    for frame in chosen:
-        carp.append(interpolator @ readPhie(job, slice(frame, frame + 1))[0].astype(float))
-        vm = readIgb(Path(job) / "vm.igb", slice(frame, frame + 1))[0]
-        fem.append(interpolator @ model.solver.solve(model.fullVm(vm)))
-    carp, fem = np.array(carp).T, np.array(fem).T                            # (samples, frames)
-    rms = lambda x: np.sqrt(np.mean(x ** 2, axis=1))
-    relative = rms(carp - fem) / np.maximum(rms(fem), 1e-30)
-    a, b = carp - carp.mean(axis=1, keepdims=True), fem - fem.mean(axis=1, keepdims=True)
-    correlation = np.sum(a * b, axis=1) / np.maximum(np.sqrt(np.sum(a * a, axis=1) * np.sum(b * b, axis=1)), 1e-30)
-    result = dict(frames=len(chosen), samples=int(len(carp)), relativeRmsMax=float(relative.max()),
-                  relativeRmsMedian=float(np.median(relative)), correlationMin=float(correlation.min()),
-                  solver=model.solver.method)
-    result["passed"] = bool(result["relativeRmsMax"] <= gate["forwardModelRelativeRms"]
-                            and result["correlationMin"] >= gate["forwardModelCorrelation"])
-    return result
+def nodeSetsFromArchive(archive):
+    """The electrode node sets saved by extractElectrograms, as a list of arrays."""
+    return np.split(archive["nodeSetNodes"], np.cumsum(archive["nodeSetSizes"])[:-1])
 
 
-def runElectrograms(config, jobs, tissues, models, windowMs, folder):
+def runElectrograms(config, jobs, tissues, windowMs, folder):
     folder = Path(folder)
-    checks, layout = {}, electrodeLayout(config)
-    for condition, job in jobs.items():
-        interpolator = electrodeInterpolator(tissues[condition], layout)
-        checks[condition] = forwardModelCheck(config, job, tissues[condition], models[condition], windowMs, interpolator)
-        extractElectrograms(config, job, tissues[condition], windowMs, folder / f"{condition}.npz", interpolator)
-    saveJson(folder / "forwardModelCheck.json", checks)
-    return checks
+    result = {c: extractElectrograms(config, job, tissues[c], windowMs, folder / f"{c}.npz") for c, job in jobs.items()}
+    saveJson(folder / "electrodes.json", result)
+    return result

@@ -1,7 +1,9 @@
-"""Real openCARP, start to finish, on config/test_small.json (opt-in: EFOV_RUN_OPENCARP=1; ~20 min on 2 cores).
+"""Real openCARP, start to finish, on config/test_small.json (opt-in: EFOV_RUN_OPENCARP=1).
 
-Checks that every stage runs and that the implementation checks hold on real output. The small slab
-is not expected to pass the profile prerequisites (too narrow for a 10 mm far region).
+Checks that every stage runs and that the implementation checks hold on real output: CV tuning,
+lead fields reproducing openCARP's phi_e, shares summing to 1. The small slab is not expected to
+pass the profile prerequisites (too narrow for a stable far region). The changePoints stage needs R
+with Wang's packages; it is skipped (with the reason recorded) if Rscript is missing.
 """
 import os
 import shutil
@@ -9,29 +11,32 @@ import shutil
 import pytest
 
 from efov.config import loadConfig
-from efov.pipeline import Run
-from helpers import ROOT
+from efov.pipeline import Run, StaleOutputError
+from helpers import SMALL
 
 pytestmark = pytest.mark.skipif(os.environ.get("EFOV_RUN_OPENCARP") != "1" or not shutil.which("openCARP"),
                                 reason="set EFOV_RUN_OPENCARP=1 with openCARP on PATH")
 
 
 def test_small_model_end_to_end(tmp_path):
-    config = loadConfig(ROOT / "config" / "test_small.json")
+    config = loadConfig(SMALL)
     run = Run(config, tmp_path / "run", processCount=int(os.environ.get("EFOV_NP", "2")))
-    run.all()
-    accepted = (run.out / "acceptance.json").read_text()
-    assert '"implementation.forwardModel": true' in accepted and '"implementation.groundTruth": true' in accepted
+    until = "report" if shutil.which("Rscript") else "export"
+    if until == "export":
+        run.all(until="export")
+        run.runStage("groundTruth")
+    else:
+        run.all(until="report")
+    assert run.result("tune")["cellSurfVolRatioPerUm"] > 0
+    assert run.result("groundTruth")["passed"]
     physiology = run.result("physiology")
     for condition in ("intact", "lesion"):
         assert physiology["conditions"][condition]["criteria"]["oneActivationPerBeat"]
         assert physiology["conditions"][condition]["criteria"]["quietLesionCore"]
-    assert all(status == "complete" for status in run.status().values())
+    assert (run.jobs["lesion"] / "run.par").exists()                            # the resolved openCARP file of the run
     # A rerun reuses every stage; a changed analysis setting is refused for the stages that use it.
-    Run(config, run.out).all()
-    changed = loadConfig(ROOT / "config" / "test_small.json")
-    changed["changePoints"]["stepMm"] = 0.1
-    from efov.pipeline import StaleOutputError
+    Run(config, run.out).runStage("measurements")
+    changed = loadConfig(SMALL, {"noiseSdMv": 0.01})
     with pytest.raises(StaleOutputError):
-        Run(changed, run.out).runStage("changePoints")
-    Run(changed, run.out).runStage("measurements")              # upstream of the change: still reused
+        Run(changed, run.out).runStage("measurements")
+    Run(changed, run.out).runStage("electrograms")                              # upstream of the change: still reused

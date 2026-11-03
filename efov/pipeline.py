@@ -1,24 +1,29 @@
-"""The final model from start to finish, as named stages over one output folder.
+"""The final model from start to finish, as named stages.
 
-    preflight     software versions, repository commit, solver flavour check
+    preflight     software versions, repository commit, solver flavour check, R availability
     conditioning  bench single-cell limit cycle
-    simulation    openCARP intact and lesion runs (carputils, pseudo-bidomain, bath, prepacing)
-    physiology    activation, stability and conduction-velocity checks
+    tune          beta for the CV target at the production mesh (FM-18); the CV gate
+    simulation    openCARP intact and lesion runs (pseudo-bidomain, bath, prepacing)
+    physiology    activation, planarity, direction and stability checks
     window        measurement window from intact activation (before any electrogram is read)
-    electrograms  unipolar phi_e at every electrode; forward-model check (openCARP = sigma_m solve)
-    measurements  gain, noise, recordings, peak-to-peak, filter-history and profile checks
-    changePoints  clinical-style decay-to-plateau fits
-    groundTruth   exact contributing-tissue fields and their checks
+    electrograms  unipolar phi_e at every electrode (node-set electrodes)
+    measurements  acquisition chain, gain, noise, recordings, PP, peak frequency, profile checks
+    export        Wang-format datasets (one per gap and noise realisation)
+    changePoints  Wang's Rmd on each dataset (R/wang_replication.R)
+    groundTruth   openCARP lead fields, contribution fields, classes, profiles, shape; checks
     report        acceptance.json, report.md, figures
+    compact       optional: keep Vm only where the analysis can read it (FM-20)
 
-Each stage writes <output>/stages/<stage>.json with its status, result and a fingerprint of the
-configuration it used (and of its parents). A rerun skips stages whose fingerprint matches and
-refuses to reuse outputs made with different settings. Checks that indicate a broken model setup
-(forward-model mismatch, ground-truth reconstruction) stop the run; scientific checks (physiology,
-profile prerequisites) are recorded and decide whether results are eligible for interpretation.
+Each stage writes a record <folder>/stages/<stage>.json with its status, result and a fingerprint of
+the configuration it used (and of its parents). A rerun skips a stage whose fingerprint matches and
+refuses outputs made with different settings. conditioning, tune, simulation and physiology depend
+only on the simulation settings; with a simulation cache (sweeps, FM-17) their records and outputs
+live in <cache>/<simulation fingerprint>/ and are shared by every variant that does not change them.
+Checks of a broken setup (ground-truth reconstruction, CV tuning) stop the run; scientific checks
+(physiology, profile prerequisites) are recorded and decide eligibility for interpretation.
 
-Use from Python (notebooks):  run = Run(config, "runs/v3_reference", processCount=24); run.all()
-or the command line:          python -m efov run --out runs/v3_reference --np 24
+Python (notebooks):   run = Run(config, "runs/v4_reference", processCount=24); run.all()
+Command line:         python -m efov run --out runs/v4_reference --np 24
 """
 from datetime import datetime, timezone
 import os
@@ -29,21 +34,31 @@ import subprocess
 import sys
 import traceback
 
-from . import changepoints, electrograms, groundtruth, measurements, physiology, report, simulation
-from .config import REPOSITORY, fingerprint, unconfirmed
-from .forward import BathModel
-from .io import loadJson, readVertices, saveJson
+import pandas as pd
 
-STAGES = ["preflight", "conditioning", "simulation", "physiology", "window", "electrograms",
-          "measurements", "changePoints", "groundTruth", "report"]
-PARENTS = {"preflight": [], "conditioning": [], "simulation": ["conditioning"], "physiology": ["simulation"],
-           "window": ["simulation"], "electrograms": ["window"], "measurements": ["electrograms"],
-           "changePoints": ["measurements", "physiology"], "groundTruth": ["measurements"],
-           "report": ["physiology", "electrograms", "measurements", "changePoints", "groundTruth"]}
+from . import electrograms, export, groundtruth, measurements, physiology, report, simulation, tune
+from .config import REPOSITORY, beatCount, cycleLengthMs, fingerprint, par, tunedBetaFor, withParOverrides
+from .io import loadJson, saveJson
+
+STAGES = ["preflight", "conditioning", "tune", "simulation", "physiology", "window", "electrograms", "measurements",
+          "export", "changePoints", "groundTruth", "report", "compact"]
+PARENTS = {"preflight": [], "conditioning": [], "tune": ["conditioning"], "simulation": ["tune"], "physiology": ["simulation"],
+           "window": ["simulation"], "electrograms": ["window"], "measurements": ["electrograms"], "export": ["measurements"],
+           "changePoints": ["export", "physiology"], "groundTruth": ["measurements"],
+           "report": ["physiology", "measurements", "changePoints", "groundTruth"], "compact": ["report"]}
+SHARED = ("conditioning", "tune", "simulation", "physiology")
 
 
 class StaleOutputError(RuntimeError):
     pass
+
+
+def sharedFolder(config, outputFolder, simulationCache=None):
+    """Where the simulation-only stages live: the run folder, or <cache>/<simulation fingerprint> for sweeps."""
+    if not simulationCache:
+        return Path(outputFolder).resolve()
+    chain = fingerprint(config, "simulation", [fingerprint(config, "tune", [fingerprint(config, "conditioning")])])
+    return Path(simulationCache).resolve() / chain
 
 
 def now():
@@ -51,24 +66,30 @@ def now():
 
 
 class Run:
-    def __init__(self, config, outputFolder, processCount=1, durationMs=None, log=print):
+    def __init__(self, config, outputFolder, processCount=1, simulationCache=None, durationMs=None, log=print):
         self.config, self.out, self.np = config, Path(outputFolder).resolve(), int(processCount)
-        self.durationMs = durationMs                                  # short verification runs only
-        self.log = log
-        self._tissues, self._models = {}, {}
+        self.durationMs, self.log = durationMs, log
+        self._tissues = {}
         self.out.mkdir(parents=True, exist_ok=True)
-        modelPath = self.out / "model.json"
-        if not modelPath.exists():
-            saveJson(modelPath, config)
+        self.shared = sharedFolder(config, self.out, simulationCache)
+        self.shared.mkdir(parents=True, exist_ok=True)
+        if not (self.out / "model.json").exists():
+            saveJson(self.out / "model.json", dict(values=config["values"], fixed=config["fixed"], parOverrides=config["parOverrides"],
+                                                   modelPar=config["modelPar"], sharedSimulationFolder=str(self.shared)))
+        if (self.shared / "stages" / "tune.json").exists() and self.record("tune").get("status") == "complete":
+            self._applyBeta(self.record("tune")["result"]["cellSurfVolRatioPerUm"])
 
     # ------------------------------------------------------------- bookkeeping
-    def folder(self, name):
-        path = self.out / name
+    def folder(self, name, shared=False):
+        path = (self.shared if shared else self.out) / name
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def recordPath(self, name):
+        return (self.shared if name in SHARED else self.out) / "stages" / f"{name}.json"
+
     def record(self, name):
-        path = self.out / "stages" / f"{name}.json"
+        path = self.recordPath(name)
         return loadJson(path) if path.exists() else {}
 
     def result(self, name):
@@ -86,9 +107,8 @@ class Run:
         expected, previous = self.fingerprint(name), self.record(name)
         if previous.get("status") == "complete":
             if previous.get("fingerprint") != expected:
-                raise StaleOutputError(
-                    f"Stage '{name}' in {self.out} was produced with different settings. Use a new output folder "
-                    f"(or delete {self.out}/stages/{name}.json and that stage's outputs if you are sure).")
+                raise StaleOutputError(f"Stage '{name}' in {self.recordPath(name).parent.parent} was produced with different settings. "
+                                       "Use a new output folder (or delete that stage's record and outputs if you are sure).")
             self.log(f"[{name}] complete, reusing")
             return previous["result"]
         self.log(f"[{name}] started {now()}")
@@ -96,12 +116,11 @@ class Run:
         try:
             result = getattr(self, "stage_" + name)()
         except Exception as error:
-            saveJson(self.out / "stages" / f"{name}.json", dict(status="failed", started=started, finished=now(),
-                     fingerprint=expected, error=f"{type(error).__name__}: {error}", traceback=traceback.format_exc()))
+            saveJson(self.recordPath(name), dict(status="failed", started=started, finished=now(), fingerprint=expected,
+                                                 error=f"{type(error).__name__}: {error}", traceback=traceback.format_exc()))
             self.log(f"[{name}] FAILED: {error}")
             raise
-        saveJson(self.out / "stages" / f"{name}.json", dict(status="complete", started=started, finished=now(),
-                                                            fingerprint=expected, result=result))
+        saveJson(self.recordPath(name), dict(status="complete", started=started, finished=now(), fingerprint=expected, result=result))
         self.log(f"[{name}] complete {now()}")
         return result
 
@@ -118,63 +137,65 @@ class Run:
     # ------------------------------------------------------------- shared objects
     @property
     def jobs(self):
-        return {c: self.out / "simulations" / c for c in simulation.CONDITIONS}
+        return {c: self.shared / "simulations" / c for c in simulation.CONDITIONS}
 
     def tissue(self, condition):
         if condition not in self._tissues:
             self._tissues[condition] = simulation.tissueModel(self.jobs[condition])
         return self._tissues[condition]
 
-    def bathModel(self, condition):
-        """Independent sigma_m extracellular model of a run (same mesh, conductivities, ground)."""
-        if condition not in self._models:
-            t, lesion = self.config["tissue"], self.config["lesion"]
-            self._models[condition] = BathModel(self.tissue(condition), t["conductivitiesSPerM"], lesion["conductivitySPerM"],
-                                                self.config["bath"]["bloodSPerM"],
-                                                readVertices(self.jobs[condition] / "ground.vtx"))
-        return self._models[condition]
-
     def window(self):
         return self.result("window")["windowMs"]
+
+    def _applyBeta(self, beta):
+        if abs(par(self.config, tune.BETA_KEY) - beta) > 0:
+            self.config = withParOverrides(self.config, {tune.BETA_KEY: beta})
 
     # ------------------------------------------------------------- stages
     def stage_preflight(self):
         record = dict(timeUtc=now(), python=sys.version.split()[0], platform=platform.platform(), cpuCount=os.cpu_count(),
-                      processCount=self.np, mpiexecBin=os.environ.get("MPIEXEC_BIN"),
-                      unconfirmedValues=unconfirmed(self.config))
+                      processCount=self.np, mpiexecBin=os.environ.get("MPIEXEC_BIN"))
         for name in ["openCARP", "mesher", "bench"]:
             record[name] = simulation.findExecutable(name, f"{name.upper()}_BIN")
+        record["Rscript"] = shutil.which("Rscript") or "not found: the changePoints stage needs R with Wang's packages"
         if self.np > 1 and not os.environ.get("MPIEXEC_BIN"):
             raise RuntimeError("Set MPIEXEC_BIN to openCARP's own MPI launcher before running with --np > 1")
         import numpy, pandas, scipy
         record["packages"] = dict(numpy=numpy.__version__, scipy=scipy.__version__, pandas=pandas.__version__)
-        try:
-            import pyamg
-            record["packages"]["pyamg"] = pyamg.__version__
-        except ImportError:
-            record["packages"]["pyamg"] = "not installed: large extracellular solves fall back to ILU-GMRES (pip install pyamg)"
         build = subprocess.run([record["openCARP"], "-buildinfo"], capture_output=True, text=True)
         record["openCarpBuild"] = (build.stdout + build.stderr)[-1500:]
         git = lambda *a: subprocess.run(["git", "-C", str(REPOSITORY), *a], capture_output=True, text=True).stdout.strip()
         record["repositoryCommit"], record["uncommittedChanges"] = git("rev-parse", "HEAD"), bool(git("status", "--porcelain"))
         record["diskFreeGb"] = round(shutil.disk_usage(self.out).free / 1e9, 1)
-        preferred, fallback = self.config["numerics"]["solverFlavor"], self.config["numerics"]["fallbackSolverFlavor"]
+        preferred, fallback = self.config["fixed"]["numerics"]["solverFlavor"], self.config["fixed"]["numerics"]["fallbackSolverFlavor"]
         record["solverFlavor"] = preferred if simulation.solverFlavorWorks(self.config, self.out / "preflight", preferred, self.np) else fallback
         return record
 
+    def flavor(self):
+        return self.record("preflight").get("result", {}).get("solverFlavor")
+
     def stage_conditioning(self):
-        return dict(state=str(simulation.conditionCell(self.config, self.folder("conditioning"))))
+        return dict(state=str(simulation.conditionCell(self.config, self.folder("conditioning", shared=True))))
+
+    def stage_tune(self):
+        recorded = tunedBetaFor(self.config)
+        if recorded is not None:
+            self._applyBeta(recorded)
+            return dict(cellSurfVolRatioPerUm=recorded, source="config/tuning.json (efov tune --write-par)")
+        result = tune.tuneBeta(self.config, self.folder("tune", shared=True), self.result("conditioning")["state"], self.np, self.flavor())
+        self._applyBeta(result["cellSurfVolRatioPerUm"])
+        return dict(result, source="tuned in this run's simulation folder")
 
     def stage_simulation(self):
         state = self.result("conditioning")["state"]
-        flavor = self.record("preflight").get("result", {}).get("solverFlavor")
-        timing = {c: simulation.runCondition(self.config, c, state, self.out, self.np, flavor, self.durationMs)
-                  for c in simulation.CONDITIONS}
-        return dict(timing=timing, nodes={c: simulation.runRecord(j)["nodeSets"] for c, j in self.jobs.items()})
+        timing = {c: simulation.runCondition(self.config, c, state, self.folder("simulations", shared=True), self.np, self.flavor(),
+                                             self.durationMs) for c in simulation.CONDITIONS}
+        return dict(timing=timing, nodes={c: simulation.runRecord(j)["nodeSets"] for c, j in self.jobs.items()},
+                    cellSurfVolRatioPerUm=par(self.config, tune.BETA_KEY))
 
     def stage_physiology(self):
-        tissues = {c: self.tissue(c) for c in simulation.CONDITIONS}
-        return physiology.runPhysiology(self.config, self.jobs, tissues, self.folder("physiology"))
+        return physiology.runPhysiology(self.config, self.jobs, {c: self.tissue(c) for c in simulation.CONDITIONS},
+                                        self.folder("physiology", shared=True))
 
     def stage_window(self):
         window = physiology.deriveWindow(self.config, self.jobs["intact"], self.tissue("intact"))
@@ -182,41 +203,64 @@ class Run:
         return window
 
     def stage_electrograms(self):
-        conditions = simulation.CONDITIONS
-        checks = electrograms.runElectrograms(self.config, self.jobs, {c: self.tissue(c) for c in conditions},
-                                              {c: self.bathModel(c) for c in conditions}, self.window(), self.folder("electrograms"))
-        if not all(c["passed"] for c in checks.values()):
-            raise RuntimeError(f"openCARP phi_e does not match the independent sigma_m solve: {checks}")
-        return dict(forwardModelCheck=checks)
+        return electrograms.runElectrograms(self.config, self.jobs, {c: self.tissue(c) for c in simulation.CONDITIONS},
+                                            self.window(), self.folder("electrograms"))
 
     def stage_measurements(self):
         points, calibration, status = measurements.runMeasurements(self.config, self.out / "electrograms", self.window(),
                                                                    self.folder("measurements"))
         return dict(calibration=calibration, checks=status, recordings=int(len(points)))
 
+    def stage_export(self):
+        return dict(datasets=export.runExport(self.config, self.out / "measurements", self.folder("export")))
+
     def prerequisites(self):
-        checks = self.result("measurements")["checks"]
-        return dict(physiology=bool(self.result("physiology")["passed"]),
-                    forwardModel=all(c["passed"] for c in self.result("electrograms")["forwardModelCheck"].values()),
-                    **checks)
+        return dict(physiology=bool(self.result("physiology")["passed"]), **self.result("measurements")["checks"])
 
     def stage_changePoints(self):
-        import pandas as pd
-        points = pd.concat([pd.read_csv(self.out / "measurements" / f"{c}Points.csv") for c in simulation.CONDITIONS])
+        rscript = shutil.which("Rscript")
+        if not rscript:
+            raise RuntimeError("Rscript not found: install R with Wang's packages (efov-runner image)")
+        folder = self.folder("changePoints")
+        tables = {}
+        for dataset in self.result("export")["datasets"]:
+            name = Path(dataset).name
+            target = folder / name
+            code = simulation.runLogged([rscript, str(REPOSITORY / "R" / "wang_replication.R"), dataset, str(target)], folder / f"{name}.log")
+            if code != 0:
+                raise RuntimeError(f"Wang's analysis failed on {name}; see {folder / (name + '.log')}")
+            for table in ("Table5_bayesian_posteriors", "SuppResults5_change_points", "ModelSelection_AIC", "Table3_mixed_models_REML",
+                          "Table4_decay_distances", "SuppResults7_ROC", "Table2_voltage_PF_by_tissue"):
+                path = target / "tables" / f"{table}.csv"
+                if path.exists():
+                    tables.setdefault(table, []).append(pd.read_csv(path).assign(dataset=name))
+        for table, parts in tables.items():
+            pd.concat(parts, ignore_index=True).to_csv(folder / f"{table}_all.csv", index=False)
         prerequisites = self.prerequisites()
-        fits = changepoints.runChangePoints(self.config, points, self.folder("changePoints"), all(prerequisites.values()))
-        primary = changepoints.primaryFits(fits)
-        return dict(prerequisites=prerequisites, profiles=int(len(fits)),
-                    primary=primary.reindex(columns=["condition", "gapMm", "kind", "label", "model", "changePointMm",
-                                                     "fitStatus", "eligibleForInterpretation"]).to_dict("records"))
+        return dict(prerequisites=prerequisites, eligibleForInterpretation=all(prerequisites.values()),
+                    datasets=len(self.result("export")["datasets"]), tables=sorted(tables))
 
     def stage_groundTruth(self):
-        checks = groundtruth.runGroundTruth(self.config, self.jobs, {c: self.bathModel(c) for c in simulation.CONDITIONS},
-                                            self.out / "measurements", self.result("measurements")["calibration"]["gain"],
-                                            self.window(), self.folder("groundTruth"))
+        checks = groundtruth.runGroundTruth(self.config, self.jobs, {c: self.tissue(c) for c in simulation.CONDITIONS},
+                                            self.out / "electrograms", self.out / "measurements",
+                                            self.result("measurements")["calibration"]["gain"], self.window(),
+                                            self.folder("groundTruth"), self.np)
         if not checks["passed"]:
             raise RuntimeError(f"Ground-truth fields do not reproduce the electrograms: {checks}")
         return checks
 
     def stage_report(self):
         return report.writeReport(self)
+
+    def stage_compact(self):
+        """Delete raw output of a simulation no other variant reuses (the sweep runner decides; FM-20)."""
+        if not self.config["fixed"]["compactAfterReport"]:
+            return dict(compacted=False, reason="fixed.compactAfterReport is false")
+        beatStart = (beatCount(self.config) - 1) * cycleLengthMs(self.config)
+        window, history = self.window(), self.config["fixed"]["analysis"]["filterHistoryMs"]
+        done = {}
+        for condition, job in self.jobs.items():
+            if (job / "vm.igb").exists():
+                simulation.compactRun(job, beatStart + window[0] - 2 * history, beatStart + window[1])
+            done[condition] = loadJson(job / "compact.json")
+        return dict(compacted=True, conditions=done)

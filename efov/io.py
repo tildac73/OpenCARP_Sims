@@ -31,23 +31,66 @@ def loadJson(path):
 
 
 # ----------------------------------------------------------------- meshes
+def _readTable(path, skipRows, columns, dtype):
+    """Whitespace-separated rows with pandas' C parser (np.loadtxt is too slow for ~20 M elements)."""
+    import pandas as pd
+    return pd.read_csv(path, sep=r"\s+", header=None, skiprows=skipRows, usecols=range(columns),
+                       dtype=dtype, engine="c").to_numpy()
+
+
 def readMesh(meshBase):
     """openCARP tetrahedral mesh -> positions (mm), elements (E, 4), tags (E,), fibre vectors (E, 3)."""
     meshBase = str(meshBase)
     with open(meshBase + ".pts") as stream:
-        count = int(stream.readline())
-        positions = np.loadtxt(stream, ndmin=2)[:count] / 1000.0
+        nodeCount = int(stream.readline())
+    positions = _readTable(meshBase + ".pts", 1, 3, float) / 1000.0
     with open(meshBase + ".elem") as stream:
         count = int(stream.readline())
-        rows = np.loadtxt(stream, dtype=str, ndmin=2)
-    if len(rows) != count:
-        raise ValueError(f"{meshBase}.elem: header says {count} elements, file has {len(rows)}")
+        if not stream.readline().startswith("Tt"):
+            raise ValueError(f"{meshBase}: expected tetrahedra")
+    rows = _readTable(meshBase + ".elem", 1, 6, {0: str, 1: np.int64, 2: np.int64, 3: np.int64, 4: np.int64, 5: np.int64})
+    if len(rows) != count or len(positions) != nodeCount:
+        raise ValueError(f"{meshBase}: header counts differ from the file contents")
     if not np.all(rows[:, 0] == "Tt"):
-        raise ValueError(f"{meshBase}: expected tetrahedra")
-    with open(meshBase + ".lon") as stream:
-        stream.readline()
-        fibres = np.loadtxt(stream, ndmin=2)[:count, :3]
-    return positions, rows[:, 1:5].astype(int), rows[:, 5].astype(int), fibres
+        raise ValueError(f"{meshBase}: expected tetrahedra only")
+    fibres = _readTable(meshBase + ".lon", 1, 3, float)
+    if len(fibres) != count:
+        raise ValueError(f"{meshBase}.lon has {len(fibres)} rows, expected {count}")
+    return positions, rows[:, 1:5].astype(np.int64), rows[:, 5].astype(np.int64), fibres
+
+
+def writeMesh(meshBase, positionsMm, elements, tags, fibres):
+    """Write .pts (um), .elem (tetrahedra with tags) and .lon (one fibre vector per element)."""
+    import pandas as pd
+    meshBase = str(meshBase)
+    Path(meshBase).parent.mkdir(parents=True, exist_ok=True)
+    for suffix, header, frame, formats in [
+            (".pts", f"{len(positionsMm)}\n", pd.DataFrame(np.asarray(positionsMm) * 1000.0), "%.6f"),
+            (".elem", f"{len(elements)}\n", pd.DataFrame({"t": "Tt", **{i: elements[:, i] for i in range(4)}, "g": tags}), None),
+            (".lon", "1\n", pd.DataFrame(np.asarray(fibres, float)), "%.8f")]:
+        with open(meshBase + suffix, "w") as stream:
+            stream.write(header)
+            frame.to_csv(stream, sep=" ", header=False, index=False, float_format=formats, lineterminator="\n")
+    return meshBase
+
+
+def writeVtkCells(path, positionsMm, elements, cellArrays):
+    """Legacy binary VTK unstructured grid of tetrahedra with float32 cell arrays (opens in ParaView)."""
+    elements = np.asarray(elements, np.int64)
+    with open(path, "wb") as stream:
+        stream.write(b"# vtk DataFile Version 3.0\nefov ground truth\nBINARY\nDATASET UNSTRUCTURED_GRID\n")
+        stream.write(f"POINTS {len(positionsMm)} float\n".encode())
+        stream.write(np.asarray(positionsMm, ">f4").tobytes() + b"\n")
+        cells = np.column_stack([np.full(len(elements), 4), elements]).astype(">i4")
+        stream.write(f"CELLS {len(elements)} {cells.size}\n".encode() + cells.tobytes() + b"\n")
+        stream.write(f"CELL_TYPES {len(elements)}\n".encode() + np.full(len(elements), 10, ">i4").tobytes() + b"\n")
+        stream.write(f"CELL_DATA {len(elements)}\n".encode())
+        for name, values in cellArrays.items():
+            values = np.asarray(values, ">f4")
+            if values.shape != (len(elements),):
+                raise ValueError(f"Cell array {name} has shape {values.shape}, expected ({len(elements)},)")
+            stream.write(f"SCALARS {name} float 1\nLOOKUP_TABLE default\n".encode() + values.tobytes() + b"\n")
+    return path
 
 
 def writeVertices(path, nodes, kind="extra"):

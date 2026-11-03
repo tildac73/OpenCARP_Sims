@@ -12,8 +12,9 @@ direction can be selected, and the same weights are applied to the clean signals
                                 rotated in angle steps and the direction of largest peak-to-peak kept
                                 (a voltage-direction search, not the full Masse/Deno activation method)
 
-Differential signals (bipole, omnipole) are band-pass filtered: scipy butter(order, band,
-'bandpass', output='sos') with causal sosfilt. The caller supplies the filter history.
+Differential signals (bipole, omnipole) are band-pass filtered (efov.measurements: anti-alias,
+decimation to the acquisition rate, then the causal band-pass; FM-09). The caller supplies the
+filter history.
 """
 import numpy as np
 from scipy.signal import butter, sosfilt
@@ -41,6 +42,27 @@ def _cliques():
         square = {(0, 0): corner, (1, 0): corner + 1, (0, 1): corner + 4, (1, 1): corner + 5}
         for (xs, ys), vertex in square.items():
             yield vertex, square[(1 - xs, ys)], square[(xs, 1 - ys)], 1 - 2 * xs, 1 - 2 * ys
+
+
+def allLabels(kind):
+    """Every recording of a kind in a fixed order: 16 unipoles, 9 orientation-selected bipoles, 36 omnipolar cliques."""
+    if kind == "uni":
+        return [f"E{k}" for k in range(16)]
+    if kind == "bi":
+        return [f"E{c}-E{c + 1}|E{c + 4}" for c in _bipoleCorners()]
+    if kind == "omni":
+        return [f"E{v}-E{x}-E{y}" for v, x, y, _, _ in _cliques()]
+    raise ValueError(f"Unknown recording kind {kind}")
+
+
+def recordingLabels(setting):
+    """'all' or {'uni': [...], 'bi': [...], 'omni': [...]} -> the label dict."""
+    if setting == "all":
+        return {kind: allLabels(kind) for kind in ("uni", "bi", "omni")}
+    for kind, labels in setting.items():
+        if kind not in ("uni", "bi", "omni") or not set(labels) <= set(allLabels(kind)):
+            raise ValueError(f"Invalid {kind} recording labels: {labels}")
+    return setting
 
 
 def availableLabels(kind):

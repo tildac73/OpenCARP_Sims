@@ -1,0 +1,97 @@
+# =====================================================================================
+# Final model (v4-reference): every openCARP setting of the production slab (FM-01).
+#
+# Read by efov/opencarp/slab_experiment.py. A run never adds values on the command line: it
+# writes simulations/<condition>/resolved.par (this file, its sweep overrides in place, then the
+# run-specific paths) and calls `openCARP +F resolved.par`.
+#
+# Units (openCARP): mesh um; dt us; times ms; conductivity S/m; transmembrane stimulus uA/cm^2;
+# cellSurfVolRatio 1/um.
+#
+# Values that the sweeps change are NOT edited here: config/model.json lists each sweep variable
+# and the parameters it overrides. Lines marked [sweep] are such baselines.
+# Decision IDs: FM-xx = docs/decision_log.md (final model plan, 3 Nov 2026); DL-... = earlier.
+# =====================================================================================
+
+# ---- formulation and solver ----
+experiment   = 0          # normal simulation
+bidomain     = 2          # pseudo-bidomain: monodomain Vm, phi_e from one elliptic solve per output step (DL-2026-11-02-01)
+parab_solve  = 1          # Crank-Nicolson
+mass_lumping = 1          # openCARP default for tetrahedral monodomain
+cg_tol_parab = 1e-8
+cg_tol_ellip = 1e-8
+
+# ---- time ----
+dt      = 20              # us; ODE and PDE step (FM-03; 1 Nov final-settings rule outcome, not re-tested)
+spacedt = 0.2             # ms; Vm and phi_e output step = 5 kHz (earlier verified setting), resampled to 2 kHz in the analysis (FM-09, FM-22)
+timedt  = 1               # ms; progress output
+tend    = 2000            # ms = 4 beats x 500 ms (FM-03)
+
+# ---- cells ----
+num_imp_regions             = 1
+imp_region[0].im            = Courtemanche     # [sweep: ionicModel] Courtemanche et al. 1998, unmodified
+imp_region[0].cellSurfVolRatio = 0.0218        # 1/um; [tuned] set by `python -m efov tune --write-par` (FM-18); 0.0218 was the 0.5 mm value
+
+# ---- conductivity regions (S/m) ----
+# Tissue: Roberts and Scher 1982 (canine LV in situ), measured magnitudes and ratios (DL-2026-11-02-03).
+# Transversely isotropic: t = n.
+num_gregions          = 3
+gregion[0].num_IDs    = 1
+gregion[0].ID[0]      = 1          # viable tissue
+gregion[0].g_il       = 0.344
+gregion[0].g_it       = 0.06
+gregion[0].g_in       = 0.06
+gregion[0].g_el       = 0.117
+gregion[0].g_et       = 0.08
+gregion[0].g_en       = 0.08
+# Lesion (tag 5): [sweep: scar] baseline "ablation" = inexcitable, no intracellular coupling,
+# extracellular tensor of healthy tissue (FM-07). Variants (model.json): ablationPorated, insulating.
+gregion[1].num_IDs    = 1
+gregion[1].ID[0]      = 5
+gregion[1].g_il       = 1e-06
+gregion[1].g_it       = 1e-06
+gregion[1].g_in       = 1e-06
+gregion[1].g_el       = 0.117
+gregion[1].g_et       = 0.08
+gregion[1].g_en       = 0.08
+# Bath (tag 0, zero fibres): blood 135 ohm cm, Traugott et al. 1981.
+gregion[2].num_IDs    = 1
+gregion[2].ID[0]      = 0
+gregion[2].g_bath     = 0.74
+
+# Intracellular domain: tissue and lesion. Extracellular domain: tissue, lesion and bath.
+num_phys_regions          = 2
+phys_region[0].ptype      = 0
+phys_region[0].name       = intracellular
+phys_region[0].num_IDs    = 2
+phys_region[0].ID[0]      = 1
+phys_region[0].ID[1]      = 5
+phys_region[1].ptype      = 1
+phys_region[1].name       = extracellular
+phys_region[1].num_IDs    = 3
+phys_region[1].ID[0]      = 1
+phys_region[1].ID[1]      = 5
+phys_region[1].ID[2]      = 0
+
+# ---- stimuli ----
+# stim[0]: transmembrane current on the viable-tissue strip of the wave angle (vertex file written per run).
+# stim[1]: extracellular ground on a 1 mm cube at the (max x, max y, max z) bath corner (Leenknegt et al. 2023).
+num_stim               = 2
+stim[0].crct.type      = 0
+stim[0].pulse.shape    = 0
+stim[0].ptcl.start     = 0
+stim[0].ptcl.duration  = 2         # ms
+stim[0].pulse.strength = 50        # uA/cm^2; captured in every earlier slab run (VL-2026-11-03-01); capture is checked per run
+stim[0].ptcl.bcl       = 500       # ms; cycle length: assumption [VERIFY], Wang reports no CS pacing cycle length
+stim[0].ptcl.npls      = 4
+stim[1].crct.type      = 3
+
+# ---- outputs ----
+# Local activation times: every upward crossing of -20 mV, written as node<TAB>time rows.
+num_LATs           = 1
+lats[0].ID         = act
+lats[0].all        = 1
+lats[0].measurand  = 0
+lats[0].threshold  = -20
+lats[0].mode       = 0
+dataout_e          = 3     # phi_e only on the listed bath nodes (electrode envelope box, FM-20)

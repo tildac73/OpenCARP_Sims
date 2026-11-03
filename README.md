@@ -1,67 +1,39 @@
-# eFOV final model (v3-reference)
+# eFOV final model (v4-reference, branch finalModelV2)
 
-A controlled 3D atrial slab with a straight transmural lesion boundary, simulated in openCARP, and the
-end-to-end analysis of the electrograms an Advisor-HD-Grid-like catheter would record over it:
-clinical-style voltage change points, compared with the exact tissue contribution to every recording.
+In-silico reconstruction of Wang et al.'s HD Grid effective-field-of-view study, with the exact
+contributing tissue of every electrogram as ground truth. Plan and decisions: project document
+`claude/final_model_plan_2026-11-03.md`; `docs/decision_log.md` (DL-2026-11-03-02, FM-01 to FM-22).
 
-Everything scientific is set in **`config/final_model.json`**; the model and its reasons are described in
-**`docs/final_model.md`**. Earlier development code (2D sheet, pilot, readiness kit, final settings run)
-is on the `pilot_v2` branch and in the git history.
+## Files that define the model
+| File | Holds |
+| --- | --- |
+| `config/model.par` | every openCARP setting (solver, time, cells, conductivities, lesion, bath, stimuli, outputs) |
+| `config/leadfield.par` | the openCARP Laplace solve used for lead fields (FM-14) |
+| `config/model.json` | `sweep`: variables, baselines, planned values; `fixed`: mesh, bath, electrodes, analysis |
+| `config/tuning.json` | beta tuned for a mesh and CV target (written by `efov tune --write-par`) |
+| `config/sweeps/oat_baseline.json` | the one-at-a-time sweep |
+| `reference/EFOV_analysis_pipeline.Rmd` | Wang's analysis, unedited (MD5 c739f13e6d07996b81d6f733f04f503d) |
+
+## Run order on the workstation (efov-runner)
+```bash
+export MPIEXEC_BIN=/usr/local/lib/opencarp/lib/petsc/bin/mpiexec
+python3 -m pytest tests -q                                    # unit tests (no openCARP)
+python3 checks/container_checks.py --out runs/checks --np 2   # W0 and C1, C3-C5, C8 on a small slab
+python3 -m efov plan                                          # mesh size, phi_e box, assumptions
+python3 -m efov tune --out runs/tune --np 24 --write-par      # W1: beta at 0.25 / 0.1 mm
+nohup python3 -m efov run --out runs/v4_reference --np 24 > runs/v4_reference.log 2>&1 &     # W2, inferior
+nohup python3 -m efov sweep config/sweeps/oat_baseline.json --out runs/oat --np 24 > runs/oat.log 2>&1 &
+```
+If W0 fails, set `fixed.groundTruth.leadFieldMethod` to `"python"` (pre-declared fallback, FM-14).
 
 ## Layout
+`efov/` one module per stage (`python -m efov --help`); `efov/opencarp/slab_experiment.py` the carputils
+experiment; `R/wang_replication.R` Wang's Rmd on one simulated slab; `checks/` openCARP checks;
+`notebooks/` the same stages step by step (`python notebooks/build_notebooks.py` regenerates them);
+`tests/` unit and synthetic end-to-end tests (`EFOV_RUN_OPENCARP=1` enables the real openCARP test).
 
-```
-config/final_model.json      every value of the model and analysis, with provenance
-config/test_small.json       small version for checking the code (minutes, 2 cores); not a result
-efov/                        the package, one module per step (see efov/__init__.py)
-  opencarp/slab_experiment.py   carputils experiment: one openCARP run
-  opencarp/solver.par           fixed openCARP solver settings
-notebooks/                   step-by-step notebooks 00-06 (same stages as the command line)
-R/bayesian_change_points.R   optional mcp fits of the primary profiles
-tests/                       unit tests and an opt-in real-openCARP end-to-end test
-docs/                        model description, decision and verification logs, parameter sources
-reference/                   the clinical analysis the change-point method mirrors
-```
-
-## Run it (workstation, inside `efov-runner`)
-
-```bash
-pip install pyamg                           # if not in the image: fast large extracellular solves
-export MPIEXEC_BIN=/usr/local/lib/opencarp/lib/petsc/bin/mpiexec
-
-python -m efov plan                                       # size, restart time, unconfirmed values
-python -m efov import-production-model 3D_Code/runs/final_v2/productionModel.json \
-       --write config/final_model.json                    # once: values chosen by the final settings run
-python -m efov dry --out runs/v3_reference --np 24        # check the openCARP commands
-nohup python -m efov run --out runs/v3_reference --np 24 > runs/v3_reference.log 2>&1 &
-python -m efov status --out runs/v3_reference
-```
-
-Or open `notebooks/00_model_and_settings.ipynb` and work through 00-06. Notebooks and command line
-use the same stages and the same output folder; either can resume the other.
-
-Stages: `preflight -> conditioning -> simulation -> physiology -> window -> electrograms ->
-measurements -> changePoints -> groundTruth -> report`. Each writes `runs/<name>/stages/<stage>.json`
-with a fingerprint of the settings it used. A rerun skips completed stages and **refuses outputs made
-with different settings** (use a new output folder). Analysis-only changes (for example change-point
-settings) invalidate only the stages that use them.
-
-## Outputs (`runs/<name>/`)
-
-| Path | Content |
-| --- | --- |
-| `model.json` | the configuration used |
-| `simulations/<condition>/` | openCARP output (vm.igb, phie.igb on the electrode layer, LATs), runRecord.json with the exact commands, log |
-| `physiology/` | per-beat checks and criteria |
-| `electrograms/` | window.json, unipolar electrograms (npz), forwardModelCheck.json |
-| `measurements/` | calibration, points (every recording, placement, noise realisation, with weights), traces, filter and profile checks |
-| `changePoints/` | fits, model selection, fit data, predictions, method.json |
-| `groundTruth/` | contributionField.npz (signed shares on 0.5 mm voxels), summary.csv, checks.json |
-| `acceptance.json`, `report.md`, `figures/` | summary |
-
-## Tests
-
-```bash
-python -m pytest tests -q                                  # unit tests (no openCARP needed)
-EFOV_RUN_OPENCARP=1 python -m pytest tests/test_end_to_end.py -q   # real openCARP, small config, ~20 min on 2 cores
-```
+## Outputs of a run (`runs/<name>/`)
+`simulations/<condition>/{prepace,run}.par` resolved openCARP files; `physiology/`, `electrograms/`,
+`measurements/` (points with PP and peak frequency), `export/` (Wang-format datasets), `changePoints/`
+(Wang's tables per dataset), `groundTruth/` (summary.csv, profiles.npz, fields_*.npz, shares_*.vtk),
+`report.md`, `acceptance.json`, `figures/`.

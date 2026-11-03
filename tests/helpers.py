@@ -26,9 +26,15 @@ def boxMesh(lower, upper, spacing):
     return grid.reshape(-1, 3), np.concatenate(elements)
 
 
-def finalConfig():
-    return json.loads((ROOT / "config" / "final_model.json").read_text())
+MODEL = ROOT / "config" / "model.json"
+SMALL = ROOT / "config" / "test_small.json"
 
 
-def smallConfig():
-    return json.loads((ROOT / "config" / "test_small.json").read_text())
+def boxWithBath(size, wall, bath, spacing):
+    """Kuhn-tetrahedral box: tissue |z| <= wall/2 (tag 1) inside bath (tag 0) on every side."""
+    lower = [-size[0] / 2 - bath, -size[1] / 2 - bath, -wall / 2 - bath]
+    upper = [size[0] / 2 + bath, size[1] / 2 + bath, wall / 2 + bath]
+    positions, elements = boxMesh(lower, upper, spacing)
+    centres = positions[elements].mean(axis=1)
+    inside = (np.abs(centres[:, 0]) < size[0] / 2) & (np.abs(centres[:, 1]) < size[1] / 2) & (np.abs(centres[:, 2]) < wall / 2)
+    return positions, elements, np.where(inside, 1, 0)

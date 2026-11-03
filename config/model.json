@@ -1,0 +1,135 @@
+{
+  "_about": "Final model v4-reference (plan claude/final_model_plan_2026-11-03.md, decisions FM-01 to FM-21). Every openCARP setting is in config/model.par. This file holds (1) 'sweep': the variables the parameter sweeps change, each with its baseline, the Methodology's planned values and what it acts on; (2) 'fixed': settings openCARP cannot read (mesh, bath geometry, electrodes, analysis). Keys starting with '_' are documentation. Units are in key names.",
+  "modelName": "v4-reference",
+  "parFile": "model.par",
+  "leadFieldParFile": "leadfield.par",
+
+  "sweep": {
+    "region": {
+      "baseline": "inferior", "planned": ["roof"], "actsOn": "label exported to Wang's inf0_roof1 column",
+      "_about": "Regions are parameter sets (FM-08): the 'roof' variant in config/sweeps sets wallMm 1.6 and uniform fibres."
+    },
+    "wallMm": {
+      "baseline": 1.1, "planned": [1.0, 1.5, 2.0, 2.5, 3.0], "actsOn": "geometry",
+      "_source": "Inferior posterior wall median 1.14 mm (Whitaker et al. 2021, CCTA, n = 193), rounded to the 0.1 mm transmural mesh (FM-08). Must be a multiple of fixed.tissue.spacingTransmuralMm."
+    },
+    "fibres": {
+      "baseline": {"model": "bilayer", "endocardialAngleDeg": 0.0, "epicardialAngleDeg": 90.0, "transitionDepthFraction": 0.5, "transitionWidthMm": 0.0},
+      "planned": [{"model": "uniform", "angleDeg": 0.0},
+                  {"model": "linearRotation", "endocardialAngleDeg": 0.0, "epicardialAngleDeg": 90.0}],
+      "actsOn": "geometry (.lon written per run)",
+      "_source": "Pashakhanloo et al. 2016: near-perpendicular layers, abrupt mid-wall transition in the posterior-inferior LA; constant on the roof. Angles are assumptions (none reported numerically). Angle from +x, counter-clockwise seen from the catheter (FM-06)."
+    },
+    "epicardialMedium": {
+      "baseline": "none", "planned": ["blood"], "actsOn": "geometry",
+      "_source": "none = no-flux epicardium (bath on the catheter side and laterally); blood = 5 mm bath on every side as Leenknegt et al. 2023 (FM-05)."
+    },
+    "scar": {
+      "baseline": "ablation", "planned": ["ablationPorated", "insulating"], "actsOn": "model.par overrides",
+      "options": {
+        "ablation": {},
+        "ablationPorated": {"gregion[1].g_el": 0.461, "gregion[1].g_et": 0.14, "gregion[1].g_en": 0.14},
+        "insulating": {"gregion[1].g_el": 1e-06, "gregion[1].g_et": 1e-06, "gregion[1].g_en": 1e-06}
+      },
+      "_source": "FM-07. ablation = healthy extracellular tensor (model.par); ablationPorated = sigma_i + sigma_e of healthy tissue (theoretical upper bound); insulating = earlier reference case. Intracellular lesion conductivity 1e-6 S/m in all three."
+    },
+    "waveAngleDeg": {
+      "baseline": 0.0, "planned": [30.0, 60.0, 90.0], "actsOn": "geometry (stimulus band)",
+      "_source": "Angle of the wave direction from +x; 0 = parallel to the lesion boundary, 90 = travelling toward the lesion (FM-17). Wang mapped during distal CS pacing: wavefronts reach the line at varied angles."
+    },
+    "gapsMm": {
+      "baseline": [0.25, 1.0], "planned": [[0.5], [2.0], [3.0]], "actsOn": "electrodes (analysis)",
+      "_source": "Electrode surface to tissue distance. Earlier pilot standoffs 0.25 and 1 mm; Methodology sweep 0-3 mm."
+    },
+    "electrodeRadiusMm": {"baseline": 0.5, "planned": [0.25, 1.0], "actsOn": "electrodes (analysis)",
+                          "_source": "HD Grid 1 mm electrodes (Wang supplement); Methodology diameter sweep 0.5-2 mm."},
+    "electrodeLengthMm": {"baseline": 1.0, "planned": [], "actsOn": "electrodes (analysis)"},
+    "gridSpacingMm": {"baseline": 4.0, "planned": [2.0, 3.0, 6.0], "actsOn": "electrodes (analysis)",
+                      "_source": "HD Grid 4 mm centre-to-centre (Wang supplement). 4 x 4 grid only; the dense virtual array is deferred (drop order)."},
+    "noiseSdMv": {"baseline": 0.005, "planned": [0.0025, 0.01, 0.02], "actsOn": "measurements (analysis)",
+                  "_source": "Gaussian white noise per electrode at the acquisition rate. Assumption [VERIFY]: no source (FM-19)."},
+    "cvTargetMPerS": {"baseline": 0.9, "planned": [0.7, 1.25], "actsOn": "tune stage (beta)",
+                      "_source": "van Schie et al. 2021 LA median 0.90 m/s; 0.70 and 1.25 m/s bracket reported central values (DL-2026-10-28-03)."},
+    "ionicModel": {"baseline": "Courtemanche", "planned": [], "actsOn": "model.par imp_region[0].im",
+                   "_source": "Koivumaki et al. 2011 is the planned sensitivity model; its openCARP name is [VERIFY] before it is listed here."}
+  },
+
+  "fixed": {
+    "tissue": {
+      "sizeMm": [40.0, 60.0],
+      "spacingInPlaneMm": 0.25,
+      "spacingTransmuralMm": 0.1,
+      "boundaryYmm": 0.0,
+      "_about": "Slab x in [-Lx/2, Lx/2], y in [-Ly/2, Ly/2], z in [-wall/2, wall/2]; catheter on +z. Lesion = tissue with y < boundaryYmm, transmural (FM-07). Mesh 0.25 mm in-plane, 0.1 mm through the wall (FM-04)."
+    },
+    "bath": {"thicknessMm": 5.0, "groundCubeMm": 1.0,
+             "_about": "Blood 0.74 S/m (model.par). Ground = 1 mm cube at the (max x, max y, max z) bath corner; no-flux outer walls (Leenknegt et al. 2023; DL-2026-11-02-02)."},
+    "stimulus": {"stripWidthMm": 0.5,
+                 "_about": "Transmembrane current on viable-tissue nodes within stripWidth of the trailing edge of the wave direction (FM-17); nodes touching a lesion element are excluded."},
+    "conditioning": {"beats": 1000, "_about": "Single Courtemanche cell paced with bench at the model.par cycle length (openCARP limit-cycle workflow)."},
+    "numerics": {
+      "prepacing": true, "prepacingMarginMs": 50.0,
+      "solverFlavor": "boomeramg", "fallbackSolverFlavor": "petsc",
+      "_about": "Beats before the analysis run monodomain (no bath solve), then restart with the bath (DL-2026-11-01-06, VL-2026-11-01-04). boomeramg: DL-2026-11-01-07."
+    },
+    "electrodes": {
+      "centreXmm": 0.0,
+      "centreYmm": {"fromMm": -16.0, "toMm": 16.0, "stepMm": 0.5},
+      "_about": "4 x 4 grid, rows along y, columns along x; cylinders with axes along x. An electrode is the set of mesh nodes inside its cylinder (FM-14); its potential is the mean phi_e over that set."
+    },
+    "analysis": {
+      "window": {"leadMs": 15.0, "trailMs": 30.0, "minimumAfterStimulusMs": 5.0,
+                 "_about": "DL-2026-10-28-08: from intact last-beat activation of catheter-facing nodes under the grid (half extent 1.5 x grid spacing + electrode length / 2)."},
+      "filterHistoryMs": 200.0,
+      "acquisitionRateHz": 2000.0,
+      "differentialBandHz": [30.0, 500.0],
+      "filterOrder": 2,
+      "_filters": "FM-09, FM-22: rational resampling of every unipole from the 5 kHz simulation output to the EnSite X acquisition rate (scipy.signal.resample_poly, Kaiser-window FIR anti-alias; Europace 2024;26:euae154), then 30-500 Hz causal Butterworth band-pass for bipolar and omnipolar (Wang supplement). Clinical unipolar filter unknown [VERIFY]: unipoles get only the resampling filter.",
+      "recordings": "all",
+      "omniAngleStepDeg": 2,
+      "ppWindowAroundPfMs": 30.0,
+      "calibration": {"targetBipolarMv": 1.44, "referenceCentreYmm": 0.0, "referenceGapMm": 0.25, "fixedGain": null,
+                      "_about": "FM-19. 1.44 mV = Wang Table 2 median healthy-tissue bipolar voltage, inferior wall. The gain is computed once in the inferior reference run (fixedGain null) and passed unchanged to every other run by the sweep runner."},
+      "noise": {"repeats": 3, "seed": 1701},
+      "peakFrequency": {"minimumHz": 30.0, "maximumHz": 500.0, "stepHz": 1.0, "morletOmega0": 6.0,
+                        "magnitudeGateFraction": 0.1, "minimumPpMv": 0.04,
+                        "_about": "FM-10. EnSite OT Near Field approximation: complex Morlet CWT (L1-normalised), PF trace = frequency of the largest magnitude per sample, samples below magnitudeGateFraction of the window maximum ignored, PF = highest remaining trace value. PF undetectable when PP < 0.04 mV (Europace 2024). Wavelet, scales and gate are assumptions."}
+    },
+    "export": {"boundaryOffsetMm": 3.0,
+               "_about": "Wang's DistAcrossPath = distance from the lesion-centre line; her BOUNDARY_OFFSET is 3 mm, so DistAcrossPath = distance inside the lesion - 3 mm."},
+    "groundTruth": {
+      "placementsYmm": {"fromMm": -16.0, "toMm": 16.0, "stepMm": 2.0},
+      "nearFieldRadiusMm": 4.0,
+      "depthSplitFraction": 0.5,
+      "curveStepMm": 0.25,
+      "leadFieldMethod": "openCARP",
+      "fieldRecordings": {"uni": ["E5"], "bi": ["E5-E6|E9"], "omni": ["E5-E6-E9"]},
+      "shapeLevels": [0.5, 0.8, 0.9],
+      "_about": "FM-15, FM-16, FM-21. Shares s_e for every recording at these placements (classes, profiles, shape descriptors); full element fields (.vtk, npz) for fieldRecordings. leadFieldMethod 'python' is the pre-declared fallback of FM-14."
+    },
+    "tune": {"stripSizeMm": [20.0, 1.0, 0.5], "measureFromMm": 5.0, "measureToMm": 15.0, "beats": 3,
+             "relativeTolerance": 0.01, "maximumIterations": 8,
+             "_about": "FM-18 (DL-2026-10-28-10 method): strip from the same mesher resolution, fibres along x, monodomain; beta <- beta (CV / target)^2."},
+    "acceptance": {
+      "physiology": {
+        "activationThresholdMv": -20.0, "regionXmm": [-8.0, 8.0], "viableRegionYmm": [1.0, 24.0],
+        "responseWindowMs": [0.0, 400.0], "maximumPlaneResidualMs": 2.0, "maximumDirectionErrorDeg": 5.0,
+        "maximumBeatLatencyChangeMs": 2.0, "maximumBeatAmplitudeChange": 0.05, "maximumBeatApdChangeMs": 5.0,
+        "_about": "Project engineering criteria (DL-2026-10-28-05), not validated biological limits. Measured on catheter-facing tissue nodes. The CV gate is in the tune stage (FM-18)."
+      },
+      "profile": {"farRegionMm": 10.0, "maximumFarRelativeRange": 0.15, "minimumTransitionFraction": 0.2,
+                  "maximumFilterHistoryError": 0.001},
+      "groundTruth": {"shareSumDeviation": 1e-06, "reconstructionResidual": 0.001, "scaleOverGainDeviation": 0.001}
+    },
+    "compactAfterReport": false
+  },
+
+  "provenance": {
+    "tissue": {"status": "decided", "source": "FM-04 (mesh), FM-08 (wall); Roberts and Scher 1982 conductivities (DL-2026-11-02-03)"},
+    "beta": {"status": "tuned per mesh", "source": "FM-18; config/tuning.json records the mesh and CV target the model.par value was tuned for"},
+    "pacing": {"status": "assumption", "source": "500 ms cycle length [VERIFY]; 4 beats and dt 20 us from the 1 Nov rule outcomes, fixed by FM-03"},
+    "noise": {"status": "assumption", "source": "5 uV [VERIFY]"},
+    "unipolarFilter": {"status": "assumption", "source": "anti-alias only [VERIFY], FM-09"},
+    "peakFrequencyWavelet": {"status": "assumption", "source": "FM-10; EnSite algorithm proprietary"}
+  }
+}

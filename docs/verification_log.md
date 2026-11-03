@@ -258,3 +258,18 @@ numerical verification and physiological validation. Newest last.
 - **Unit tests:** 29 pass (`python -m pytest tests -q`), including the reciprocity identity, method-of-images references, insulating-lesion and sigma_m source tensors, IGB merge, activation merge, recording weights, change-point recovery and eligibility rules.
 - **Notebooks:** 00-06 executed without error against this run.
 - **Not verified here:** full-size timing and memory on the workstation; the workstation build (the forward-model check runs there in every run); values awaiting the final settings run.
+
+## VL-2026-11-03-02 - finalModelV2: software verification without openCARP (Claude's sandbox)
+- **Type:** Unit tests and a synthetic end-to-end analysis; openCARP could not be installed in the sandbox, so nothing here exercises openCARP. **Result:** see items.
+- **Unit tests** (`python -m pytest tests -q`): parameter files (overrides in place, clashes rejected), configuration (validation, scar options, fingerprints: electrode and noise variants reuse the simulation, wall and scar do not; beta excluded), mesh building (no-flux epicardium trim, fibres, stimulus band for 0 and 90 deg, ground cube, phi_e box), peak frequency, measurements, export, sweep variants, mesh I/O and VTK, ground truth.
+- **Peak frequency (C6):** pure tones 100/250/450 Hz recovered exactly (1 Hz grid); 6- and 12-cycle bursts within 1 Hz; 3-cycle bursts 1-3 Hz high (+0.7 % at 450 Hz). The pre-declared C6 criterion (bursts within 2 Hz) fails for 3-cycle bursts. Cause: the "highest PF trace value" rule on a broadband burst, not the transform (exact for tones). Recorded, criterion not changed. Resampling 4 vs 2 kHz: same PF (302 Hz for a 300 Hz burst).
+- **Resampling (FM-22):** timing preserved (zero crossings identical); passband ripple of resample_poly's default filter 0.03-0.13 % at 30-500 Hz. Criterion set from its downstream effect: below 0.5 %, a tenth of the 5 % PP tolerance (DL-2026-10-28-05).
+- **Ground truth (Python route):** on a box with a lesion strip, contributions reproduce the forward signal of K phi = -S_m Vm to 1e-7; reciprocity z_A(B) = z_B(A) to 1e-9; shares and class fractions sum to 1.
+- **Not verified here:** anything that runs openCARP (W0, C1, C3, C4, C5, C9), Wang's Rmd in R (C8; no R in the sandbox). checks/container_checks.py runs them in efov-runner.
+
+## VL-2026-11-03-03 - finalModelV2: synthetic end-to-end analysis (no openCARP)
+- **Type:** Integration test (`tests/test_synthetic_pipeline.py`). **Result:** Pass.
+- **Method:** config/test_small.json mesh built with efov.meshbuild (no-flux epicardium, bilayer fibres); analytic planar-wave Vm over 4 beats; phi_e at the output nodes from the exact discrete pseudo-bidomain problem (K phi = -S_m Vm, corner ground); openCARP file layout (vm.igb, phie.igb after the restart time, act-thresh.dat, ground.vtx, phieNodes.npy). Stages window -> electrograms -> measurements -> export -> groundTruth (Python lead fields) -> ground-truth figures.
+- **Result:** 1,220 ground-truth recordings; share-sum deviation 1.3e-15; reconstruction residual max 3.3e-7; scale/gain deviation 7.3e-8. Figures render (sections, sequence, profiles).
+- **Bugs found and fixed by this test:** the window was rounded to the 0.2 ms output step, so its end could fall between 2 kHz samples; window edges are now rounded outward to the common multiple of both steps (1 ms). profiles.npz stored recording IDs as an object array (not loadable without pickle); now strings.
+- **Not tested here:** physiology on real openCARP Vm, the openCARP Laplace route (W0), the R stage (C8).

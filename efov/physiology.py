@@ -1,9 +1,11 @@
 """Physiology checks of each tissue run, and the measurement window derived from activation.
 
-Checks on the last three beats, in a viable region away from stimulus, edges and boundary
-(acceptance.physiology): one activation per beat, complete repolarisation inside the response
-window, quiet lesion core, planar wave in +x, beat-to-beat stability of latency, amplitude and
-APD90, and conduction velocity within tolerance of the target. These are project engineering
+Checks on the last three beats, on catheter-facing tissue nodes in a viable region away from the
+stimulus, edges and boundary (acceptance.physiology): one activation per beat, complete
+repolarisation inside the response window, quiet lesion core, a planar wave in the intended
+direction (wave angle, FM-17), and beat-to-beat stability of latency, amplitude and APD90. The
+surface CV is reported, not gated: the CV gate is the tune stage (FM-18), because fibre models other
+than uniform change the slab CV, as they physically should. These are project engineering
 criteria, not validated biological limits.
 
 Activation time = first linearly interpolated upward crossing of the threshold in Vm sampled at
@@ -15,8 +17,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .config import beatCount, cycleLengthMs, sampleStepMs, spacingMm, stimulusDurationMs
 from .geometry import signedDistance
 from .io import firstActivation, igbTimes, readActivations, readIgb, saveJson
+from .meshbuild import waveDirection
 
 
 def activationTimes(timeMs, voltageMv, thresholdMv):
@@ -47,41 +51,44 @@ def apd90(timeMs, voltageMv, activationMs):
     return result
 
 
-def activationPlane(positions, times):
-    """Least-squares plane t = a.x + c through all depths: speed = 1/|a|, direction error from +x."""
+def activationPlane(positions, times, direction):
+    """Least-squares plane t = a.(x, y) + c through surface nodes: speed = 1/|a|, angle error from direction."""
     valid = np.isfinite(times)
     if valid.sum() < 4:
         return dict(speedMPerS=np.nan, directionErrorDeg=np.nan, planeResidual95Ms=np.nan)
-    design = np.column_stack([positions[valid], np.ones(valid.sum())])
+    design = np.column_stack([positions[valid, :2], np.ones(valid.sum())])
     coefficients = np.linalg.lstsq(design, times[valid], rcond=None)[0]
     residual = times[valid] - design @ coefficients
-    gradient = coefficients[:3]                                       # ms / mm
+    gradient = coefficients[:2]                                       # ms / mm
     magnitude = np.linalg.norm(gradient)
+    cosine = float(gradient @ direction / magnitude) if magnitude > 0 else np.nan
     return dict(speedMPerS=float(1 / magnitude) if magnitude > 0 else np.nan,    # mm/ms = m/s
-                directionErrorDeg=float(np.degrees(np.arccos(np.clip(gradient[0] / magnitude, -1, 1)))) if magnitude > 0 else np.nan,
+                directionErrorDeg=float(np.degrees(np.arccos(np.clip(cosine, -1, 1)))) if magnitude > 0 else np.nan,
                 planeResidual95Ms=float(np.percentile(np.abs(residual), 95)))
 
 
 def checkCondition(config, condition, job, tissue):
     """Per-beat summary table and named pass/fail criteria for one run."""
-    settings = config["acceptance"]["physiology"]
-    pace, spacing = config["pacing"], config["tissue"]["spacingMm"]
-    boundary = config["lesion"]["boundaryYmm"]
+    settings = config["fixed"]["acceptance"]["physiology"]
+    cycle, spacing = cycleLengthMs(config), spacingMm(config)[0]
+    boundary = config["fixed"]["tissue"]["boundaryYmm"]
     positions = tissue["tissuePositions"]
     distance = signedDistance(positions, boundary)
-    region = ((positions[:, 0] >= settings["regionXmm"][0]) & (positions[:, 0] <= settings["regionXmm"][1])
+    surface = np.isclose(positions[:, 2], positions[:, 2].max())
+    region = (surface & (positions[:, 0] >= settings["regionXmm"][0]) & (positions[:, 0] <= settings["regionXmm"][1])
               & (positions[:, 1] >= settings["viableRegionYmm"][0]) & (positions[:, 1] <= settings["viableRegionYmm"][1])
               & (distance < -spacing))
+    direction = waveDirection(config["values"]["waveAngleDeg"])
     if region.sum() < 4:
         raise ValueError("Physiology region holds fewer than 4 viable nodes; check acceptance.physiology")
     lesionCore = distance > 2 * spacing
     times = igbTimes(Path(job) / "vm.igb")
     response = settings["responseWindowMs"]
     rows, previous = [], None
-    last = pace["beatCount"] - 1
+    last = beatCount(config) - 1
     for beat in range(last - 2, last + 1):
-        start = beat * pace["cycleLengthMs"]
-        frames = slice(int(np.searchsorted(times, start)), int(np.searchsorted(times, start + pace["cycleLengthMs"])))
+        start = beat * cycle
+        frames = slice(int(np.searchsorted(times, start)), int(np.searchsorted(times, start + cycle)))
         local = times[frames] - start
         voltage = readIgb(Path(job) / "vm.igb", frames)
         activation, count = activationTimes(local, voltage, settings["activationThresholdMv"])
@@ -95,7 +102,7 @@ def checkCondition(config, condition, job, tissue):
                    apdComplete=bool(np.isfinite(apd).all()),
                    lesionCoreCrossings=int(count[lesionCore].sum()) if condition == "lesion" else 0,
                    medianApd90Ms=float(np.nanmedian(apd)) if np.isfinite(apd).any() else np.nan,
-                   medianAmplitudeMv=float(np.median(amplitude)), **activationPlane(positions[region], roiTimes))
+                   medianAmplitudeMv=float(np.median(amplitude)), **activationPlane(positions[region], roiTimes, direction))
         if previous is not None:
             row.update(latencyChangeMs=float(np.nanmax(np.abs(roiTimes - previous[0]))),
                        amplitudeRelativeChange=float(np.max(np.abs(amplitude - previous[1]) / np.maximum(previous[1], 1e-12))),
@@ -105,7 +112,7 @@ def checkCondition(config, condition, job, tissue):
     table = pd.DataFrame(rows)
     compared = table.iloc[1:]
     lastSpeed = float(table.speedMPerS.iloc[-1])
-    target = config["tissue"]["cvTargetMPerS"]
+    target = config["values"]["cvTargetMPerS"]
     criteria = {
         "oneActivationPerBeat": bool(table.capturePassed.all()),
         "responseInsideWindow": bool(table.responseInsideWindow.all()),
@@ -116,9 +123,9 @@ def checkCondition(config, condition, job, tissue):
         "stableActivation": bool((compared.latencyChangeMs <= settings["maximumBeatLatencyChangeMs"]).all()),
         "stableAmplitude": bool((compared.amplitudeRelativeChange <= settings["maximumBeatAmplitudeChange"]).all()),
         "stableApd": bool((compared.apdChangeMs <= settings["maximumBeatApdChangeMs"]).all()),
-        "conductionVelocity": bool(abs(lastSpeed - target) / target <= settings["cvRelativeTolerance"]),
     }
-    return table, criteria, dict(regionNodes=int(region.sum()), lastBeatSpeedMPerS=lastSpeed, targetMPerS=target)
+    return table, criteria, dict(regionNodes=int(region.sum()), lastBeatSurfaceSpeedMPerS=lastSpeed, stripTargetMPerS=target,
+                                 note="Surface CV reported, not gated; the CV gate is the tune stage (FM-18).")
 
 
 def runPhysiology(config, jobs, tissues, folder):
@@ -138,9 +145,18 @@ def runPhysiology(config, jobs, tissues, folder):
 def lastBeatActivation(config, job, tissue):
     """Earliest activation of every tissue node in the last beat (ms after that beat's stimulus)."""
     nodes, times = readActivations(Path(job) / "act-thresh.dat")
-    beatStart = (config["pacing"]["beatCount"] - 1) * config["pacing"]["cycleLengthMs"]
+    beatStart = (beatCount(config) - 1) * cycleLengthMs(config)
     count = len(tissue["tissueNodes"])
-    return firstActivation(nodes, times, count, beatStart, beatStart + config["pacing"]["cycleLengthMs"]) - beatStart
+    return firstActivation(nodes, times, count, beatStart, beatStart + cycleLengthMs(config)) - beatStart
+
+
+def commonStepMs(*steps):
+    """Smallest time step that is a whole multiple of every given step (ms), e.g. 0.2 and 0.5 -> 1.0."""
+    from fractions import Fraction
+    from math import lcm
+    fractions = [Fraction(step).limit_denominator(10000) for step in steps]
+    denominator = lcm(*(f.denominator for f in fractions))
+    return float(Fraction(lcm(*(int(f * denominator) for f in fractions)), denominator))
 
 
 def deriveWindow(config, job, tissue):
@@ -149,21 +165,26 @@ def deriveWindow(config, job, tissue):
     start = max(first - lead, stimulus end + minimum), end = last + trail; rounded outward to the output
     step. Decided before any electrogram is read (DL-2026-10-28-08).
     """
-    rule, pace = config["analysis"]["window"], config["pacing"]
+    rule = config["fixed"]["analysis"]["window"]
+    v = config["values"]
+    halfExtent = abs(config["fixed"]["electrodes"]["centreXmm"]) + 1.5 * v["gridSpacingMm"] + v["electrodeLengthMm"] / 2
     positions = tissue["tissuePositions"]
     first = lastBeatActivation(config, job, tissue)
-    under = np.isclose(positions[:, 2], positions[:, 2].max()) & (np.abs(positions[:, 0]) <= rule["gridHalfExtentXmm"])
+    under = np.isclose(positions[:, 2], positions[:, 2].max()) & (np.abs(positions[:, 0]) <= halfExtent)
     if not np.isfinite(first[under]).all():
         raise ValueError("Not every surface node under the grid activated in the last beat")
     earliest, latest = float(first[under].min()), float(first[under].max())
-    step = config["numerics"]["sampleStepMs"]
-    start = max(earliest - rule["leadMs"], pace["stimulusDurationMs"] + rule["minimumAfterStimulusMs"])
+    cycle, stimulus = cycleLengthMs(config), stimulusDurationMs(config)
+    step = commonStepMs(sampleStepMs(config), 1000.0 / config["fixed"]["analysis"]["acquisitionRateHz"])
+    start = max(earliest - rule["leadMs"], stimulus + rule["minimumAfterStimulusMs"])
     end = latest + rule["trailMs"]
+    # Rounded outward to a step on both the output grid and the acquisition grid (FM-22), so every
+    # window boundary is a sample of the openCARP output and of the resampled electrograms.
     start, end = np.floor(start / step + 1e-9) * step, np.ceil(end / step - 1e-9) * step
-    if not 0 <= start < end < pace["cycleLengthMs"]:
+    if not 0 <= start < end < cycle:
         raise ValueError(f"Derived window {start}-{end} ms does not fit in one cycle")
-    atFloor = bool(np.isclose(start, np.floor((pace["stimulusDurationMs"] + rule["minimumAfterStimulusMs"]) / step + 1e-9) * step))
-    return dict(windowMs=[round(float(start), 6), round(float(end), 6)], gridFirstActivationMs=earliest,
+    atFloor = bool(np.isclose(start, np.floor((stimulus + rule["minimumAfterStimulusMs"]) / step + 1e-9) * step))
+    return dict(windowMs=[round(float(start), 6), round(float(end), 6)], gridHalfExtentXmm=halfExtent, gridFirstActivationMs=earliest,
                 gridLastActivationMs=latest, nodesUsed=int(under.sum()), startsAtStimulusFloor=atFloor,
                 note=("Window starts at the stimulus floor: far-field from the pacing strip may enter it (DL-2026-10-28-08)."
                       if atFloor else ""))
