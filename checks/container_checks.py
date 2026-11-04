@@ -8,16 +8,18 @@ These are the checks of the final model plan that cannot run without openCARP. C
 the plan (claude/final_model_plan_2026-11-03.md, Section 4) before any result was seen. By decision
 FM-26 no check compares openCARP outputs with other openCARP outputs or with our own solver.
   C1  mesher: per-axis resolution; bath above and beside the tissue only; zero bath fibres
-  W0  openCARP lead fields (FM-14, FM-23): the Laplace mode accepts a total-current extracellular
-      stimulus and writes a whole-mesh potential (finite, not all zero); time per Laplace run and the
-      estimated cost of the production lead fields (diagnostic)
+  W0  lead fields (FM-14, FM-23, FM-31): the configured route gives a finite, non-zero lead field with a
+      positive potential at the injecting electrode; its cost per electrode and a crude production estimate.
+      Diagnostic: whether openCARP's Laplace mode applies the current stimulus (it did not on 19.0.0)
   C4  openCARP reads the written fibre file: with fibres at 90 deg the x-speed falls to the transverse
-      speed (ratio within 10 % of sqrt(sigma_m,t / sigma_m,l))
+      speed (ratio within 10 % of sqrt(sigma_m,t / sigma_m,l)); C4p repeats it at the production mesh
+      spacing and tuned beta (the 0.5 mm test mesh under-resolves the slow transverse wave)
   C5  lesion strip (FM-24): viable tissue activates every node; neither the lesion strip nor the
       isolated tissue beyond it activates
   C8  Wang's Rmd runs through R/wang_replication.R on a synthetic dataset; her lm-replaced Table 3
       slope equals a direct least-squares fit
-If W0 fails, the pre-declared fallback is fixed.groundTruth.leadFieldMethod = "python" (FM-14).
+openCARP 19.0.0 Laplace mode ignores current stimuli (W0 diagnostic, 4 Nov 2026), so the lead fields use the
+pre-declared fallback leadFieldMethod = "python" (FM-14, FM-31).
 Every check is recorded in <out>/checks_report.json; a failure never stops the other checks.
 """
 import argparse
@@ -63,22 +65,45 @@ def checkMesh(config, job, tissue):
 
 
 def checkLeadFields(config, job, tissue, folder, processCount):
+    """W0. (a) Diagnostic: does openCARP's Laplace mode apply the 1 uA current stimulus? (b) The lead-field
+    route in config (FM-14 fallback 'python' since FM-31): finite, non-zero, and its cost per electrode.
+
+    (a) failed on openCARP 19.0.0 (4 Nov 2026): the written potential is exactly zero, although openCARP
+    reports the scaled current density. It stays as a diagnostic so a future build can be re-tested.
+    """
     from efov.electrograms import electrodeSets
     layout, sets = electrodeSets(config, tissue)
     nearest = int(np.argmin(np.linalg.norm(layout["uniqueCentres"][:, :2], axis=1)))
     ground = readVertices(job / "ground.vtx")
+    result = {}
+    try:
+        z = leadfield.openCarpLeadField(config, tissue["meshBase"], ground, sets[nearest], len(tissue["positions"]), folder / "laplace0", processCount)
+        result["openCarpLaplace"] = dict(runs=True, finite=bool(np.isfinite(z).all()), maxAbsMvPerUa=float(np.abs(z).max()),
+                                         appliesCurrent=bool(np.abs(z).max() > 0))
+    except Exception as error:
+        result["openCarpLaplace"] = dict(runs=False, error=f"{type(error).__name__}: {error}", appliesCurrent=False)
+    method = config["fixed"]["groundTruth"]["leadFieldMethod"]
     started = time.time()
-    z = leadfield.openCarpLeadField(config, tissue["meshBase"], ground, sets[nearest], len(tissue["positions"]), folder / "laplace0", processCount)
-    seconds = time.time() - started
+    if method == "python":
+        solver = leadfield.PythonLeadFieldSolver(config, tissue, ground)
+        setupSeconds = time.time() - started
+        started = time.time()
+        z = solver.leadField(sets[nearest])
+        solveSeconds = time.time() - started
+    else:
+        setupSeconds, z = 0.0, None
+        z = leadfield.openCarpLeadField(config, tissue["meshBase"], ground, sets[nearest], len(tissue["positions"]), folder / "laplace1", processCount)
+        solveSeconds = time.time() - started
     production = cfg.loadConfig()
     electrodes = len(electrodeLayout(production)["uniqueCentres"])
     scale = cfg.meshNodeCount(production) / len(tissue["positions"])
-    result = dict(laplaceAcceptsCurrent=True, leadFieldOutputFile=json.loads((folder / "laplace0" / "leadfield.json").read_text())["output"],
-                  finite=bool(np.isfinite(z).all()), nonZero=bool(np.abs(z).max() > 0),
-                  secondsPerLaplaceRunSmall=float(seconds), productionElectrodesPerCondition=electrodes,
-                  productionHoursPerConditionCrude=float(seconds * scale * electrodes / 3600),
-                  note="Crude linear scaling by node count; the production cost is measured by the first production run")
-    result["passed"] = bool(result["finite"] and result["nonZero"])
+    result.update(method=method, finite=bool(np.isfinite(z).all()), nonZero=bool(np.abs(z).max() > 0),
+                  electrodePotentialMvPerUa=float(z[sets[nearest]].mean()),
+                  setupSecondsSmall=float(setupSeconds), secondsPerLeadFieldSmall=float(solveSeconds),
+                  nodesSmall=int(len(tissue["positions"])), productionElectrodesPerCondition=electrodes,
+                  productionCoreHoursPerConditionCrude=float(solveSeconds * scale * electrodes / 3600),
+                  note="Crude linear scaling by node count (AMG-preconditioned CG grows slightly faster); one core per solve")
+    result["passed"] = bool(result["finite"] and result["nonZero"] and result["electrodePotentialMvPerUa"] > 0)
     return result
 
 
@@ -92,11 +117,28 @@ def surfaceSpeedX(tissue, job):
     return float(1 / np.polyfit(p[use, 0], first[use], 1)[0])
 
 
-def checkFibres(folder, processCount):
+def atProductionSpacing(config):
+    """The small slab at the production mesh spacing, with the beta tuned for that mesh (C4 at production spacing)."""
+    production = cfg.loadConfig()
+    beta = cfg.tunedBetaFor(production)
+    if beta is None:
+        raise RuntimeError("beta is not tuned for the production mesh: run `python -m efov tune --write-par` first")
+    config = cfg.withParOverrides(config, {"imp_region[0].cellSurfVolRatio": beta})   # reloads the file, so first
+    config["fixed"] = json.loads(json.dumps(config["fixed"]))
+    for key in ("spacingInPlaneMm", "spacingTransmuralMm"):
+        config["fixed"]["tissue"][key] = production["fixed"]["tissue"][key]
+    return config
+
+
+def checkFibres(folder, processCount, productionSpacing=False):
+    """C4 (criterion fixed in the plan: ratio within 10 % of the continuum value), on the small slab's own
+    mesh; with productionSpacing the same measurement at the production mesh (reported beside it)."""
     speeds = {}
     for angle in (0.0, 90.0):
         config = cfg.loadConfig(SMALL, {"fibres": {"model": "uniform", "angleDeg": angle}})
-        job, tissue = shortRun(config, "intact", folder / f"fibres{angle:.0f}", processCount)
+        if productionSpacing:
+            config = atProductionSpacing(config)
+        job, tissue = shortRun(config, "intact", folder / f"fibres{angle:.0f}{'_production' if productionSpacing else ''}", processCount)
         speeds[angle] = surfaceSpeedX(tissue, job)
     config = cfg.loadConfig(SMALL)
     regions, _ = leadfield.principalConductivities(config)
@@ -104,8 +146,9 @@ def checkFibres(folder, processCount):
     sigmaM = gi * ge / (gi + ge)
     expected = float(np.sqrt(sigmaM[1] / sigmaM[0]))
     ratio = speeds[90.0] / speeds[0.0]
-    return dict(speedAlongFibresMPerS=speeds[0.0], speedAcrossFibresMPerS=speeds[90.0], ratio=ratio, expectedContinuumRatio=expected,
-                passed=bool(abs(ratio - expected) / expected <= 0.10))
+    return dict(spacingMm=cfg.spacingMm(atProductionSpacing(cfg.loadConfig(SMALL)) if productionSpacing else config).tolist(),
+                speedAlongFibresMPerS=speeds[0.0], speedAcrossFibresMPerS=speeds[90.0], ratio=ratio, expectedContinuumRatio=expected,
+                relativeDifference=float((ratio - expected) / expected), passed=bool(abs(ratio - expected) / expected <= 0.10))
 
 
 def checkLesionStrip(config, job, tissue):
@@ -152,8 +195,12 @@ def checkWangReplication(folder):
     if code != 0 or status is None:
         return dict(passed=False, error=f"R exit {code}; see {folder / 'wang.log'}")
     table3 = pd.read_csv(out / "tables" / "Table3_mixed_models_REML.csv")
-    bipolar = data[(data.file == "merged_rectangle_summary_euclidean.xlsx") & (data.uni1_bi2_omni3 == 2)]
-    bipolar = bipolar[(bipolar.DistAcrossPath + 3 > 0) & (bipolar.DistAcrossPath + 3 < 15) & (bipolar.PP > 0.01)]
+    # Wang's 'volt' dataset: 0 < Dist < 15 mm, PP > 0.01 mV, then PP above its 99.9th percentile (over all
+    # electrode kinds of the file, R quantile type 7 = numpy 'linear') removed; the bipolar slope is fitted on that.
+    volt = data[data.file == "merged_rectangle_summary_euclidean.xlsx"]
+    volt = volt[(volt.DistAcrossPath + 3 > 0) & (volt.DistAcrossPath + 3 < 15) & (volt.PP > 0.01)]
+    volt = volt[volt.PP <= np.quantile(volt.PP, 0.999)]
+    bipolar = volt[volt.uni1_bi2_omni3 == 2]
     direct = float(np.polyfit(bipolar.DistAcrossPath + 3, np.log(bipolar.PP), 1)[0])
     row = table3[(table3.Electrode == "Bipolar") & (table3.Metric == "Voltage")]
     fitted = float(row.b1.iloc[0]) if len(row) and row.model.iloc[0] == "Exponential" else float("nan")
@@ -167,7 +214,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", default=str(REPOSITORY / "runs" / "checks"))
     parser.add_argument("--np", type=int, default=2)
-    parser.add_argument("--only", nargs="*", help="subset of C1 W0 C4 C5 C8")
+    parser.add_argument("--only", nargs="*", help="subset of C1 W0 C4 C4p C5 C8")
     args = parser.parse_args()
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -195,12 +242,13 @@ def main():
     record("C1", lambda: checkMesh(config, *baseRun()))
     record("W0", lambda: checkLeadFields(config, *baseRun(), out / "leadfields", args.np))
     record("C4", lambda: checkFibres(out, args.np))
+    record("C4p", lambda: checkFibres(out, args.np, productionSpacing=True))
     record("C5", lambda: checkLesionStrip(config, *baseRun()))
     record("C8", lambda: checkWangReplication(out))
     print("\nSummary:", {k: ("PASS" if v.get("passed") else "FAIL") for k, v in report.items()})
     print(f"Report: {out / 'checks_report.json'}")
-    if not report.get("W0", {}).get("passed", True):
-        print("W0 failed: set fixed.groundTruth.leadFieldMethod to \"python\" in config/model.json (pre-declared fallback, FM-14).")
+    if not report.get("W0", {}).get("openCarpLaplace", {}).get("appliesCurrent", True):
+        print("W0 diagnostic: openCARP's Laplace mode did not apply the current stimulus; the lead fields use the python route (FM-14, FM-31).")
 
 
 if __name__ == "__main__":

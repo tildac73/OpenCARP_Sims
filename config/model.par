@@ -31,7 +31,7 @@ tend    = 2000            # ms = 4 beats x 500 ms (FM-03)
 # ---- cells ----
 num_imp_regions             = 1
 imp_region[0].im            = Courtemanche     # [sweep: ionicModel] Courtemanche et al. 1998, unmodified
-imp_region[0].cellSurfVolRatio = 0.0218        # 1/um; [tuned] set by `python -m efov tune --write-par` (FM-18); 0.0218 was the 0.5 mm value
+imp_region[0].cellSurfVolRatio = 0.027292021021150175  # 1/um; [tuned] 0.9015 m/s strip CV at [0.25, 0.25, 0.1] mm (FM-18)
 
 # ---- conductivity regions (S/m) ----
 # Tissue: Roberts and Scher 1982 (canine LV in situ), measured magnitudes and ratios (DL-2026-11-02-03).

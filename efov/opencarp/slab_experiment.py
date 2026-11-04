@@ -116,6 +116,10 @@ def overridesFor(spec, endMs):
     cycle = float(model["stim[0].ptcl.bcl"])
     result = dict(spec["parOverrides"])
     result.update({"tend": float(endMs), "stim[0].ptcl.npls": int(math.ceil(endMs / cycle - 1e-9))})
+    if endMs < cycle:
+        # Short verification runs (one pulse): openCARP rejects bcl > tend ("above the maximum").
+        # bcl = tend with one pulse gives the same single stimulus at ptcl.start.
+        result["stim[0].ptcl.bcl"] = float(endMs)
     return result
 
 
