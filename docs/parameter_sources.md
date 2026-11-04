@@ -65,5 +65,5 @@ Estimate only, from the pilot (0.352 m/s at monodomain sigma_l 0.136 S/m, 0.5 mm
 | Ablation lesion width | 5.6 mm strip | 5.6 +- 1.2 mm | Wang supplement, citing Friedman et al. 2021 (not read directly) | decided, [VERIFY] primary source |
 | Clinical bipolar voltage | not applied | 1.44 mV inferior, 0.97 mV roof (healthy, median) | Wang Table 2 | reference only (FM-25) |
 | Near/far lateral cut-off | 4 mm | none | one HD Grid electrode spacing; Schlageter et al. 2024's 4 mm is electrode-to-tissue distance | convention (FM-30) |
-| Forward model | monodomain Vm, sigma_i source | monodomain + forward model: electrograms indistinguishable from bidomain | Potse et al. 2006, IEEE TBME 53(12):2425-2435 (abstract read; bibliographic record checked 4 Nov 2026) | decided (FM-23) |
+| Forward model | monodomain Vm, sigma_i source | monodomain + forward model: electrograms indistinguishable from bidomain | Potse et al. 2006, IEEE TBME (abstract read; volume/pages [VERIFY]) | decided (FM-23) |
 
