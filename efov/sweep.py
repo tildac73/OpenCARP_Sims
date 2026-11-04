@@ -84,28 +84,211 @@ def noiseDoublingTable(out, modelConfigPath):
     return summary
 
 
-def runSweep(sweepPath, outputFolder, processCount=1, only=None):
-    sweepPath, out = Path(sweepPath).resolve(), Path(outputFolder).resolve()
-    sweep = loadJson(sweepPath)
-    modelConfigPath = (sweepPath.parent / sweep["modelConfig"]).resolve()
-    plan = variants(sweep, modelConfigPath)
-    statusPath = out / "sweepStatus.json"
-    status = loadJson(statusPath) if statusPath.exists() else {}
-    cache = out / "simulationCache"
-    baseline = Run(configFor(modelConfigPath, {}, False), out / "variants" / "baseline", processCount, cache)
-    baseline.all()
-    status["baseline"] = dict(status="complete", overrides={})
-    saveJson(statusPath, status)
-    for name, overrides in plan.items():
-        if name == "baseline" or (only and name not in only) or status.get(name, {}).get("status") == "complete":
-            continue
+class Sweep:
+    """One sweep: the baseline and its variants, run one at a time (used by runSweep and run_all.ipynb).
+
+    Every variant runs in <out>/variants/<name> with the shared simulation and lead-field caches, so the
+    baseline run is also the reference of every comparison, and a stage that is already complete with the
+    same settings is reused. Outcomes go to <out>/sweepStatus.json; a failed variant is recorded with its
+    error and never enters a summary as if it had succeeded.
+    """
+
+    def __init__(self, sweepPath, outputFolder, processCount=1):
+        self.path, self.out = Path(sweepPath).resolve(), Path(outputFolder).resolve()
+        self.definition = loadJson(self.path)
+        self.modelConfigPath = (self.path.parent / self.definition["modelConfig"]).resolve()
+        self.plan = variants(self.definition, self.modelConfigPath)
+        self.np, self.cache = int(processCount), self.out / "simulationCache"
+        self.statusPath = self.out / "sweepStatus.json"
+        self.status = loadJson(self.statusPath) if self.statusPath.exists() else {}
+        self.baseline = Run(configFor(self.modelConfigPath, {}, False), self.out / "variants" / "baseline", self.np, self.cache)
+
+    def namesFor(self, variable):
+        """Variant names of one sweep variable (one-at-a-time) or of one named variant, in sweep order."""
+        if variable in self.definition.get("named", {}):
+            return [variable]
+        if variable not in self.definition.get("oneAtATime", []):
+            return []
+        return [name for name, overrides in self.plan.items() if list(overrides) == [variable]]
+
+    def runBaseline(self):
+        result = self.baseline.all()
+        self._record("baseline", dict(status="complete", overrides={}))
+        return result
+
+    def runVariant(self, name, raiseErrors=False):
+        """Run one variant (the baseline must be complete); returns its status entry."""
+        overrides = self.plan[name]
+        if self.status.get(name, {}).get("status") == "complete":
+            return self.status[name]
         try:
-            ownSimulation = sharedFolder(configFor(modelConfigPath, overrides, False), out, cache) != baseline.shared
-            Run(configFor(modelConfigPath, overrides, ownSimulation), out / "variants" / name, processCount, cache).all()
-            status[name] = dict(status="complete", overrides=overrides)
+            ownSimulation = sharedFolder(configFor(self.modelConfigPath, overrides, False), self.out, self.cache) != self.baseline.shared
+            self.variantRun(name, ownSimulation).all()
+            entry = dict(status="complete", overrides=overrides)
         except Exception as error:                                     # recorded, never silently pooled
-            status[name] = dict(status="failed", overrides=overrides, error=f"{type(error).__name__}: {error}",
-                                traceback=traceback.format_exc())
-        saveJson(statusPath, status)
-    noiseDoublingTable(out, modelConfigPath)
-    return status
+            entry = dict(status="failed", overrides=overrides, error=f"{type(error).__name__}: {error}",
+                         traceback=traceback.format_exc())
+            if raiseErrors:
+                self._record(name, entry)
+                raise
+        return self._record(name, entry)
+
+    def variantRun(self, name, compact=False):
+        return Run(configFor(self.modelConfigPath, self.plan[name], compact), self.out / "variants" / name, self.np, self.cache)
+
+    def runAll(self, only=None):
+        self.runBaseline()
+        for name in self.plan:
+            if name != "baseline" and (not only or name in only):
+                self.runVariant(name)
+        noiseDoublingTable(self.out, self.modelConfigPath)
+        return self.status
+
+    def _record(self, name, entry):
+        self.status[name] = entry
+        saveJson(self.statusPath, self.status)
+        return entry
+
+    def summary(self, names=None):
+        """Long table of headline outcomes per variant (see variantSummary); failed variants keep a status row."""
+        import pandas as pd
+        rows = []
+        for name in names or ["baseline"] + [n for n in self.plan if n != "baseline"]:
+            entry = self.status.get(name, {"status": "not run"})
+            if entry["status"] != "complete":
+                rows.append(dict(variant=name, quantity="status", value=entry["status"], error=entry.get("error")))
+                continue
+            rows += [dict(variant=name, **row) for row in variantSummary(Path(self.out) / "variants" / name)]
+        return pd.DataFrame(rows)
+
+
+def variantSummary(folder):
+    """Headline outcomes of one completed run folder, as rows of (quantity, kind, gapMm, value).
+
+    Definitions (all from the run's own outputs; nothing recomputed):
+      * modelAccepted, eligibleForInterpretation: acceptance.json, changePoints stage;
+      * surfaceCvMPerS: physiology, last-beat surface CV of the lesion condition (reported, not gated);
+      * medianFarPpMv: measurements amplitudes, median clean PP in far viable tissue (model units);
+      * cpMm (Voltage / Peak frequency): Wang's change point (posterior mean, mm from the scar boundary) on
+        the clean dataset (noise repeat 0, EnSite-style PF) of each gap;
+      * cpNoisyMm: the same, median over the noisy realisations (repeats >= 1), the quantity the noise
+        experiment and the FM-25 test act on;
+      * nearFieldMass, epicardialMass: ground truth, median over lesion recordings of the |c|-mass fractions
+        within the 4 mm near-field convention (FM-30) and in the epicardial half (FM-15);
+      * p80DepthMm: ground truth, median depth reached by the smallest element set holding 80 % of the mass.
+    """
+    import pandas as pd
+    from .export import parseDatasetName
+    folder = Path(folder)
+    stages = folder / "stages"
+    rows = []
+    acceptance = loadJson(folder / "acceptance.json") if (folder / "acceptance.json").exists() else {}
+    rows.append(dict(quantity="modelAccepted", value=acceptance.get("modelAccepted")))
+    changes = loadJson(stages / "changePoints.json").get("result", {}) if (stages / "changePoints.json").exists() else {}
+    rows.append(dict(quantity="eligibleForInterpretation", value=changes.get("eligibleForInterpretation")))
+    shared = Path(loadJson(folder / "model.json")["sharedSimulationFolder"])
+    physiology = loadJson(shared / "stages" / "physiology.json").get("result", {}) if (shared / "stages" / "physiology.json").exists() else {}
+    lesion = physiology.get("conditions", {}).get("lesion", {})
+    rows.append(dict(quantity="surfaceCvMPerS", value=lesion.get("lastBeatSurfaceSpeedMPerS")))
+    amplitudes = folder / "measurements" / "amplitudes.json"
+    for row in (loadJson(amplitudes).get("modelFarViable", []) if amplitudes.exists() else []):
+        rows.append(dict(quantity="medianFarPpMv", kind=row["kind"], gapMm=row["gapMm"], value=row["medianCleanPpMv"]))
+    table = folder / "changePoints" / "SuppResults5_change_points_all.csv"
+    if table.exists():
+        cps = pd.read_csv(table)
+        parsed = cps.dataset.map(parseDatasetName)
+        cps = cps.assign(gapMm=[q[0] for q in parsed], repeat=[q[1] for q in parsed], pf=[q[2] for q in parsed])
+        for _, r in cps[(cps.repeat == 0) & (cps.pf == "ensite")].iterrows():
+            rows.append(dict(quantity=f"cpMm {r.Metric}", kind=r.Electrode, gapMm=r.gapMm, value=r.cp_mm_mean))
+        noisy = cps[(cps.repeat > 0) & (cps.pf == "ensite")]
+        for (metric, electrode, gap), part in noisy.groupby(["Metric", "Electrode", "gapMm"]):
+            rows.append(dict(quantity=f"cpNoisyMm {metric}", kind=electrode, gapMm=gap, value=float(part.cp_mm_mean.median())))
+    truth = folder / "groundTruth" / "summary.csv"
+    if truth.exists():
+        gt = pd.read_csv(truth)
+        gt = gt[gt.condition == "lesion"]
+        mass = gt[[c for c in gt.columns if c.startswith("mass_") and c != "mass_lesionElements"]].sum(axis=1)
+        gt = gt.assign(nearFieldMass=(gt.mass_nearEndocardial + gt.mass_nearEpicardial) / mass,
+                       epicardialMass=(gt.mass_nearEpicardial + gt.mass_farEpicardial) / mass)
+        for (kind, gap), part in gt.groupby(["kind", "gapMm"]):
+            for quantity in ("nearFieldMass", "epicardialMass", "p80_maximumDepthMm"):
+                rows.append(dict(quantity=quantity.replace("p80_maximumDepthMm", "p80DepthMm"), kind=kind, gapMm=gap,
+                                 value=float(part[quantity].median())))
+    return rows
+
+
+def runSweep(sweepPath, outputFolder, processCount=1, only=None):
+    return Sweep(sweepPath, outputFolder, processCount).runAll(only)
+
+
+# ------------------------------------------------------------- comparison of one experiment with the baseline
+HEADLINE = [("cpMm Voltage", "Bipolar"), ("cpNoisyMm Voltage", "Bipolar"), ("cpMm Voltage", "Omnipolar"),
+            ("cpMm Peak frequency", "Bipolar"), ("cpNoisyMm Peak frequency", "Bipolar"),
+            ("medianFarPpMv", "bi"), ("nearFieldMass", "bi"), ("epicardialMass", "bi")]
+
+
+def experimentTable(sweep, variable):
+    """Baseline and every variant of one variable, one row per variant, headline quantities as columns.
+
+    Columns are '<quantity> | <kind> | gap <g> mm'; rows are in order of value for a numeric variable
+    (baseline in place, flagged by isBaseline), otherwise baseline first. Gap variants have only their
+    own gap, so their columns are blank elsewhere. Status and acceptance are kept so failures stay visible.
+    """
+    import pandas as pd
+    names = ["baseline"] + sweep.namesFor(variable)
+    long = sweep.summary(names)
+    if long.empty:
+        return long
+    rows = {}
+    for name in names:
+        part = long[long.variant == name]
+        baselineValue = sweep.baseline.config["values"].get(variable)
+        value = baselineValue if name == "baseline" else sweep.plan[name].get(variable, sweep.plan[name])
+        row = {"value": json.dumps(value), "isBaseline": name == "baseline"}
+        flags = part[part.kind.isna()] if "kind" in part else part
+        for _, r in flags.iterrows():
+            row[r.quantity] = r.value
+        for quantity, kind in HEADLINE:
+            for _, r in part[(part.quantity == quantity) & (part.get("kind") == kind)].iterrows():
+                row[f"{quantity} | {kind} | gap {r.gapMm:g} mm"] = r.value
+        rows[name] = row
+    table = pd.DataFrame(rows).T
+    numeric = pd.to_numeric(table["value"], errors="coerce")
+    if numeric.notna().all():                         # numeric variable: rows in order of value, baseline in place
+        table = table.iloc[numeric.argsort(kind="stable")]
+    return table
+
+
+def experimentFigure(sweep, variable, path):
+    """Headline quantities against the variable's values (baseline marked), one panel per quantity, a line per gap."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    table = experimentTable(sweep, variable)
+    if table.empty:
+        return None
+    labels = [f"{v}\n(baseline)" if b else v for v, b in zip(table["value"], table["isBaseline"])]
+    marker = int(np.flatnonzero(table["isBaseline"].to_numpy(bool))[0])
+    fig, axes = plt.subplots(2, 4, figsize=(17, 6.5))
+    for ax, (quantity, kind) in zip(axes.ravel(), HEADLINE):
+        columns = [c for c in table.columns if c.startswith(f"{quantity} | {kind} |")]
+        for column in columns:
+            values = pd_numeric(table[column])
+            ax.plot(range(len(labels)), values, "o-", label=column.split("|")[-1].strip())
+        ax.axvline(marker, color="0.7", lw=0.8)
+        ax.set_xticks(range(len(labels)))
+        ax.set_xticklabels([l if len(l) < 24 else l[:22] + "..." for l in labels], rotation=30, ha="right", fontsize=7)
+        ax.set_title(f"{quantity} ({kind})", fontsize=9)
+        if columns:
+            ax.legend(fontsize=7)
+    fig.suptitle(f"{variable}: baseline (grey line) and variants; EnSite-style PF; cpNoisy = median over noisy realisations")
+    fig.tight_layout()
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    return path
+
+
+def pd_numeric(series):
+    import pandas as pd
+    return pd.to_numeric(series, errors="coerce").to_numpy(float)

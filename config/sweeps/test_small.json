@@ -1,0 +1,6 @@
+{
+  "_about": "Short sweep on the small test slab (config/test_small.json) to test notebooks/run_all.ipynb and the sweep runner end to end: one variant with its own simulation (wallMm), analysis-only variants (gapsMm, noiseSdMv). Not a scientific sweep.",
+  "modelConfig": "../test_small.json",
+  "oneAtATime": ["gapsMm", "noiseSdMv", "wallMm"],
+  "named": {}
+}

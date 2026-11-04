@@ -25,9 +25,16 @@ export MPIEXEC_BIN=/usr/local/lib/opencarp/lib/petsc/bin/mpiexec
 python3 -m pytest tests -q                                    # unit tests (no openCARP)
 python3 checks/container_checks.py --out runs/checks --np 2   # C1, W0, C4, C4p, C5, C8 on a small slab (about 30 min)
 python3 -m efov plan                                          # mesh size, lead fields per condition, assumptions
-nohup python3 -m efov run --out runs/v4_reference --np 24 > runs/v4_reference.log 2>&1 &     # production reference run
-python3 -m efov status --out runs/v4_reference
-nohup python3 -m efov sweep config/sweeps/oat_baseline.json --out runs/oat --np 24 > runs/oat.log 2>&1 &
+```
+Production: the base model, its figures, then every experiment, from one notebook:
+```bash
+nohup jupyter nbconvert --to notebook --execute --ExecutePreprocessor.timeout=-1 notebooks/run_all.ipynb \
+      --output run_all_executed.ipynb > runs/run_all.log 2>&1 &
+```
+The same work without the notebook (same folders, so either resumes the other's completed stages):
+```bash
+nohup python3 -m efov sweep config/sweeps/oat_baseline.json --out runs/production --np 24 > runs/production.log 2>&1 &
+tail runs/production.log; cat runs/production/sweepStatus.json   # progress; a failed variant carries its error
 ```
 beta is already tuned for the production mesh (config/tuning.json, FM-32); `efov tune --write-par` is needed
 only after a change to the mesh, CV target, ionic model or conductivities. `--np` sets both the openCARP MPI
@@ -36,7 +43,9 @@ processes and the lead-field worker processes.
 ## Layout
 `efov/` one module per stage (`python -m efov --help`); `efov/opencarp/slab_experiment.py` the carputils
 experiment; `R/wang_replication.R` Wang's Rmd on one simulated slab; `checks/` openCARP checks;
-`notebooks/` the same stages step by step (`python notebooks/build_notebooks.py` regenerates them);
+`notebooks/run_all.ipynb` one notebook that runs the base model with its figures, then every experiment of the
+sweep file against it, then the noise-doubling test and the summary (`python notebooks/build_notebooks.py`
+regenerates it; `config/sweeps/test_small.json` is its short test sweep);
 `tests/` unit and synthetic end-to-end tests (`EFOV_RUN_OPENCARP=1` enables the real openCARP test).
 
 ## Outputs of a run (`runs/<name>/`)
