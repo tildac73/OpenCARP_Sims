@@ -185,7 +185,7 @@ def runGroundTruth(config, jobs, tissues, electrogramsFolder, measurementsFolder
     pad = lambda values: np.array([np.pad(v, (0, max(map(len, values)) - len(v)), constant_values=np.nan) for v in values])
     np.savez_compressed(folder / "profiles.npz", recordingId=table.recordingId.to_numpy().astype(str), depthShareAndMass=np.asarray(depthRows),
                         lateralCumulativeShare=pad(lateralRows), curveStepMm=g["curveStepMm"], layerThicknessMm=spacingMm(config)[2])
-    checks = dict(recordings=len(table), shareSumMaxDeviation=float((table.shareSum - 1).abs().max()), leadFieldMethod=g["leadFieldMethod"])
+    checks = dict(recordings=len(table), shareSumMaxDeviation=float((table.shareSum - 1).abs().max()), leadFields="openCARP Laplace (equipotential electrode, FM-34)")
     checks["passed"] = bool(checks["recordings"] > 0 and checks["shareSumMaxDeviation"] <= gate["shareSumDeviation"])
     saveJson(folder / "checks.json", checks)
     return checks

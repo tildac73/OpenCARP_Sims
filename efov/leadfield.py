@@ -1,4 +1,5 @@
-"""Lead fields of the electrodes by reciprocity, and the electrograms and contributions they give (FM-14, FM-23).
+"""Lead fields of the electrodes by reciprocity, from openCARP Laplace solves, and the electrograms and
+contributions they give (FM-14, FM-23, FM-34).
 
 Forward model (FM-23). Vm is openCARP's monodomain solution. The extracellular potential of the
 bidomain with a bath obeys
@@ -8,11 +9,20 @@ bidomain with a bath obeys
 discretised with P1 elements as K phi = -S_i Vm (K with sigma_i + sigma_e in tissue and lesion and
 g_bath in the bath, S_i with sigma_i on tissue and lesion elements, phi = 0 on the corner ground).
 This is the classical recovery of phi_e from a monodomain Vm. openCARP's pseudo-bidomain uses
-sigma_m as the source instead (VL-2026-11-01-02), which weights fibre-parallel and cross-fibre
-sources differently whenever the intra- and extracellular anisotropy ratios differ.
+sigma_m as the source instead (VL-2026-11-01-02).
 
-Reciprocity: an electrode with node set S records phi = mean over S of phi_e. With K z = w
-(w = 1/|S| on S; a 1 uA total current injected over S), phi = -z^T S_i Vm. So
+Electrode (FM-34): a conductor. Its mesh nodes S share one potential and it draws no net current
+while recording. openCARP's Laplace mode (experiment 2) solves K u = 0 with u = 1 mV on S and u = 0
+on the ground; its operator is g_i + g_e in tissue and lesion and g_bath in the bath (checked
+against an independent P1 solve to 2e-8, VL-2026-11-07-01), so the run receives the model's own
+g_i and g_e. The current the electrode draws is I = u^T K u (uA for u in mV). Reciprocity for a
+floating equipotential electrode then gives, exactly for the discrete problem,
+
+    phi_S(t) = -z^T S_i Vm(t),   z = u / I   (mV per uA).
+
+openCARP 19.0.0 ignores extracellular current stimuli in Laplace and bidomain runs (VL-2026-11-04-01,
+VL-2026-11-07-01), so the electrode is driven by a potential and normalised by its current. Only the
+normalising current uses K, assembled here once per condition from openCARP's mesh.
   * the electrogram is a fixed weighting of Vm on the tissue nodes: phi(t) = w_tissue . Vm(t),
     w_tissue = -S_i z (nodalWeights);
   * element e contributes c_e(t) = coeff_e . Vm_e(t), coeff_e = -vol_e (grad N)^T sigma_i,e grad z
@@ -20,16 +30,14 @@ Reciprocity: an electrode with node set S records phi = mean over S of phi_e. Wi
 Units: z in mV/uA, positions in mm, sigma in S/m and Vm in mV give phi in mV (the factors cancel:
 1e3 [V/A per mV/uA] x 1e6 [two gradients] x 1e-9 [mm^3] x 1e-3 [V per mV] x 1e3 [mV per V] = 1).
 
-Lead fields come from openCARP Laplace solves (config/leadfield.par, one per electrode node set;
-fixed.groundTruth.leadFieldMethod = "openCARP"). "python" assembles and solves the same discrete
-problem here; it serves the unit tests and is the pre-declared fallback of FM-14.
 Only z on the tissue nodes is kept (float32): that is all the source term reads. Lead fields are
 cached by node set under a folder named by the conductor fingerprint (efov.config.conductor), so
 variants that change only the wave, beta, electrodes, noise or analysis reuse them.
 """
 import hashlib
-import time
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -53,21 +61,29 @@ def principalConductivities(config):
 
 
 def laplaceRegionLines(config):
-    """Conductivity regions of the Laplace run: extracellular = g_i + g_e (tissue, lesion), g_bath."""
+    """Conductivity regions of the Laplace run: the model's g_i and g_e (tissue, lesion) and g_bath.
+
+    openCARP's Laplace operator is g_i + g_e in tissue (VL-2026-11-07-01), the bidomain extracellular operator.
+    """
     regions, bath = principalConductivities(config)
     lines = {"num_gregions": 3}
     for index, (name, tag) in enumerate((("tissue", TISSUE_TAG), ("lesion", LESION_TAG))):
         gi, ge = regions[name]
-        total = gi + ge
         lines.update({f"gregion[{index}].num_IDs": 1, f"gregion[{index}].ID[0]": tag})
-        for axis, value in zip("ltn", total):
-            lines[f"gregion[{index}].g_i{axis}"] = float(value)     # not used by a Laplace solve
-            lines[f"gregion[{index}].g_e{axis}"] = float(value)
+        for axis, i, e in zip("ltn", gi, ge):
+            lines[f"gregion[{index}].g_i{axis}"] = float(i)
+            lines[f"gregion[{index}].g_e{axis}"] = float(e)
     lines.update({"gregion[2].num_IDs": 1, "gregion[2].ID[0]": BATH_TAG, "gregion[2].g_bath": float(bath)})
     return lines
 
 
-# ----------------------------------------------------------------- openCARP route
+# ----------------------------------------------------------------- openCARP Laplace route
+def electrodePotentialMv(config):
+    """The potential the Laplace run holds the electrode at (config/leadfield.par stim[1].pulse.strength)."""
+    from .parfile import readPar
+    return float(readPar(config["leadFieldPar"])["stim[1].pulse.strength"])
+
+
 def laplaceOutput(folder, nodeCount):
     """The potential written by the Laplace run (last frame); the file name is checked, not assumed."""
     candidates = [Path(folder) / name for name in ("phie.igb", "phi.igb", "laplace.igb")]
@@ -79,8 +95,12 @@ def laplaceOutput(folder, nodeCount):
     raise RuntimeError(f"No whole-mesh potential found after the Laplace run in {folder}: {found}")
 
 
-def openCarpLeadField(config, meshBase, groundVertices, electrodeNodes, nodeCount, folder, processCount=1):
-    """Lead field (mV per uA, all nodes) of one electrode from an openCARP Laplace solve."""
+def laplacePotential(config, meshBase, groundVertices, electrodeNodes, nodeCount, folder, ranks=1):
+    """u (mV, all nodes): openCARP Laplace solve with the electrode at 1 mV and the corner ground at 0 mV.
+
+    ranks MPI processes per solve (efov runs several solves at once). The run folder keeps its resolved
+    parameter file and log; the large outputs are deleted once read.
+    """
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     writeVertices(folder / "electrode.vtx", electrodeNodes)
@@ -89,17 +109,17 @@ def openCarpLeadField(config, meshBase, groundVertices, electrodeNodes, nodeCoun
              "stim[0].elec.vtx_file": str(folder / "ground"), "stim[1].elec.vtx_file": str(folder / "electrode"),
              **laplaceRegionLines(config)}
     parPath = writeResolved(config["leadFieldPar"], {}, lines, folder / "leadfield.par",
-                            header="# Resolved Laplace lead-field parameters (efov; FM-14)")
+                            header="# Resolved Laplace lead-field parameters (efov; FM-14, FM-34)")
     from .simulation import findExecutable, runLogged
     command = [findExecutable("openCARP", "OPENCARP_BIN"), "+F", str(parPath)]
-    if processCount > 1:
-        command = [os.environ.get("MPIEXEC_BIN", "mpiexec"), "-n", str(processCount)] + command
+    if ranks > 1:
+        command = [os.environ.get("MPIEXEC_BIN", "mpiexec"), "-n", str(ranks)] + command
     if runLogged(command, folder / "laplace.log") != 0:
         raise RuntimeError(f"openCARP Laplace run failed; see {folder / 'laplace.log'}")
-    z, name = laplaceOutput(folder, nodeCount)
-    (folder / name).unlink()                       # the whole-mesh potential is large; the tissue part is kept by the caller
-    saveJson(folder / "leadfield.json", dict(output=name, electrodeNodes=len(electrodeNodes), currentUA=1.0))
-    return z
+    u, name = laplaceOutput(folder, nodeCount)
+    for output in folder.glob("*.igb"):
+        output.unlink()
+    return u
 
 
 # ----------------------------------------------------------------- finite elements (shared)
@@ -175,7 +195,7 @@ class ContributionModel:
         return np.einsum("ec,ecd,edj,e->ej", minusGradZ, self.sigmaI, self.gradients, self.volumes)
 
 
-# ----------------------------------------------------------------- Python route (fallback)
+# ----------------------------------------------------------------- P1 matrices (source term and the normalising current)
 def assemble(positions, elements, conductivity):
     """Sparse sum_e vol_e G_e^T sigma_e G_e (N x N); sigma (E, 3, 3)."""
     from scipy import sparse
@@ -186,41 +206,42 @@ def assemble(positions, elements, conductivity):
     return sparse.csr_matrix((local.ravel(), (i, j)), shape=(len(positions), len(positions)))
 
 
-class PythonLeadFieldSolver:
-    """K z = w on the run mesh: (sigma_i + sigma_e) in tissue and lesion, g_bath in the bath, z = 0 on the ground."""
+def bulkStiffness(config, tissue, block=2_000_000):
+    """K of the whole run mesh: sigma_i + sigma_e on tissue and lesion elements, g_bath on bath elements.
 
-    def __init__(self, config, tissue, groundVertices, tolerance=1e-10):
-        from scipy.sparse.linalg import splu
-        tags, fibres = tissue["tags"], tissue["fibres"]
-        _, bath = principalConductivities(config)
-        sigma = np.repeat((bath * np.eye(3))[None], len(tags), axis=0)
-        inTissue = tags != BATH_TAG
-        sigma[inTissue] = tissueTensors(config, tags[inTissue], fibres[inTissue], "bulk")
-        stiffness = assemble(tissue["positions"], tissue["elements"], sigma)
-        self.count = len(tissue["positions"])
-        self.free = np.setdiff1d(np.arange(self.count), np.unique(groundVertices))
-        system = stiffness[self.free][:, self.free].tocsr()
-        self.tolerance = tolerance
-        if len(self.free) <= 150_000:
-            self._solve = splu(system.tocsc()).solve
-        else:
-            import pyamg
-            from scipy.sparse.linalg import cg
-            preconditioner = pyamg.smoothed_aggregation_solver(system).aspreconditioner()
+    Used only for the electrode current I = u^T K u; assembled in element blocks to bound memory.
+    """
+    tags, fibres, elements = tissue["tags"], tissue["fibres"], tissue["elements"]
+    _, bath = principalConductivities(config)
+    total = None
+    for first in range(0, len(elements), block):
+        rows = slice(first, first + block)
+        sigma = np.repeat((bath * np.eye(3))[None], len(elements[rows]), axis=0)
+        inTissue = tags[rows] != BATH_TAG
+        sigma[inTissue] = tissueTensors(config, tags[rows][inTissue], fibres[rows][inTissue], "bulk")
+        part = assemble(tissue["positions"], elements[rows], sigma)
+        total = part if total is None else total + part
+    return total
 
-            def solve(rhs):
-                out, info = cg(system, rhs, rtol=tolerance, maxiter=5000, M=preconditioner)
-                if info != 0:
-                    raise RuntimeError(f"Lead-field CG did not converge (info {info})")
-                return out
-            self._solve = solve
 
-    def leadField(self, electrodeNodes):
-        load = np.zeros(self.count)
-        load[electrodeNodes] = 1.0 / len(electrodeNodes)          # 1 uA shared equally over the electrode's nodes
-        z = np.zeros(self.count)
-        z[self.free] = self._solve(load[self.free])
-        return z
+def leadFieldFromPotential(u, stiffness, electrodeNodes, groundVertices, potentialMv):
+    """z = u / I (mV/uA), with I = u^T K u / V (uA per mV of drive), after checking the boundary values openCARP applied."""
+    atElectrode, atGround = u[np.asarray(electrodeNodes)], u[np.asarray(groundVertices)]
+    if np.abs(atElectrode - potentialMv).max() > 1e-6 * potentialMv or np.abs(atGround).max() > 1e-6 * potentialMv:
+        raise RuntimeError(f"Laplace boundary values not applied: electrode {atElectrode.min():.6g}-{atElectrode.max():.6g} mV, "
+                           f"ground up to {np.abs(atGround).max():.3g} mV")
+    interior = np.ones(len(u), bool)
+    interior[np.asarray(electrodeNodes)] = interior[np.asarray(groundVertices)] = False
+    if np.mean(np.abs(u[interior]) > 1e-9 * potentialMv) < 0.5:
+        # A solve that did not iterate (absolute tolerance met at the start, mis-oriented elements) leaves u = 0
+        # away from the boundary values, and u^T K u would still be positive.
+        raise RuntimeError("Laplace potential is zero on most of the mesh: the openCARP solve did not run; see its laplace.log")
+    if u.min() < -1e-6 * potentialMv or u.max() > potentialMv * (1 + 1e-6):
+        raise RuntimeError(f"Laplace potential outside [0, {potentialMv}] mV (maximum principle): {u.min():.3g} to {u.max():.3g}")
+    current = float(u @ (stiffness @ u)) / potentialMv            # uA drawn at potentialMv
+    if not np.isfinite(current) or current <= 0:
+        raise RuntimeError(f"Non-positive electrode current {current} uA")
+    return u / current, current                                    # u / I: the field of a 1 uA injection
 
 
 # ----------------------------------------------------------------- cached lead fields of electrode node sets
@@ -228,79 +249,72 @@ def nodeSetKey(nodes):
     return hashlib.sha256(np.asarray(nodes, np.int64).tobytes()).hexdigest()[:20]
 
 
+# Peak memory of one openCARP Laplace run, GB = LAPLACE_MEMORY_GB[0] + LAPLACE_MEMORY_GB[1] x nodes / 1e6: a
+# conservative fit to runs at the production spacing (2.28 GB at 0.51 M nodes, 1.67 GB at 0.31 M; VL-2026-11-07-02).
+LAPLACE_MEMORY_GB = (0.75, 4.5)
+
+
+def laplaceSchedule(nodeCount, processCount, availableGB=None):
+    """(simultaneous runs, MPI ranks per run): as many runs as memory allows (80 % of what is available), up to
+    processCount, and the remaining cores shared out as ranks."""
+    if availableGB is None:
+        try:
+            with open("/proc/meminfo") as stream:
+                fields = dict(line.split(":", 1) for line in stream)
+            availableGB = int(fields["MemAvailable"].split()[0]) / 1e6
+        except (OSError, KeyError, ValueError):
+            availableGB = float("inf")
+    perRun = LAPLACE_MEMORY_GB[0] + LAPLACE_MEMORY_GB[1] * nodeCount / 1e6
+    runs = int(max(1, min(processCount, 0.8 * availableGB // perRun)))
+    return runs, max(1, processCount // runs), perRun, availableGB
+
+
 def electrodeLeadFields(config, tissue, groundVertices, nodeSets, folder, processCount=1, log=print):
     """Lead field on the tissue nodes (float32 .npy, mV/uA) of every node set; computed once per conductor and node set.
 
     folder is <lead-field cache>/<conductor fingerprint>/<condition>. Its manifest records the mesh it
-    belongs to; a cache built on a different mesh is refused.
+    belongs to; a cache built on a different mesh is refused. The openCARP Laplace runs are independent:
+    as many run at once as memory allows (laplaceSchedule), sharing processCount cores. Every lead field
+    is written atomically with a record of its electrode current, so an interrupted stage resumes.
     """
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     manifest = dict(meshBase=str(tissue["meshBase"]), nodes=int(len(tissue["positions"])), tissueNodes=int(len(tissue["tissueNodes"])),
-                    method=config["fixed"]["groundTruth"]["leadFieldMethod"], groundVertices=int(len(groundVertices)))
+                    method="openCARP Laplace, equipotential electrode", groundVertices=int(len(groundVertices)))
     if (folder / "manifest.json").exists():
         recorded = loadJson(folder / "manifest.json")
-        if {k: recorded[k] for k in ("nodes", "tissueNodes", "method", "groundVertices")} != \
+        if {k: recorded.get(k) for k in ("nodes", "tissueNodes", "method", "groundVertices")} != \
                 {k: manifest[k] for k in ("nodes", "tissueNodes", "method", "groundVertices")}:
             raise ValueError(f"Lead-field cache {folder} belongs to a different mesh or method")
     else:
         saveJson(folder / "manifest.json", manifest)
-    method = manifest["method"]
     paths = [folder / f"{nodeSetKey(nodes)}.npy" for nodes in nodeSets]
-    missing = [(nodes, path) for nodes, path in zip(nodeSets, paths) if not path.exists()]
+    missing = [(np.asarray(nodes), path) for nodes, path in zip(nodeSets, paths) if not path.exists()]
     missing = list({str(path): (nodes, path) for nodes, path in missing}.values())   # overlapping grids repeat node sets
-    if method == "openCARP":
-        for count, (nodes, path) in enumerate(missing, 1):
-            z = openCarpLeadField(config, tissue["meshBase"], groundVertices, nodes, len(tissue["positions"]),
-                                  folder / "runs" / path.stem, processCount)
-            np.save(path, z[tissue["tissueNodes"]].astype(np.float32))
-            if count % 50 == 0:
-                log(f"  lead fields: {count} of {len(missing)} computed in {folder}")
-    elif missing:
-        _pythonLeadFields(config, tissue, groundVertices, missing, processCount, log, folder)
-    return paths, len(missing)
-
-
-# One factorised/preconditioned system per process group: built once, then shared with forked workers
-# copy-on-write. Each worker solves whole lead fields and writes its own files (no results pass through pipes).
-_SHARED = {}
-
-
-def _solveAndSave(task):
-    nodes, path, tissueNodes = task
-    z = _SHARED["solver"].leadField(nodes)
-    temporary = path.with_suffix(".partial.npy")
-    np.save(temporary, z[tissueNodes].astype(np.float32))
-    os.replace(temporary, path)                     # a file exists only once complete, so an interrupted run resumes
-    return str(path)
-
-
-def _pythonLeadFields(config, tissue, groundVertices, missing, processCount, log, folder):
-    """FM-14 route: assemble K once (sigma_i + sigma_e in tissue, g_bath in bath), solve every missing lead field.
-
-    Solves are independent; with processCount > 1 they run in forked worker processes sharing the one
-    solver (Linux fork, copy-on-write). The result does not depend on the number of processes.
-    """
-    import multiprocessing
+    if not missing:
+        return paths, 0
     started = time.time()
-    _SHARED["solver"] = PythonLeadFieldSolver(config, tissue, groundVertices)
-    log(f"  lead fields: system of {len(_SHARED['solver'].free):,} unknowns set up in {time.time() - started:.0f} s; "
-        f"{len(missing)} to solve on {processCount} process(es) in {folder}")
-    tasks = [(np.asarray(nodes), path, tissue["tissueNodes"]) for nodes, path in missing]
+    stiffness, potential = bulkStiffness(config, tissue), electrodePotentialMv(config)
+    runs, ranks, perRun, available = laplaceSchedule(len(tissue["positions"]), int(processCount))
+    log(f"  lead fields: K assembled in {time.time() - started:.0f} s; {len(missing)} openCARP Laplace runs, {runs} at a time "
+        f"x {ranks} MPI rank(s) (about {perRun:.1f} GB each, {available:.0f} GB available), in {folder}")
+
+    def solveOne(task):
+        nodes, path = task
+        u = laplacePotential(config, tissue["meshBase"], groundVertices, nodes, len(tissue["positions"]), folder / "runs" / path.stem, ranks)
+        z, current = leadFieldFromPotential(u, stiffness, nodes, groundVertices, potential)
+        temporary = path.with_suffix(".partial.npy")
+        np.save(temporary, z[tissue["tissueNodes"]].astype(np.float32))
+        os.replace(temporary, path)
+        saveJson(folder / "runs" / path.stem / "leadfield.json",
+                 dict(electrodeNodes=int(len(nodes)), electrodePotentialMv=potential, currentUA=current,
+                      leadFieldAtElectrodeMvPerUA=potential / current))
+        return current
+
     started, done = time.time(), 0
-    try:
-        if processCount > 1 and len(tasks) > 1:
-            with multiprocessing.get_context("fork").Pool(processCount) as pool:
-                for _ in pool.imap_unordered(_solveAndSave, tasks):
-                    done += 1
-                    if done % 50 == 0:
-                        log(f"  lead fields: {done} of {len(tasks)} in {time.time() - started:.0f} s")
-        else:
-            for task in tasks:
-                _solveAndSave(task)
-                done += 1
-                if done % 50 == 0:
-                    log(f"  lead fields: {done} of {len(tasks)} in {time.time() - started:.0f} s")
-    finally:
-        _SHARED.clear()
-    log(f"  lead fields: {len(tasks)} solved in {time.time() - started:.0f} s")
+    with ThreadPoolExecutor(max_workers=runs) as pool:
+        for _ in pool.map(solveOne, missing):
+            done += 1
+            if done % 50 == 0 or done == len(missing):
+                log(f"  lead fields: {done} of {len(missing)} in {time.time() - started:.0f} s")
+    return paths, len(missing)

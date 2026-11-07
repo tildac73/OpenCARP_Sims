@@ -1,10 +1,10 @@
-"""Reciprocity, electrogram weights, shares and classes on a small box with the Python lead-field route (no openCARP)."""
+"""Reciprocity, electrogram weights, shares and classes on a small box (no openCARP: the Laplace runs are
+replaced by the test oracle in helpers; tests/test_opencarp_laplace.py checks openCARP against it)."""
 import numpy as np
-from scipy.sparse.linalg import splu
 
 from efov import config as cfg, groundtruth, leadfield, meshbuild
 from efov.geometry import electrodeNodeSets
-from helpers import SMALL, boxWithBath
+from helpers import SMALL, boxWithBath, equipotentialElectrogram, patchLaplace, referenceLaplacePotential
 
 
 def tissueModel():
@@ -16,25 +16,6 @@ def tissueModel():
     return dict(positions=positions, elements=elements, tags=tags, fibres=fibres, tissueNodes=np.unique(elements[tags != 0]))
 
 
-def forwardSignal(config, tissue, ground, nodes, vm, source="intracellular"):
-    """Reference: mean phi over the electrode nodes from K phi = -S Vm, solved directly frame by frame."""
-    tags, inTissue = tissue["tags"], tissue["tags"] != 0
-    _, bath = leadfield.principalConductivities(config)
-    bulk = np.repeat((bath * np.eye(3))[None], len(tags), axis=0)
-    bulk[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], "bulk")
-    sourceTensor = np.zeros_like(bulk)
-    sourceTensor[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], source)
-    K = leadfield.assemble(tissue["positions"], tissue["elements"], bulk)
-    S = leadfield.assemble(tissue["positions"], tissue["elements"], sourceTensor)
-    free = np.setdiff1d(np.arange(len(tissue["positions"])), ground)
-    solve = splu(K[free][:, free].tocsc()).solve
-    full = np.zeros((len(tissue["positions"]), vm.shape[1]))
-    full[tissue["tissueNodes"]] = vm
-    phi = np.zeros_like(full)
-    phi[free] = solve(-(S @ full)[free])
-    return phi[nodes].mean(axis=0)
-
-
 def test_reciprocity_weights_and_shares_with_the_sigma_i_source():
     config = cfg.loadConfig(SMALL, {"wallMm": 1.0})
     tissue = tissueModel()
@@ -44,15 +25,19 @@ def test_reciprocity_weights_and_shares_with_the_sigma_i_source():
     ground = meshbuild.groundNodes(tissue["positions"], tissue["elements"], tissue["tags"], 0.5)
     bath = meshbuild.catheterSideNodes(tissue["positions"], tissue["elements"], tissue["tags"], 1.0)
     sets = electrodeNodeSets(tissue["positions"], bath, np.array([[0.0, 0.0, 1.0], [0.0, 1.0, 1.0]]), 0.3, 0.6)
-    solver = leadfield.PythonLeadFieldSolver(config, tissue, ground)
-    za, zb = solver.leadField(sets[0]), solver.leadField(sets[1])
-    np.testing.assert_allclose(za[sets[1]].mean(), zb[sets[0]].mean(), rtol=1e-9)           # reciprocity
-    za, zb = za[tissue["tissueNodes"]], zb[tissue["tissueNodes"]]                            # what the pipeline stores
+    stiffness = leadfield.bulkStiffness(config, tissue)
+    fields = []
+    for nodes in sets:
+        u = referenceLaplacePotential(config, tissue, ground, nodes)
+        z, current = leadfield.leadFieldFromPotential(u, stiffness, nodes, ground, 1.0)
+        assert current > 0 and abs(z[nodes].mean() - 1.0 / current) < 1e-12
+        fields.append(z[tissue["tissueNodes"]])                                             # what the pipeline stores
+    za, zb = fields
     model = leadfield.ContributionModel(config, tissue)
-    reference = {k: forwardSignal(config, tissue, ground, sets[k], vm) for k in (0, 1)}
+    reference = {k: equipotentialElectrogram(config, tissue, ground, sets[k], vm) for k in (0, 1)}
     np.testing.assert_allclose(model.nodalWeights(za) @ vm, reference[0], rtol=1e-7, atol=1e-9 * np.abs(reference[0]).max())
     # the sigma_m source (openCARP pseudo-bidomain) gives a different signal on this bilayer slab
-    sigmaM = forwardSignal(config, tissue, ground, sets[0], vm, "monodomain")
+    sigmaM = equipotentialElectrogram(config, tissue, ground, sets[0], vm, "monodomain")
     assert np.linalg.norm(sigmaM - reference[0]) > 0.05 * np.linalg.norm(reference[0])
     coefficients = model.coefficients(za)
     np.testing.assert_allclose(coefficients.sum(axis=1), 0, atol=1e-12 * np.abs(coefficients).max())   # uniform Vm contributes nothing
@@ -71,11 +56,11 @@ def test_reciprocity_weights_and_shares_with_the_sigma_i_source():
         assert shape["p50_volumeMm3"] <= shape["p90_volumeMm3"]
 
 
-def test_lead_field_cache_reuses_and_refuses(tmp_path):
+def test_lead_field_cache_reuses_and_refuses(tmp_path, monkeypatch):
     import pytest
     config = cfg.loadConfig(SMALL, {"wallMm": 1.0})
-    config["fixed"]["groundTruth"]["leadFieldMethod"] = "python"
     tissue = dict(tissueModel(), meshBase="box")
+    patchLaplace(monkeypatch, {"box": tissue})
     ground = meshbuild.groundNodes(tissue["positions"], tissue["elements"], tissue["tags"], 0.5)
     bath = meshbuild.catheterSideNodes(tissue["positions"], tissue["elements"], tissue["tags"], 1.0)
     sets = electrodeNodeSets(tissue["positions"], bath, np.array([[0.0, 0.0, 1.0]]), 0.3, 0.6)

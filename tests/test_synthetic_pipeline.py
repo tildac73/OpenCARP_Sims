@@ -2,20 +2,20 @@
 
 The small test mesh (config/test_small.json) is built with efov.meshbuild, with the lesion strip
 and isolated tissue beyond it (FM-24); Vm is an analytic planar wave (four beats, x direction; no
-activation at y < 0 in the lesion condition). The stages window -> leadFields (Python route) ->
-electrograms -> measurements -> export -> groundTruth -> figures then run on these files. One
-electrode's electrogram is checked against a direct frame-by-frame solve of K phi = -S_i Vm (our
-reciprocity code against our own direct solve; no openCARP output involved).
+activation at y < 0 in the lesion condition). The stages window -> leadFields -> electrograms ->
+measurements -> export -> groundTruth -> figures then run on these files, with the openCARP Laplace
+runs replaced by the test oracle (helpers.patchLaplace). One electrode's electrogram is checked
+against a direct frame-by-frame solve of K phi = -S_i Vm with the electrode as a floating
+equipotential (independent of reciprocity and of the lead fields).
 """
 import json
 
 import numpy as np
 import pytest
-from scipy.sparse.linalg import splu
 
 from efov import config as cfg, electrograms, export, groundtruth, leadfield, measurements, meshbuild, physiology, simulation
 from efov.io import readVertices, saveJson, writeMesh, writeVertices
-from helpers import SMALL
+from helpers import SMALL, equipotentialElectrogram, patchLaplace
 
 
 def writeIgb(path, values, startMs, stepMs):
@@ -84,33 +84,20 @@ def writeCondition(config, job, lesion):
 
 
 def directElectrogram(config, tissue, ground, nodes, job, timesMs):
-    """Mean phi over one electrode from K phi = -S_i Vm, solved frame by frame (independent of reciprocity)."""
-    tags, inTissue = tissue["tags"], tissue["tags"] != 0
-    _, gBath = leadfield.principalConductivities(config)
-    bulk = np.repeat((gBath * np.eye(3))[None], len(tags), axis=0)
-    bulk[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], "bulk")
-    source = np.zeros_like(bulk)
-    source[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], "intracellular")
-    K, S = leadfield.assemble(tissue["positions"], tissue["elements"], bulk), leadfield.assemble(tissue["positions"], tissue["elements"], source)
-    count = len(tissue["positions"])
-    free = np.setdiff1d(np.arange(count), ground)
-    solve = splu(K[free][:, free].tocsc()).solve
     vm, _ = electrograms.readVmFrames(job, timesMs[0], timesMs[-1])
-    full = np.zeros((count, len(vm)))
-    full[tissue["tissueNodes"]] = vm.T
-    phi = np.zeros_like(full)
-    phi[free] = solve(-(S @ full)[free])
-    return phi[nodes].mean(axis=0)
+    return equipotentialElectrogram(config, tissue, ground, nodes, vm.T)
 
 
 @pytest.fixture(scope="module")
 def syntheticRun(tmp_path_factory):
     config = cfg.loadConfig(SMALL)
-    config["fixed"]["groundTruth"]["leadFieldMethod"] = "python"
     root = tmp_path_factory.mktemp("synthetic")
     for condition in ("intact", "lesion"):
         writeCondition(config, root / "simulations" / condition, condition == "lesion")
-    return config, root
+    patch = pytest.MonkeyPatch()
+    patchLaplace(patch)
+    yield config, root
+    patch.undo()
 
 
 def test_analysis_stages_agree_on_a_synthetic_run(syntheticRun):

@@ -183,7 +183,6 @@ def validateConfig(config):
     need(a["resampleMarginMs"] >= 5.0, "Keep at least the 5 ms resampling-filter half-length beyond the last window (FM-29)")
     need(set(f["export"]["peakFrequencyDefinitions"].values()) <= {"pfHz", "pfGlobalHz"}, "Unknown peak-frequency column in export")
     need(all(np.any(np.isclose(centreYmm(config), c)) for c in groundTruthCentresYmm(config)), "Ground-truth centres must be catheter placements")
-    need(f["groundTruth"]["leadFieldMethod"] in ("openCARP", "python"), "leadFieldMethod must be 'openCARP' or 'python'")
     from .fibres import validateSpec
     validateSpec(v["fibres"], size[2])
     return config
@@ -211,14 +210,14 @@ STAGE_INPUTS = {
 
 
 def conductor(config):
-    """Everything a lead field depends on (FM-23): mesh, fibres, conductivities, Laplace settings and method.
+    """Everything a lead field depends on (FM-23, FM-34): mesh, fibres, conductivities and the Laplace settings.
 
     Variants that change only the wave angle, beta, electrodes, noise or analysis share lead fields.
     """
     keys = sorted(k for k in config["par"] if k.startswith("gregion"))
     return dict(wallMm=config["values"]["wallMm"], fibres=config["values"]["fibres"], epicardialMedium=config["values"]["epicardialMedium"],
                 tissue=config["fixed"]["tissue"], bath=config["fixed"]["bath"], conductivities={k: config["par"][k] for k in keys},
-                leadFieldPar=Path(config["leadFieldPar"]).read_text(), method=config["fixed"]["groundTruth"]["leadFieldMethod"])
+                leadFieldPar=Path(config["leadFieldPar"]).read_text())
 
 
 def section(config, dotted):

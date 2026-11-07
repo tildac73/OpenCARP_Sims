@@ -71,7 +71,7 @@ def writeReport(run):
               f"Eligible for interpretation: {fmt(changes['eligibleForInterpretation'])} "
               f"(prerequisites: {', '.join(f'{k} {fmt(v)}' for k, v in changes['prerequisites'].items())}).", ""]
     lines += changePointTable(run) + [""]
-    lines += ["## Ground truth", "", f"{gt['recordings']} recordings ({gt['leadFieldMethod']} lead fields, the same as the "
+    lines += ["## Ground truth", "", f"{gt['recordings']} recordings ({gt['leadFields']} lead fields, the same as the "
               f"electrograms'); share-sum deviation {gt['shareSumMaxDeviation']:.2g}.",
               "Per-recording classes, profiles and shape descriptors: `groundTruth/summary.csv`, `groundTruth/profiles.npz`. "
               "Full element fields: `groundTruth/fields_<condition>.npz` and `groundTruth/shares_<condition>_gap<g>mm.vtk` (ParaView).", ""]

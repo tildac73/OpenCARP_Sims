@@ -5,15 +5,15 @@ contributing tissue of every electrogram as ground truth. Plan and decisions: pr
 `claude/final_model_plan_2026-11-03.md`; `docs/decision_log.md` (DL-2026-11-03-02, FM-01 to FM-22; DL-2026-11-03-03, FM-23 to FM-30).
 
 Forward model: openCARP monodomain Vm; electrograms by reciprocity from one lead field per electrode with the
-sigma_i source (FM-23). Lead fields are our P1 solve on openCARP's run mesh (FM-31: openCARP 19.0.0's Laplace
-mode ignores current stimuli, so the pre-declared fallback of FM-14 is used). Lesion: 5.6 mm ablation strip with isolated viable tissue beyond
+sigma_i source (FM-23). Each lead field is an openCARP Laplace solve with the electrode held at 1 mV and the
+corner grounded, divided by the current the electrode draws (equipotential electrode, FM-34). Lesion: 5.6 mm ablation strip with isolated viable tissue beyond
 (FM-24). Amplitudes in model units, never calibrated to clinical values (FM-25).
 
 ## Files that define the model
 | File | Holds |
 | --- | --- |
 | `config/model.par` | every openCARP setting (solver, time, cells, conductivities, lesion, bath, stimuli, outputs) |
-| `config/leadfield.par` | the openCARP Laplace route for lead fields (FM-14); not used while `leadFieldMethod = python` (FM-31) |
+| `config/leadfield.par` | the openCARP Laplace solve of every electrode's lead field: electrode at 1 mV, corner ground (FM-14, FM-34) |
 | `config/model.json` | `sweep`: variables, baselines, planned values; `fixed`: mesh, bath, electrodes, analysis |
 | `config/tuning.json` | beta tuned for a mesh and CV target (written by `efov tune --write-par`; production mesh done 4 Nov, FM-32) |
 | `config/sweeps/oat_baseline.json` | the one-at-a-time sweep |

@@ -8,9 +8,11 @@ These are the checks of the final model plan that cannot run without openCARP. C
 the plan (claude/final_model_plan_2026-11-03.md, Section 4) before any result was seen. By decision
 FM-26 no check compares openCARP outputs with other openCARP outputs or with our own solver.
   C1  mesher: per-axis resolution; bath above and beside the tissue only; zero bath fibres
-  W0  lead fields (FM-14, FM-23, FM-31): the configured route gives a finite, non-zero lead field with a
-      positive potential at the injecting electrode; its cost per electrode and a crude production estimate.
-      Diagnostic: whether openCARP's Laplace mode applies the current stimulus (it did not on 19.0.0)
+  W0  lead fields (FM-14, FM-23, FM-34): openCARP's Laplace run holds the electrode at 1 mV and the ground
+      at 0 mV, the potential is non-trivial and within [0, 1] mV (maximum principle), the electrode draws a
+      positive current; time and peak memory per Laplace run and a crude production estimate.
+      Diagnostics: two electrodes' transfer potentials (near-symmetric; exact only for conductors present
+      in both solves), and whether this build applies extracellular current stimuli (19.0.0 does not)
   C4  openCARP reads the written fibre file: with fibres at 90 deg the x-speed falls to the transverse
       speed (ratio within 10 % of sqrt(sigma_m,t / sigma_m,l)); C4p repeats it at the production mesh
       spacing and tuned beta (the 0.5 mm test mesh under-resolves the slow transverse wave)
@@ -18,8 +20,8 @@ FM-26 no check compares openCARP outputs with other openCARP outputs or with our
       isolated tissue beyond it activates
   C8  Wang's Rmd runs through R/wang_replication.R on a synthetic dataset; her lm-replaced Table 3
       slope equals a direct least-squares fit
-openCARP 19.0.0 Laplace mode ignores current stimuli (W0 diagnostic, 4 Nov 2026), so the lead fields use the
-pre-declared fallback leadFieldMethod = "python" (FM-14, FM-31).
+openCARP 19.0.0 ignores extracellular current stimuli, so the electrode is driven by a potential and
+normalised by its current (config/leadfield.par, FM-34).
 Every check is recorded in <out>/checks_report.json; a failure never stops the other checks.
 """
 import argparse
@@ -36,7 +38,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPOSITORY))
 from efov import config as cfg, leadfield, simulation  # noqa: E402
 from efov.geometry import electrodeLayout  # noqa: E402
-from efov.io import readVertices, saveJson  # noqa: E402
+from efov.io import writeVertices, readVertices, saveJson  # noqa: E402
 
 SMALL = REPOSITORY / "config" / "test_small.json"
 DURATION_MS = 30.0
@@ -65,46 +67,54 @@ def checkMesh(config, job, tissue):
 
 
 def checkLeadFields(config, job, tissue, folder, processCount):
-    """W0. (a) Diagnostic: does openCARP's Laplace mode apply the 1 uA current stimulus? (b) The lead-field
-    route in config (FM-14 fallback 'python' since FM-31): finite, non-zero, and its cost per electrode.
-
-    (a) failed on openCARP 19.0.0 (4 Nov 2026): the written potential is exactly zero, although openCARP
-    reports the scaled current density. It stays as a diagnostic so a future build can be re-tested.
-    """
+    """W0: the openCARP Laplace lead field of two electrodes near the slab centre (FM-34), and its cost."""
+    import resource
     from efov.electrograms import electrodeSets
     layout, sets = electrodeSets(config, tissue)
-    nearest = int(np.argmin(np.linalg.norm(layout["uniqueCentres"][:, :2], axis=1)))
+    order = np.argsort(np.linalg.norm(layout["uniqueCentres"][:, :2], axis=1))
     ground = readVertices(job / "ground.vtx")
-    result = {}
-    try:
-        z = leadfield.openCarpLeadField(config, tissue["meshBase"], ground, sets[nearest], len(tissue["positions"]), folder / "laplace0", processCount)
-        result["openCarpLaplace"] = dict(runs=True, finite=bool(np.isfinite(z).all()), maxAbsMvPerUa=float(np.abs(z).max()),
-                                         appliesCurrent=bool(np.abs(z).max() > 0))
-    except Exception as error:
-        result["openCarpLaplace"] = dict(runs=False, error=f"{type(error).__name__}: {error}", appliesCurrent=False)
-    method = config["fixed"]["groundTruth"]["leadFieldMethod"]
-    started = time.time()
-    if method == "python":
-        solver = leadfield.PythonLeadFieldSolver(config, tissue, ground)
-        setupSeconds = time.time() - started
+    stiffness, potential = leadfield.bulkStiffness(config, tissue), leadfield.electrodePotentialMv(config)
+    runs = []
+    for k in order[:2]:
+        before = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
         started = time.time()
-        z = solver.leadField(sets[nearest])
-        solveSeconds = time.time() - started
-    else:
-        setupSeconds, z = 0.0, None
-        z = leadfield.openCarpLeadField(config, tissue["meshBase"], ground, sets[nearest], len(tissue["positions"]), folder / "laplace1", processCount)
-        solveSeconds = time.time() - started
+        u = leadfield.laplacePotential(config, tissue["meshBase"], ground, sets[k], len(tissue["positions"]), folder / f"laplace{k}")
+        seconds = time.time() - started
+        z, current = leadfield.leadFieldFromPotential(u, stiffness, sets[k], ground, potential)   # raises if a property fails
+        runs.append(dict(electrode=int(k), nodes=int(len(sets[k])), seconds=seconds, currentUA=current,
+                         peakMemoryGB=max(before, resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss) / 1e6, z=z))
+    a, b = runs
+    transfer = (a["z"][sets[b["electrode"]]].mean(), b["z"][sets[a["electrode"]]].mean())
+    current = probeCurrentStimulus(config, tissue, ground, sets[order[0]], folder / "currentProbe")
     production = cfg.loadConfig()
     electrodes = len(electrodeLayout(production)["uniqueCentres"])
     scale = cfg.meshNodeCount(production) / len(tissue["positions"])
-    result.update(method=method, finite=bool(np.isfinite(z).all()), nonZero=bool(np.abs(z).max() > 0),
-                  electrodePotentialMvPerUa=float(z[sets[nearest]].mean()),
-                  setupSecondsSmall=float(setupSeconds), secondsPerLeadFieldSmall=float(solveSeconds),
-                  nodesSmall=int(len(tissue["positions"])), productionElectrodesPerCondition=electrodes,
-                  productionCoreHoursPerConditionCrude=float(solveSeconds * scale * electrodes / 3600),
-                  note="Crude linear scaling by node count (AMG-preconditioned CG grows slightly faster); one core per solve")
-    result["passed"] = bool(result["finite"] and result["nonZero"] and result["electrodePotentialMvPerUa"] > 0)
-    return result
+    seconds = float(np.mean([r["seconds"] for r in runs]))
+    return dict(passed=True, nodesSmall=int(len(tissue["positions"])),
+                runs=[{k: v for k, v in r.items() if k != "z"} for r in runs],
+                leadFieldAtElectrodeMvPerUA=[potential / r["currentUA"] for r in runs],
+                transferMvPerUA=[float(t) for t in transfer], transferRelativeDifference=float(abs(transfer[0] - transfer[1]) / abs(transfer[0])),
+                currentStimulusApplied=current, productionElectrodesPerCondition=electrodes,
+                productionCoreHoursPerConditionCrude=float(seconds * scale * electrodes / 3600),
+                note="Crude linear scaling by node count (one openCARP process per Laplace run; mesh reading and the AMG "
+                     "solve grow at least linearly). Peak memory is the largest child process so far.")
+
+
+def probeCurrentStimulus(config, tissue, ground, nodes, folder):
+    """Diagnostic: does this openCARP build apply an extracellular current stimulus in a Laplace run (19.0.0: no)?"""
+    from efov.parfile import writeResolved
+    from efov.simulation import findExecutable, runLogged
+    folder.mkdir(parents=True, exist_ok=True)
+    writeVertices(folder / "electrode.vtx", nodes); writeVertices(folder / "ground.vtx", ground)
+    lines = {"meshname": str(tissue["meshBase"]), "simID": str(folder), "stim[0].elec.vtx_file": str(folder / "ground"),
+             "stim[1].elec.vtx_file": str(folder / "electrode"), **leadfield.laplaceRegionLines(config),
+             "stim[1].crct.total_current": 1}
+    par = writeResolved(config["leadFieldPar"], {"stim[1].crct.type": 1}, lines, folder / "probe.par",
+                        header="# W0 diagnostic: 1 uA extracellular current stimulus instead of the 1 mV potential")
+    if runLogged([findExecutable("openCARP", "OPENCARP_BIN"), "+F", str(par)], folder / "probe.log") != 0:
+        return None
+    u, _ = leadfield.laplaceOutput(folder, len(tissue["positions"]))
+    return bool(np.abs(np.delete(u, nodes)).max() > 0)
 
 
 def surfaceSpeedX(tissue, job):

@@ -150,7 +150,6 @@
       "nearFieldRadiusMm": 4.0,
       "depthSplitFraction": 0.5,
       "curveStepMm": 0.25,
-      "leadFieldMethod": "python",
       "fieldRecordings": {
         "uni": [
           "E5"
@@ -167,7 +166,7 @@
         0.8,
         0.9
       ],
-      "_about": "FM-15, FM-16, FM-21, FM-30. Shares s_e for every recording at these placements (classes, profiles, shape descriptors); full element fields (.vtk, npz) for fieldRecordings. nearFieldRadiusMm = one HD Grid electrode spacing: a stated convention, not a literature value; the continuous depth and lateral curves are the primary result. leadFieldMethod 'python' (own P1 solver of the same discrete problem): the pre-declared fallback of FM-14, adopted 4 Nov 2026 because openCARP 19.0.0's Laplace mode ignores current stimuli (W0, VL-2026-11-04-01; FM-31). 'openCARP' is kept for a future build."
+      "_about": "FM-15, FM-16, FM-21, FM-30. Shares s_e for every recording at these placements (classes, profiles, shape descriptors); full element fields (.vtk, npz) for fieldRecordings. nearFieldRadiusMm = one HD Grid electrode spacing: a stated convention, not a literature value; the continuous depth and lateral curves are the primary result. Lead fields: openCARP Laplace solves, electrode held at 1 mV and normalised by its current (config/leadfield.par, efov/leadfield.py; FM-34)."
     },
     "tune": {
       "stripSizeMm": [
