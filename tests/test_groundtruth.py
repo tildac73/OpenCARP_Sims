@@ -1,10 +1,10 @@
-"""Reciprocity, electrogram weights, shares and classes on a small box (no openCARP: the Laplace runs are
-replaced by the test oracle in helpers; tests/test_opencarp_laplace.py checks openCARP against it)."""
+"""Reciprocity, electrogram weights, shares and classes on a small box (no openCARP: the lead-field runs are
+replaced by the test oracle in helpers; tests/test_opencarp_leadfield.py checks openCARP >= 20 against it)."""
 import numpy as np
 
 from efov import config as cfg, groundtruth, leadfield, meshbuild
 from efov.geometry import electrodeNodeSets
-from helpers import SMALL, boxWithBath, equipotentialElectrogram, patchLaplace, referenceLaplacePotential
+from helpers import SMALL, boxWithBath, patchLeadfield, referenceLeadField, weightedElectrogram
 
 
 def tissueModel():
@@ -25,19 +25,12 @@ def test_reciprocity_weights_and_shares_with_the_sigma_i_source():
     ground = meshbuild.groundNodes(tissue["positions"], tissue["elements"], tissue["tags"], 0.5)
     bath = meshbuild.catheterSideNodes(tissue["positions"], tissue["elements"], tissue["tags"], 1.0)
     sets = electrodeNodeSets(tissue["positions"], bath, np.array([[0.0, 0.0, 1.0], [0.0, 1.0, 1.0]]), 0.3, 0.6)
-    stiffness = leadfield.bulkStiffness(config, tissue)
-    fields = []
-    for nodes in sets:
-        u = referenceLaplacePotential(config, tissue, ground, nodes)
-        z, current = leadfield.leadFieldFromPotential(u, stiffness, nodes, ground, 1.0)
-        assert current > 0 and abs(z[nodes].mean() - 1.0 / current) < 1e-12
-        fields.append(z[tissue["tissueNodes"]])                                             # what the pipeline stores
-    za, zb = fields
+    za, zb = (referenceLeadField(config, tissue, ground, nodes)[tissue["tissueNodes"]] for nodes in sets)   # what the cache holds
     model = leadfield.ContributionModel(config, tissue)
-    reference = {k: equipotentialElectrogram(config, tissue, ground, sets[k], vm) for k in (0, 1)}
+    reference = {k: weightedElectrogram(config, tissue, ground, sets[k], vm) for k in (0, 1)}
     np.testing.assert_allclose(model.nodalWeights(za) @ vm, reference[0], rtol=1e-7, atol=1e-9 * np.abs(reference[0]).max())
     # the sigma_m source (openCARP pseudo-bidomain) gives a different signal on this bilayer slab
-    sigmaM = equipotentialElectrogram(config, tissue, ground, sets[0], vm, "monodomain")
+    sigmaM = weightedElectrogram(config, tissue, ground, sets[0], vm, "monodomain")
     assert np.linalg.norm(sigmaM - reference[0]) > 0.05 * np.linalg.norm(reference[0])
     coefficients = model.coefficients(za)
     np.testing.assert_allclose(coefficients.sum(axis=1), 0, atol=1e-12 * np.abs(coefficients).max())   # uniform Vm contributes nothing
@@ -58,14 +51,20 @@ def test_reciprocity_weights_and_shares_with_the_sigma_i_source():
 
 def test_lead_field_cache_reuses_and_refuses(tmp_path, monkeypatch):
     import pytest
+    from efov.io import writeIgb
     config = cfg.loadConfig(SMALL, {"wallMm": 1.0})
     tissue = dict(tissueModel(), meshBase="box")
-    patchLaplace(monkeypatch, {"box": tissue})
+    patchLeadfield(monkeypatch, {"box": tissue})
     ground = meshbuild.groundNodes(tissue["positions"], tissue["elements"], tissue["tags"], 0.5)
     bath = meshbuild.catheterSideNodes(tissue["positions"], tissue["elements"], tissue["tags"], 1.0)
-    sets = electrodeNodeSets(tissue["positions"], bath, np.array([[0.0, 0.0, 1.0]]), 0.3, 0.6)
-    paths, computed = leadfield.electrodeLeadFields(config, tissue, ground, sets, tmp_path, log=lambda *_: None)
-    assert computed == 1 and np.load(paths[0]).shape == (len(tissue["tissueNodes"]),)
-    assert leadfield.electrodeLeadFields(config, tissue, ground, sets, tmp_path, log=lambda *_: None)[1] == 0
+    sets = electrodeNodeSets(tissue["positions"], bath, np.array([[0.0, 0.0, 1.0], [0.0, 1.0, 1.0]]), 0.3, 0.6)
+    vm = np.random.default_rng(0).normal(-80, 5, (5, len(tissue["tissueNodes"])))
+    writeIgb(tmp_path / "vm.igb", vm, 0.0, 0.2)
+    args = (config, tissue, ground, sets, tmp_path / "vm.igb", tmp_path / "cache")
+    paths, constructed, times, traces = leadfield.leadFieldsAndTraces(*args, tmp_path / "run1", log=lambda *_: None)
+    assert constructed == 2 and all(p.exists() for p in paths) and traces.shape == (2, 5) and np.allclose(times, np.arange(5) * 0.2)
+    assert leadfield.loadLeadField(paths[0]).shape == (len(tissue["tissueNodes"]),)
+    again = leadfield.leadFieldsAndTraces(*args, tmp_path / "run2", log=lambda *_: None)
+    assert again[1] == 0 and np.abs(again[3] - traces).max() < 1e-4 * np.abs(traces).max()   # from the cache (float32 LF files)
     with pytest.raises(ValueError, match="different mesh"):
-        leadfield.electrodeLeadFields(config, tissue, ground[:-1], sets, tmp_path)
+        leadfield.leadFieldsAndTraces(config, tissue, ground[:-1], sets, tmp_path / "vm.igb", tmp_path / "cache", tmp_path / "run3")

@@ -39,5 +39,6 @@ def test_model_par_files_parse():
     main = parfile.readPar(ROOT / "config" / "model.par")
     laplace = parfile.readPar(ROOT / "config" / "leadfield.par")
     assert main["bidomain"] == "0" and main["dataout_e"] == "0" and main["imp_region[0].im"] == "Courtemanche"
-    assert laplace["experiment"] == "2" and laplace["stim[1].crct.type"] == "2" and laplace["cg_norm_ellip"] == "2"
+    assert laplace["experiment"] == "4" and laplace["post_processing_opts"] == "64" and laplace["bidomain"] == "1" \
+        and laplace["cg_norm_ellip"] == "2"
     assert not any(k.startswith("gregion") for k in laplace)       # written per run from the model conductivities

@@ -41,9 +41,11 @@ def boxWithBath(size, wall, bath, spacing):
 
 
 # ----------------------------------------------------------------- test oracle for the lead fields
-# Independent reference solves used only by the tests (the pipeline gets its lead fields from openCARP,
-# FM-34). Direct sparse solves of the same discrete problem: K with sigma_i + sigma_e in tissue and
-# lesion and g_bath in the bath, the corner ground at 0 mV.
+# Independent reference solves used only by the tests (the pipeline gets its lead fields and electrograms
+# from openCARP's lead-field module, FM-35). Direct sparse solves of the same discrete problem: K with
+# sigma_i + sigma_e in tissue and lesion and g_bath in the bath, the corner ground at 0 mV, and openCARP's
+# electrode current: 1 uA spread over the electrode nodes with the mass matrix, normalised by the
+# electrode volume (sum of the lumped masses of its nodes; physics/leadfield.cc apply_unit_curr_lead).
 def _bulkAndSource(config, tissue, source="intracellular"):
     from efov import leadfield
     tags, inTissue = tissue["tags"], tissue["tags"] != 0
@@ -54,6 +56,23 @@ def _bulkAndSource(config, tissue, source="intracellular"):
     sourceTensor[inTissue] = leadfield.tissueTensors(config, tags[inTissue], tissue["fibres"][inTissue], source)
     return (leadfield.assemble(tissue["positions"], tissue["elements"], bulk),
             leadfield.assemble(tissue["positions"], tissue["elements"], sourceTensor))
+
+
+def massMatrix(positions, elements):
+    from scipy import sparse
+    from efov.leadfield import elementGradients
+    volumes, _ = elementGradients(positions, elements)
+    local = volumes[:, None, None] * (np.ones((4, 4)) + np.eye(4))[None] / 20.0
+    i, j = np.repeat(elements, 4, axis=1).ravel(), np.tile(elements, (1, 4)).ravel()
+    return sparse.csr_matrix((local.ravel(), (i, j)), shape=(len(positions), len(positions)))
+
+
+def electrodeCurrent(tissue, electrodeNodes):
+    """Nodal currents (uA) of a 1 uA lead-field electrode: M chi_S / (sum of lumped masses over S)."""
+    M = massMatrix(tissue["positions"], tissue["elements"])
+    chi = np.zeros(len(tissue["positions"])); chi[np.unique(electrodeNodes)] = 1.0
+    lumped = np.asarray(M.sum(axis=1)).ravel()
+    return (M @ chi) / lumped[np.unique(electrodeNodes)].sum()
 
 
 _FACTORS = {}
@@ -71,68 +90,56 @@ def _groundedFactor(config, tissue, ground):
     return _FACTORS[key]
 
 
-def referenceLaplacePotential(config, tissue, ground, electrodeNodes, potentialMv=1.0):
-    """u with u = potentialMv on the electrode nodes, 0 on the ground, K u = 0 elsewhere (what openCARP's Laplace run returns).
+def referenceLeadField(config, tissue, ground, electrodeNodes):
+    """Z (mV/uA, all nodes) of a 1 uA lead-field electrode, Z = 0 on the ground."""
+    free, factor = _groundedFactor(config, tissue, ground)
+    z = np.zeros(len(tissue["positions"]))
+    z[free] = factor.solve(electrodeCurrent(tissue, electrodeNodes)[free])
+    return z
 
-    With K factorised once on the non-ground nodes: the field of a unit current at each electrode node,
-    x_j = K^-1 e_j, then the current split w (sum 1) that makes x = sum_j w_j x_j equal on all electrode
-    nodes. That x is the equipotential field of a 1 uA electrode; u = potentialMv x / x_S.
+
+def weightedElectrogram(config, tissue, ground, electrodeNodes, vmOnTissue, source="intracellular"):
+    """Electrode reading b^T phi from K phi = -S Vm solved directly frame by frame (b: the electrode's current weights).
+
+    Independent of reciprocity and of the lead fields.
     """
     free, factor = _groundedFactor(config, tissue, ground)
-    count = len(tissue["positions"])
-    electrode = np.unique(electrodeNodes)
-    position = np.full(count, -1); position[free] = np.arange(len(free))
-    rhs = np.zeros((len(free), len(electrode))); rhs[position[electrode], np.arange(len(electrode))] = 1.0
-    fields = factor.solve(rhs)                                         # (free, |S|)
-    M = fields[position[electrode]]                                    # M[i, j] = x_j at electrode node i
-    A = np.block([[M, -np.ones((len(electrode), 1))], [np.ones((1, len(electrode))), np.zeros((1, 1))]])
-    solution = np.linalg.solve(A, np.r_[np.zeros(len(electrode)), 1.0])
-    weights, level = solution[:-1], solution[-1]
-    u = np.zeros(count)
-    u[free] = fields @ weights * potentialMv / level
-    u[electrode] = potentialMv
-    return u
+    _, S = _bulkAndSource(config, tissue, source)
+    full = np.zeros((len(tissue["positions"]), vmOnTissue.shape[1]))
+    full[tissue["tissueNodes"]] = vmOnTissue
+    phi = np.zeros_like(full)
+    phi[free] = factor.solve(-(S @ full)[free])
+    return electrodeCurrent(tissue, electrodeNodes) @ phi
 
 
-def patchLaplace(monkeypatch, tissues=None):
-    """Replace the openCARP Laplace run by referenceLaplacePotential.
+def patchLeadfield(monkeypatch, tissues=None):
+    """Replace the openCARP lead-field run by the oracle; writes the same files (LF_<name>.igb, ECG_<name>.dat).
 
-    tissues: {meshBase: tissue}; a mesh not listed is read from its openCARP files.
+    tissues: {meshBase: tissue}; a mesh not listed is read from its openCARP files. Electrograms follow the
+    pipeline's convention phi = -Z^T S_i Vm (what efov.electrograms checks openCARP against).
     """
     from efov import leadfield
-    from efov.io import readMesh
+    from efov.io import igbTimes, readIgb, readMesh, writeIgb
     tissues = dict(tissues or {})
 
-    def fake(config, meshBase, groundVertices, electrodeNodes, nodeCount, folder, ranks=1):
-        Path(folder).mkdir(parents=True, exist_ok=True)
+    def fake(config, meshBase, groundVertices, leads, vmFile, folder, ecgStepMs, ranks=1, leadFieldDir=None):
+        folder = Path(folder); out = folder / "POSTPROC_DIR"; out.mkdir(parents=True, exist_ok=True)
         if str(meshBase) not in tissues:
             positions, elements, tags, fibres = readMesh(meshBase)
             tissues[str(meshBase)] = dict(positions=positions, elements=elements, tags=tags, fibres=fibres,
                                           tissueNodes=np.unique(elements[tags != 0]))
-        return referenceLaplacePotential(config, tissues[str(meshBase)], groundVertices, electrodeNodes,
-                                         leadfield.electrodePotentialMv(config))
-    monkeypatch.setattr(leadfield, "laplacePotential", fake)
-
-
-def equipotentialElectrogram(config, tissue, ground, electrodeNodes, vmOnTissue, source="intracellular"):
-    """Potential of a floating equipotential electrode from K phi = -S Vm solved directly frame by frame.
-
-    The electrode nodes are tied into one unknown (phi = P y) and carry no net current (P^T K P y = P^T f):
-    independent of reciprocity and of the lead fields.
-    """
-    from scipy import sparse
-    from scipy.sparse.linalg import splu
-    K, S = _bulkAndSource(config, tissue, source)
-    count = len(tissue["positions"])
-    electrode, ground = np.unique(electrodeNodes), np.unique(ground)
-    free = np.setdiff1d(np.arange(count), np.union1d(electrode, ground))
-    columns = np.zeros(count, np.int64)
-    columns[free] = np.arange(len(free))
-    columns[electrode] = len(free)                                   # one shared unknown for the electrode
-    keep = np.union1d(free, electrode)
-    P = sparse.csr_matrix((np.ones(len(keep)), (keep, columns[keep])), shape=(count, len(free) + 1))
-    solve = splu((P.T @ K @ P).tocsc()).solve
-    full = np.zeros((count, vmOnTissue.shape[1]))
-    full[tissue["tissueNodes"]] = vmOnTissue
-    y = solve(P.T @ (-(S @ full)))
-    return y[-1]
+        tissue = tissues[str(meshBase)]
+        model = leadfield.ContributionModel(config, tissue)
+        vm, times = readIgb(vmFile).astype(np.float64), igbTimes(vmFile)
+        fields, traces = {}, {}
+        for name, nodes in leads:
+            if leadFieldDir is None:
+                z = referenceLeadField(config, tissue, groundVertices, nodes)[tissue["tissueNodes"]]
+                fields[name] = out / f"LF_{name}.igb"
+                writeIgb(fields[name], z[None])
+            else:
+                z, fields[name] = readIgb(Path(leadFieldDir) / f"LF_{name}.igb")[0].astype(float), None
+            traces[name] = out / f"ECG_{name}.dat"
+            np.savetxt(traces[name], np.column_stack([times - times[0], vm @ model.nodalWeights(z)]), fmt="%.10g")
+        return fields, traces
+    monkeypatch.setattr(leadfield, "runOpenCarpLeadfield", fake)

@@ -172,6 +172,11 @@ class Run:
         record["packages"] = dict(numpy=numpy.__version__, scipy=scipy.__version__, pandas=pandas.__version__)
         build = subprocess.run([record["openCARP"], "-buildinfo"], capture_output=True, text=True)
         record["openCarpBuild"] = (build.stdout + build.stderr)[-1500:]
+        from .leadfield import supportsLeadfield
+        if not supportsLeadfield(record["openCARP"]):
+            raise RuntimeError("This openCARP has no lead-field module (post_processing_opts 64): openCARP >= 20 is required "
+                               "for the lead fields and electrograms (FM-35)")
+        record["openCarpLeadfieldModule"] = True
         git = lambda *a: subprocess.run(["git", "-C", str(REPOSITORY), *a], capture_output=True, text=True).stdout.strip()
         record["repositoryCommit"], record["uncommittedChanges"] = git("rev-parse", "HEAD"), bool(git("status", "--porcelain"))
         record["diskFreeGb"] = round(shutil.disk_usage(self.out).free / 1e9, 1)

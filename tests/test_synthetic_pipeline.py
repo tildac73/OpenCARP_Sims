@@ -3,10 +3,10 @@
 The small test mesh (config/test_small.json) is built with efov.meshbuild, with the lesion strip
 and isolated tissue beyond it (FM-24); Vm is an analytic planar wave (four beats, x direction; no
 activation at y < 0 in the lesion condition). The stages window -> leadFields -> electrograms ->
-measurements -> export -> groundTruth -> figures then run on these files, with the openCARP Laplace
-runs replaced by the test oracle (helpers.patchLaplace). One electrode's electrogram is checked
-against a direct frame-by-frame solve of K phi = -S_i Vm with the electrode as a floating
-equipotential (independent of reciprocity and of the lead fields).
+measurements -> export -> groundTruth -> figures then run on these files, with the openCARP lead-field
+run replaced by the test oracle (helpers.patchLeadfield). One electrode's electrogram is checked
+against a direct frame-by-frame solve of K phi = -S_i Vm read with the electrode's current weights
+(independent of reciprocity and of the lead fields).
 """
 import json
 
@@ -15,7 +15,7 @@ import pytest
 
 from efov import config as cfg, electrograms, export, groundtruth, leadfield, measurements, meshbuild, physiology, simulation
 from efov.io import readVertices, saveJson, writeMesh, writeVertices
-from helpers import SMALL, equipotentialElectrogram, patchLaplace
+from helpers import SMALL, patchLeadfield, weightedElectrogram
 
 
 def writeIgb(path, values, startMs, stepMs):
@@ -85,7 +85,7 @@ def writeCondition(config, job, lesion):
 
 def directElectrogram(config, tissue, ground, nodes, job, timesMs):
     vm, _ = electrograms.readVmFrames(job, timesMs[0], timesMs[-1])
-    return equipotentialElectrogram(config, tissue, ground, nodes, vm.T)
+    return weightedElectrogram(config, tissue, ground, nodes, vm.T)
 
 
 @pytest.fixture(scope="module")
@@ -95,7 +95,7 @@ def syntheticRun(tmp_path_factory):
     for condition in ("intact", "lesion"):
         writeCondition(config, root / "simulations" / condition, condition == "lesion")
     patch = pytest.MonkeyPatch()
-    patchLaplace(patch)
+    patchLeadfield(patch)
     yield config, root
     patch.undo()
 
@@ -110,7 +110,7 @@ def test_analysis_stages_agree_on_a_synthetic_run(syntheticRun):
     assert len(windows) == len(cfg.centreYmm(config)) * len(config["values"]["gapsMm"]) and len({tuple(w) for w in windows}) == 1
     leadFolder = root / "leadFields"; leadFolder.mkdir()
     fields = electrograms.runLeadFields(config, jobs, tissues, root / "leadFieldCache", leadFolder, log=lambda *_: None)
-    assert fields["conditions"]["lesion"]["computedNow"] == fields["conditions"]["lesion"]["electrodes"]
+    assert fields["conditions"]["lesion"]["constructedNow"] == fields["conditions"]["lesion"]["electrodes"]
     egms = root / "electrograms"; egms.mkdir()
     info = electrograms.runElectrograms(config, jobs, tissues, windows, leadFolder, egms)
     assert info["lesion"]["nodesPerElectrodeMin"] > 0

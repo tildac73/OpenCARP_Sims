@@ -35,12 +35,12 @@ def findExecutable(name, environmentVariable):
     return str(path)
 
 
-def runLogged(command, logPath, env=None):
+def runLogged(command, logPath, env=None, cwd=None):
     """Run a command, keep its full output in logPath, and remove any credentials openCARP prints."""
     with open(logPath, "w") as log:
         log.write("Command: " + " ".join(map(str, command)) + "\n")
         log.flush()
-        code = subprocess.call([str(c) for c in command], stdout=log, stderr=subprocess.STDOUT, env=env)
+        code = subprocess.call([str(c) for c in command], stdout=log, stderr=subprocess.STDOUT, env=env, cwd=cwd)
     text = Path(logPath).read_text(errors="replace")
     cleaned = re.sub(r"(://)[^/\s:@]+:[^/\s@]+@", r"\1<credentials removed>@", text)
     if cleaned != text:

@@ -1,38 +1,35 @@
 # =====================================================================================
-# Lead field of one electrode by reciprocity: an openCARP Laplace solve (FM-14, FM-34).
+# Lead fields and electrograms of every electrode: openCARP's lead-field module (FM-35).
+# Requires openCARP >= 20 (released 1 Sep 2026; "Compute lead-field ECGs").
 #
-# The electrode's mesh nodes are held at 1 mV (extracellular potential, closed loop) and the bath
-# corner cube at 0 mV (extracellular ground). openCARP solves div(sigma grad u) = 0 elsewhere.
-# efov/leadfield.py divides u by the current the electrode draws, I = u^T K u, giving the lead field
-# z = u / I (mV per uA) of an equipotential electrode, and combines it with the sigma_i source and
-# the monodomain Vm (FM-23): phi = -z^T S_i Vm, exact for the discrete problem.
+# Post-processing only (experiment 4) with post_processing_opts 64 (Leadfield). One run per condition:
+#   * every electrode is a lead-field stimulus (crct.type 13, "leadfield stim (extracellular current)"),
+#     strength 1 = a total current of 1 uA, which openCARP spreads over the electrode volume
+#     (strength x 1e12 / volume, then the mass matrix), with the corner cube grounded (crct.type 3);
+#   * openCARP solves the bulk system (g_i + g_e in tissue and lesion, g_bath in the bath) once per
+#     electrode and writes the lead field Z on the tissue nodes (LF_<name>.igb);
+#   * it streams lf_vmfile (the monodomain vm.igb) and writes V(t) = Z . (K_i Vm(t)) per electrode
+#     (ECG_<name>.dat) every ecg_timedt.
+# openCARP manual Section 4.2.6 (Eqs. 34-36) and physics/leadfield.cc; example 02_EP_tissue/09_leadfield.
 #
-# The conductivity regions are NOT set here. efov/leadfield.py writes the model's own g_i, g_e
-# (tissue, lesion) and g_bath into each resolved file. openCARP's Laplace operator is g_i + g_e in
-# tissue and g_bath in the bath: the bidomain extracellular operator (checked against an
-# independent P1 solve to 2e-8 on the test slab, VL-2026-11-07-01).
-#
-# Why a potential and not a current: openCARP 19.0.0 ignores extracellular current stimuli (type 1,
-# with or without total_current or balancing) in Laplace and bidomain runs; the computed potential
-# stays zero (VL-2026-11-04-01, VL-2026-11-07-01). Basis: openCARP 19.0.0 binary help text
-# (experiment 2 "Laplace solve"; crct.type 2 "extracellular potential (closed loop, in mV)",
-# 3 "extracellular ground"). W0 (checks/container_checks.py) re-checks this on the build in use.
+# efov/leadfield.py writes the conductivity regions (the model's g_i, g_e, g_bath), the stimuli, the mesh,
+# lf_vmfile, ecg_timedt and lf_dir (when the lead fields are cached) into each resolved file.
 # =====================================================================================
 
-experiment   = 2          # Laplace solve only
-bidomain     = 1          # required by the Laplace mode (openCARP sets it otherwise, with a warning)
+experiment           = 4          # post process only
+post_processing_opts = 64         # Leadfield
+bidomain             = 1          # so that K_i is the intracellular (sigma_i) stiffness. In monodomain and
+                                  # pseudo-bidomain mode openCARP builds this matrix with the monodomain
+                                  # tensor sigma_m (VL-2026-11-01-02), which would bias the source (FM-23).
+
 cg_norm_ellip  = 2        # relative residual. The default (0) is an ABSOLUTE preconditioned residual: on fine
-                          # meshes the initial residual is already below it and openCARP returns u = 0 away
-                          # from the electrode without iterating (seen on a 0.25 mm test box, VL-2026-11-07-01)
-cg_tol_ellip   = 1e-10    # relative residual of the Laplace solve
-cg_maxit_ellip = 10000    # openCARP maximum; the run log reports the iterations used
-dt           = 20
-tend         = 1
-timedt       = 1
-spacedt      = 1
+                          # meshes the initial residual is already below it and the solve returns without
+                          # iterating (seen with the Laplace mode on a 0.25 mm test box, VL-2026-11-07-01)
+cg_tol_ellip   = 1e-10    # relative residual of each lead-field solve
+cg_maxit_ellip = 10000
 
 num_imp_regions  = 1
-imp_region[0].im = Courtemanche    # not used by a Laplace solve; kept so the model setup is complete
+imp_region[0].im = Courtemanche    # EP physics must be active for the lead-field module; not integrated here
 
 num_phys_regions          = 2
 phys_region[0].ptype      = 0
@@ -46,12 +43,3 @@ phys_region[1].num_IDs    = 3
 phys_region[1].ID[0]      = 1
 phys_region[1].ID[1]      = 5
 phys_region[1].ID[2]      = 0
-
-num_stim                     = 2
-stim[0].crct.type            = 3      # extracellular ground (corner cube), 0 mV
-stim[1].crct.type            = 2      # extracellular potential (closed loop): Dirichlet on the electrode nodes
-stim[1].pulse.strength       = 1.0    # mV; efov/leadfield.py reads this value for the normalisation
-stim[1].ptcl.start           = 0
-stim[1].ptcl.duration        = 1      # ms = tend: on for the one Laplace solve
-stim[1].ptcl.bcl             = 1
-stim[1].ptcl.npls            = 1

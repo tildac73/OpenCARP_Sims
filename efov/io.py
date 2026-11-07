@@ -148,6 +148,17 @@ def readIgb(path, frames=slice(None)):
     return selected
 
 
+def writeIgb(path, values, startMs=0.0, stepMs=1.0):
+    """openCARP-style IGB file (1024-byte header, little-endian float32, (frames, nodes))."""
+    values = np.atleast_2d(np.asarray(values, "<f4"))
+    frames, nodes = values.shape
+    header = (f"x:{nodes} y:1 z:1 t:{frames} type:float systeme:little_endian org_t:{startMs:g} "
+              f"dim_t:{(frames - 1) * stepMs:g} inc_t:{stepMs:g}").ljust(1023) + "\x0c"
+    with open(path, "wb") as stream:
+        stream.write(header.encode("latin-1"))
+        stream.write(values.tobytes())
+
+
 def mergeIgb(first, second, target):
     """target = all frames of first, then second without its first frame (it repeats first's last time)."""
     rawA = open(first, "rb").read(1024).decode("latin-1")

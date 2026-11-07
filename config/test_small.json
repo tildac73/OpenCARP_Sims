@@ -252,7 +252,7 @@
         0.8,
         0.9
       ],
-      "_about": "FM-15, FM-16, FM-21, FM-30. Shares s_e for every recording at these placements (classes, profiles, shape descriptors); full element fields (.vtk, npz) for fieldRecordings. nearFieldRadiusMm = one HD Grid electrode spacing: a stated convention, not a literature value; the continuous depth and lateral curves are the primary result. Lead fields: openCARP Laplace solves, electrode held at 1 mV and normalised by its current (config/leadfield.par, efov/leadfield.py; FM-34)."
+      "_about": "FM-15, FM-16, FM-21, FM-30. Shares s_e for every recording at these placements (classes, profiles, shape descriptors); full element fields (.vtk, npz) for fieldRecordings. nearFieldRadiusMm = one HD Grid electrode spacing: a stated convention, not a literature value; the continuous depth and lateral curves are the primary result. Lead fields and electrograms: openCARP's lead-field module, openCARP >= 20 (config/leadfield.par, efov/leadfield.py; FM-35)."
     },
     "tune": {
       "stripSizeMm": [

@@ -1,6 +1,6 @@
 """Real openCARP, start to finish, on config/test_small.json (opt-in: EFOV_RUN_OPENCARP=1).
 
-Checks that every stage runs on real output (monodomain runs, one openCARP Laplace lead field per
+Checks that every stage runs on real output (monodomain runs, openCARP lead-field module (>= 20) per
 electrode, FM-23) and that the implementation checks hold: CV tuning, shares summing to 1, the lesion
 strip and the isolated tissue staying quiet. The small slab is not expected to
 pass the profile prerequisites (too narrow for a stable far region). The changePoints stage needs R

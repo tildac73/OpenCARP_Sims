@@ -5,25 +5,26 @@ contributing tissue of every electrogram as ground truth. Plan and decisions: pr
 `claude/final_model_plan_2026-11-03.md`; `docs/decision_log.md` (DL-2026-11-03-02, FM-01 to FM-22; DL-2026-11-03-03, FM-23 to FM-30).
 
 Forward model: openCARP monodomain Vm; electrograms by reciprocity from one lead field per electrode with the
-sigma_i source (FM-23). Each lead field is an openCARP Laplace solve with the electrode held at 1 mV and the
-corner grounded, divided by the current the electrode draws (equipotential electrode, FM-34). Lesion: 5.6 mm ablation strip with isolated viable tissue beyond
+sigma_i source (FM-23). Lead fields and electrograms come from openCARP's lead-field module (openCARP >= 20):
+one post-processing run per condition, 1 uA spread over each electrode, corner ground (FM-35). Lesion: 5.6 mm ablation strip with isolated viable tissue beyond
 (FM-24). Amplitudes in model units, never calibrated to clinical values (FM-25).
 
 ## Files that define the model
 | File | Holds |
 | --- | --- |
 | `config/model.par` | every openCARP setting (solver, time, cells, conductivities, lesion, bath, stimuli, outputs) |
-| `config/leadfield.par` | the openCARP Laplace solve of every electrode's lead field: electrode at 1 mV, corner ground (FM-14, FM-34) |
+| `config/leadfield.par` | openCARP's lead-field run (openCARP >= 20): every electrode's lead field and electrogram (FM-14, FM-35) |
 | `config/model.json` | `sweep`: variables, baselines, planned values; `fixed`: mesh, bath, electrodes, analysis |
 | `config/tuning.json` | beta tuned for a mesh and CV target (written by `efov tune --write-par`; production mesh done 4 Nov, FM-32) |
 | `config/sweeps/oat_baseline.json` | the one-at-a-time sweep |
 | `reference/EFOV_analysis_pipeline.Rmd` | Wang's analysis, unedited (MD5 c739f13e6d07996b81d6f733f04f503d) |
 
 ## Run order on the workstation (efov-runner)
+Requires **openCARP >= 20** (lead-field module); preflight and W0 stop with a message on an older build.
 ```bash
 export MPIEXEC_BIN=/usr/local/lib/opencarp/lib/petsc/bin/mpiexec
 python3 -m pytest tests -q                                    # unit tests (no openCARP)
-python3 checks/container_checks.py --out runs/checks --np 2   # C1, W0, C4, C4p, C5, C8 on a small slab (about 30 min)
+python3 checks/container_checks.py --out runs/checks --np 2   # C1, W0 (v20 lead fields), C4, C4p, C5, C8 on a small slab
 python3 -m efov plan                                          # mesh size, lead fields per condition, assumptions
 ```
 Production: the base model, its figures, then every experiment, from one notebook:

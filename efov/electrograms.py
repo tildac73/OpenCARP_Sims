@@ -1,9 +1,11 @@
-"""Unipolar electrograms at every electrode, by reciprocity from the lead fields (FM-14, FM-23).
+"""Unipolar electrograms at every electrode from openCARP's lead-field module (FM-14, FM-23, FM-35).
 
-An electrode is the set of bath mesh nodes inside its cylinder (efov.geometry); its unipolar signal
-is the mean phi_e over that set, referenced to the grounded bath corner. With the electrode's lead
-field z (efov.leadfield), phi(t) = w . Vm(t) with w = -S_i z on the tissue nodes: exact for the
-discrete bidomain extracellular problem with the sigma_i source and openCARP's monodomain Vm.
+An electrode is the set of bath mesh nodes inside its cylinder (efov.geometry); openCARP spreads its
+unit lead-field current over that set by volume, so its unipolar signal is the volume-weighted mean
+phi_e over the set, referenced to the grounded bath corner. openCARP writes the signal of every
+electrode, V(t) = Z . (K_i Vm(t)), from the monodomain vm.igb (efov.leadfield). This module takes the
+analysis frames from those traces and checks them against -Z^T S_i Vm formed from the same lead fields
+with the sigma_i tensors the ground truth uses (CONSISTENCY_TOLERANCE).
 
 Frames read: from (earliest placement window - 2 x filter history) to (latest placement window end +
 resampleMarginMs). The second filter history serves the filter-history check; the margin keeps the
@@ -16,7 +18,7 @@ import numpy as np
 from .config import beatCount, cycleLengthMs, fingerprint, slabSizeMm
 from .geometry import electrodeLayout, electrodeNodeSets
 from .io import igbTimes, readIgb, readVertices, saveJson
-from .leadfield import ContributionModel, electrodeLeadFields
+from .leadfield import ContributionModel, leadFieldsAndTraces, loadLeadField
 from .meshbuild import catheterSideNodes
 
 
@@ -54,31 +56,45 @@ def electrodeSets(config, tissue):
     return layout, sets
 
 
-def extractElectrograms(config, job, tissue, windows, leadFieldPaths, layout, sets, outputPath, block=64, frameBlock=200):
-    """Unipolar phi at every electrode for the analysis frames -> npz (uni: placements x 16 x frames, mV).
+CONSISTENCY_TOLERANCE = 1e-3     # relative L2 difference, openCARP trace vs -Z^T S_i Vm (float32 files)
+CONSISTENCY_ELECTRODES = 8
 
-    Vm stays float32 in memory (frames x tissue nodes); products are formed in float64 in blocks of
-    electrodes and frames. The weights of an electrode sum to zero (S_i annihilates constants), so the
-    resting offset of Vm cancels exactly; float64 keeps that cancellation accurate.
+
+def extractElectrograms(config, job, tissue, windows, leadFieldArchive, layout, sets, outputPath):
+    """Unipolar phi at every electrode for the analysis frames (openCARP traces) -> npz (uni: placements x 16 x frames, mV).
+
+    Checks CONSISTENCY_ELECTRODES electrodes, spread over the node sets, against -Z^T S_i Vm from the same
+    lead fields; stops if any differs by more than CONSISTENCY_TOLERANCE (relative L2 over the analysis frames).
     """
+    stored = np.load(leadFieldArchive)
+    startMs, endMs = analysisTimes(config, windows)
+    times = stored["timeMs"]
+    keep = (times >= startMs - 1e-9) & (times <= endMs + 1e-9)
+    unique = stored["traces"][:, keep].astype(np.float64)
+    times = times[keep]
+    files = [str(f) for f in stored["files"]]
     model = ContributionModel(config, tissue)
-    vm, times = readVmFrames(job, *analysisTimes(config, windows))
-    if vm.shape[1] != len(model.tissueNodes):
-        raise ValueError(f"{job}: Vm has {vm.shape[1]} nodes, the model {len(model.tissueNodes)}")
-    unique = np.empty((len(sets), len(times)))
-    for first in range(0, len(sets), block):
-        rows = range(first, min(first + block, len(sets)))
-        weights = np.stack([model.nodalWeights(np.load(leadFieldPaths[k])) for k in rows])   # (block, tissue nodes)
-        for start in range(0, len(times), frameBlock):
-            frames = slice(start, min(start + frameBlock, len(times)))
-            unique[first:first + len(rows), frames] = weights @ vm[frames].astype(np.float64).T
+    vm, vmTimes = readVmFrames(job, startMs, endMs)
+    if len(vmTimes) != len(times) or np.abs(vmTimes - times).max() > 1e-6:
+        raise ValueError(f"{job}: Vm frames and openCARP electrogram samples differ")
+    checks = []
+    for k in np.unique(np.linspace(0, len(sets) - 1, min(CONSISTENCY_ELECTRODES, len(sets))).round().astype(int)):
+        reference = model.nodalWeights(loadLeadField(files[k])) @ vm.astype(np.float64).T
+        scale = float(unique[k] @ reference / (reference @ reference))
+        checks.append(dict(electrode=int(k), relativeDifference=float(np.linalg.norm(unique[k] - reference) / np.linalg.norm(reference)),
+                           fittedScale=scale))
+    worst = max(c["relativeDifference"] for c in checks)
+    if worst > CONSISTENCY_TOLERANCE:
+        raise RuntimeError(f"openCARP electrograms differ from -Z^T S_i Vm by up to {worst:.3g} (fitted scales "
+                           f"{[round(c['fittedScale'], 6) for c in checks]}): openCARP's K_i or sign convention is not the "
+                           "sigma_i source the ground truth uses; see docs/decision_log.md FM-35")
     sizes = np.array([len(s) for s in sets])
     np.savez_compressed(outputPath, uni=unique[layout["electrodeIndex"]].astype(np.float32), timeMs=times,
                         centres=layout["centres"], placements=layout["placements"], uniqueCentres=layout["uniqueCentres"],
                         electrodeIndex=layout["electrodeIndex"], nodeSetNodes=np.concatenate(sets), nodeSetSizes=sizes,
-                        leadFieldFiles=np.array([str(p) for p in leadFieldPaths]))
+                        leadFieldFiles=np.array(files))
     return dict(uniqueElectrodes=len(sets), nodesPerElectrodeMin=int(sizes.min()), nodesPerElectrodeMax=int(sizes.max()),
-                frames=int(len(times)))
+                frames=int(len(times)), consistency=checks, consistencyMax=worst)
 
 
 def nodeSetsFromArchive(archive):
@@ -87,20 +103,22 @@ def nodeSetsFromArchive(archive):
 
 
 def runLeadFields(config, jobs, tissues, cacheRoot, folder, processCount=1, log=print):
-    """Lead field of every distinct electrode of this run, per condition (FM-23).
+    """Lead field and openCARP electrogram of every distinct electrode of this run, per condition (FM-35).
 
-    Cached in <cacheRoot>/<conductor fingerprint>/<condition>/; <folder>/<condition>.npz lists the
-    node sets and the cached files this run uses.
+    Lead fields are cached in <cacheRoot>/<conductor fingerprint>/<condition>/; <folder>/<condition>.npz holds
+    the node sets, the cached files this run uses and the electrogram traces (all Vm frames).
     """
     folder, key = Path(folder), fingerprint(config, "conductor")
     result = dict(conductorFingerprint=key, cache=str(Path(cacheRoot) / key), conditions={})
     for condition, job in jobs.items():
         layout, sets = electrodeSets(config, tissues[condition])
-        paths, computed = electrodeLeadFields(config, tissues[condition], readVertices(Path(job) / "ground.vtx"), sets,
-                                              Path(cacheRoot) / key / condition, processCount, log)
+        paths, constructed, times, traces = leadFieldsAndTraces(
+            config, tissues[condition], readVertices(Path(job) / "ground.vtx"), sets, Path(job) / "vm.igb",
+            Path(cacheRoot) / key / condition, folder / condition, processCount, log)
         np.savez(folder / f"{condition}.npz", nodeSetNodes=np.concatenate(sets), nodeSetSizes=[len(s) for s in sets],
-                 files=np.array([str(p) for p in paths]))
-        result["conditions"][condition] = dict(electrodes=len(sets), computedNow=computed, reused=len(sets) - computed)
+                 files=np.array([str(p) for p in paths]), timeMs=times, traces=traces.astype(np.float32))
+        result["conditions"][condition] = dict(electrodes=len(sets), constructedNow=constructed,
+                                               loadedFromCache=int(constructed == 0))
     saveJson(folder / "leadFields.json", result)
     return result
 
@@ -110,10 +128,10 @@ def runElectrograms(config, jobs, tissues, windows, leadFieldFolder, folder):
     result = {}
     for condition, job in jobs.items():
         layout, sets = electrodeSets(config, tissues[condition])
-        stored = np.load(Path(leadFieldFolder) / f"{condition}.npz")
-        if not np.array_equal(stored["nodeSetNodes"], np.concatenate(sets)):
+        archive = Path(leadFieldFolder) / f"{condition}.npz"
+        if not np.array_equal(np.load(archive)["nodeSetNodes"], np.concatenate(sets)):
             raise ValueError(f"{condition}: electrode node sets differ from those of the leadFields stage")
-        result[condition] = extractElectrograms(config, job, tissues[condition], windows, list(stored["files"]), layout, sets,
+        result[condition] = extractElectrograms(config, job, tissues[condition], windows, archive, layout, sets,
                                                 folder / f"{condition}.npz")
     saveJson(folder / "electrodes.json", result)
     return result

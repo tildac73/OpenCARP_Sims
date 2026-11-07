@@ -148,13 +148,13 @@ display(pd.DataFrame({c: v["criteria"] for c, v in physiology["conditions"].item
 {k: v for k, v in window.items() if k != "windowsMs"}'''),
 
         md("""## 1.4 Lead fields and electrograms
-Each electrode is the set of bath mesh nodes inside its 1 mm cylinder (FM-14), treated as a conductor: one
-shared potential, no net current while recording (FM-34). Every distinct electrode gets an openCARP Laplace run
-(`config/leadfield.par`): its nodes held at 1 mV, the corner grounded, operator sigma_i + sigma_e in tissue and
-g_bath in the bath. Dividing the potential u by the current the electrode draws, I = u^T K u, gives its lead field
-z = u / I. The unipolar signal is phi(t) = -z^T S_i Vm(t), the extracellular potential with the sigma_i source
-recovered from the monodomain Vm (FM-23). The Laplace runs go `--np` at a time, one openCARP process each;
-lead fields are cached per conductor and reused by later experiments."""),
+Each electrode is the set of bath mesh nodes inside its 1 mm cylinder (FM-14). One openCARP run per condition
+(openCARP >= 20, `config/leadfield.par`, FM-35) injects 1 uA over each electrode (spread by volume), with the corner
+grounded, and solves for its lead field Z (operator sigma_i + sigma_e in tissue, g_bath in the bath). It then streams
+the monodomain Vm and writes every electrode's unipolar signal V(t) = Z . (K_i Vm(t)), the extracellular potential
+with the sigma_i source (FM-23). The electrograms stage takes the analysis frames and checks openCARP's signals
+against -Z^T S_i Vm formed with the tensors the ground truth uses. Lead fields are cached per conductor and reused
+by later experiments."""),
         code('''run.runStage("leadFields")'''),
         code('''run.runStage("electrograms")
 egm = np.load(run.out / "electrograms" / "intact.npz")
