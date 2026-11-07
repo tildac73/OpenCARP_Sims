@@ -46,3 +46,14 @@ Full session information: `_refinement_work/bayes_*/methodAndSession.txt`, `R_re
 Used for: the `finalModel` unit tests and the real-openCARP end-to-end run of `config/test_small.json`
 (VL-2026-11-03-01). Not the workstation build (`9accae05`); the forward-model check in every run
 verifies the configuration on whichever build runs it.
+
+## Final-model verification environment, 4 Nov 2026 (Claude's sandbox)
+
+| Component | Version |
+| --- | --- |
+| openCARP / carputils | 19.0.0 / 19.0.0 (conda-forge, build `c877c38`) |
+| Python / numpy / scipy / pyamg | 3.12 / 2.5.4 / 1.18.1 / conda-forge current |
+| R / mcp / JAGS | 4.4.3 / 0.3.4 / 4.3.2 (conda-forge) |
+
+Used for: VL-2026-11-04-01 to -04 (openCARP checks, beta tuning at the production mesh, real-openCARP
+end-to-end run of test_small through Wang's Rmd, lead-field cost). The tuned beta (FM-32) comes from this build.

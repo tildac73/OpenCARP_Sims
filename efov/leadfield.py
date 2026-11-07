@@ -28,6 +28,7 @@ cached by node set under a folder named by the conductor fingerprint (efov.confi
 variants that change only the wave, beta, electrodes, noise or analysis reuse them.
 """
 import hashlib
+import time
 import os
 from pathlib import Path
 
@@ -244,19 +245,62 @@ def electrodeLeadFields(config, tissue, groundVertices, nodeSets, folder, proces
             raise ValueError(f"Lead-field cache {folder} belongs to a different mesh or method")
     else:
         saveJson(folder / "manifest.json", manifest)
-    method, solver, paths, computed = manifest["method"], None, [], 0
-    for nodes in nodeSets:
-        path = folder / f"{nodeSetKey(nodes)}.npy"
-        if not path.exists():
-            if method == "openCARP":
-                z = openCarpLeadField(config, tissue["meshBase"], groundVertices, nodes, len(tissue["positions"]),
-                                      folder / "runs" / path.stem, processCount)
-            else:
-                solver = solver or PythonLeadFieldSolver(config, tissue, groundVertices)
-                z = solver.leadField(nodes)
+    method = manifest["method"]
+    paths = [folder / f"{nodeSetKey(nodes)}.npy" for nodes in nodeSets]
+    missing = [(nodes, path) for nodes, path in zip(nodeSets, paths) if not path.exists()]
+    missing = list({str(path): (nodes, path) for nodes, path in missing}.values())   # overlapping grids repeat node sets
+    if method == "openCARP":
+        for count, (nodes, path) in enumerate(missing, 1):
+            z = openCarpLeadField(config, tissue["meshBase"], groundVertices, nodes, len(tissue["positions"]),
+                                  folder / "runs" / path.stem, processCount)
             np.save(path, z[tissue["tissueNodes"]].astype(np.float32))
-            computed += 1
-            if computed % 50 == 0:
-                log(f"  lead fields: {computed} computed in {folder}")
-        paths.append(path)
-    return paths, computed
+            if count % 50 == 0:
+                log(f"  lead fields: {count} of {len(missing)} computed in {folder}")
+    elif missing:
+        _pythonLeadFields(config, tissue, groundVertices, missing, processCount, log, folder)
+    return paths, len(missing)
+
+
+# One factorised/preconditioned system per process group: built once, then shared with forked workers
+# copy-on-write. Each worker solves whole lead fields and writes its own files (no results pass through pipes).
+_SHARED = {}
+
+
+def _solveAndSave(task):
+    nodes, path, tissueNodes = task
+    z = _SHARED["solver"].leadField(nodes)
+    temporary = path.with_suffix(".partial.npy")
+    np.save(temporary, z[tissueNodes].astype(np.float32))
+    os.replace(temporary, path)                     # a file exists only once complete, so an interrupted run resumes
+    return str(path)
+
+
+def _pythonLeadFields(config, tissue, groundVertices, missing, processCount, log, folder):
+    """FM-14 route: assemble K once (sigma_i + sigma_e in tissue, g_bath in bath), solve every missing lead field.
+
+    Solves are independent; with processCount > 1 they run in forked worker processes sharing the one
+    solver (Linux fork, copy-on-write). The result does not depend on the number of processes.
+    """
+    import multiprocessing
+    started = time.time()
+    _SHARED["solver"] = PythonLeadFieldSolver(config, tissue, groundVertices)
+    log(f"  lead fields: system of {len(_SHARED['solver'].free):,} unknowns set up in {time.time() - started:.0f} s; "
+        f"{len(missing)} to solve on {processCount} process(es) in {folder}")
+    tasks = [(np.asarray(nodes), path, tissue["tissueNodes"]) for nodes, path in missing]
+    started, done = time.time(), 0
+    try:
+        if processCount > 1 and len(tasks) > 1:
+            with multiprocessing.get_context("fork").Pool(processCount) as pool:
+                for _ in pool.imap_unordered(_solveAndSave, tasks):
+                    done += 1
+                    if done % 50 == 0:
+                        log(f"  lead fields: {done} of {len(tasks)} in {time.time() - started:.0f} s")
+        else:
+            for task in tasks:
+                _solveAndSave(task)
+                done += 1
+                if done % 50 == 0:
+                    log(f"  lead fields: {done} of {len(tasks)} in {time.time() - started:.0f} s")
+    finally:
+        _SHARED.clear()
+    log(f"  lead fields: {len(tasks)} solved in {time.time() - started:.0f} s")

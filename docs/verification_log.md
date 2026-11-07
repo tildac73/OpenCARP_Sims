@@ -283,3 +283,43 @@ numerical verification and physiological validation. Newest last.
 - **Configuration:** monodomain and dataout_e = 0 enforced; lesion width validated; conductor fingerprint shared by wave-angle, CV, gap and noise variants and changed by wall, scar, fibres and epicardial medium.
 - **Not verified here:** every openCARP step (C1, W0, C4, C5 in checks/container_checks.py), the cost of ~712 Laplace solves per condition, physiology on real Vm with the lesion strip, the R stage (C8). The physical amplitude scale depends on openCARP's total-current convention, which by FM-26 is not compared with anything.
 
+
+## VL-2026-11-04-01 - finalModelV2 openCARP steps on real openCARP (Claude's sandbox, openCARP 19.0.0)
+- **Type:** Execution checks (`checks/container_checks.py`, small slab `config/test_small.json`), openCARP 19.0.0 + carputils 19.0.0 (conda-forge, build `c877c38`), 2 cores. First real-openCARP run of the FM-23 to FM-30 code. **Result:** two failures found and fixed; one design route unavailable.
+- **Bug fixed (short runs):** a 30 ms check run kept bcl = 500 ms; openCARP rejects bcl > tend ("above the 30 maximum") and exits with code 0 without simulating. `slab_experiment.overridesFor` now sets bcl = tend for runs shorter than one cycle (one pulse at ptcl.start, as before). Production runs (tend 2000 ms) are unaffected.
+- **W0 diagnostic - openCARP Laplace mode ignores current stimuli:** with `config/leadfield.par` (experiment 2, extracellular current stimulus, crct.total_current = 1, corner ground) openCARP reads the stimulus ("current density scaled to 738.5 uA/cm^3") and solves, but the written potential is exactly 0 at every node. Laplace mode applies only Dirichlet conditions. openCARP lead fields as designed (FM-14) are therefore not available on this build; the pre-declared fallback was adopted (FM-31). Not tested on the workstation build (`9accae05`).
+- **W0 (fallback route, python):** finite, non-zero lead field; potential at the injecting electrode 1.14 mV/uA (positive, as required).
+- **C1 mesh:** pass (0.5 / 0.5 / 0.25 mm found; bath above, none below; bath fibres zero).
+- **C4 fibres, small-slab mesh (0.5 mm in-plane):** speed along fibres 0.908, across 0.500 m/s; ratio 0.551 vs continuum sqrt(sigma_m,t / sigma_m,l) = 0.627 (-12 %): FAIL against the 10 % criterion. openCARP reads the fibre file (the 90 deg speed falls clearly). The shortfall is consistent with the 0.5 mm mesh under-resolving the slow transverse wave.
+- **C4p (added): the same measurement at the production mesh (0.25 / 0.1 mm, tuned beta):** 0.876 / 0.521 m/s, ratio 0.595 (-5.0 %): pass. Criterion unchanged; C4 on the coarse test mesh is recorded as failed.
+- **C5 lesion strip:** pass (viable tissue all activates; no lesion or isolated node activates; 1,980 isolated nodes).
+- **C8 Wang's Rmd:** see VL-2026-11-04-03.
+- **Not verified here:** the workstation build and 24-core timing.
+
+## VL-2026-11-04-02 - beta tuned at the production mesh (FM-18)
+- **Type:** Execution, `python -m efov tune --write-par` (strip 20 x 1 x 0.5 mm, 0.25 / 0.1 mm, fibres along x, monodomain, 3 beats at 500 ms after 1,000 single-cell conditioning beats). **Result:** Pass.
+- **Iterations:** beta 0.0218 -> 1.022 m/s; 0.02812 -> 0.887 m/s; 0.027292 /um -> 0.9015 m/s (target 0.90, tolerance 1 %).
+- **Written:** `config/model.par` imp_region[0].cellSurfVolRatio = 0.027292 /um; `config/tuning.json`. openCARP 19.0.0 (conda-forge); the slab CV of every production run is reported by the physiology stage.
+
+## VL-2026-11-04-03 - Real-openCARP end-to-end run of config/test_small.json (all stages to the report)
+- **Type:** Execution and integration, openCARP 19.0.0, R 4.4.3 with mcp 0.3.4 and JAGS 4.3.2 (conda-forge), 2 cores, Python lead fields in 2 forked workers. **Result:** every stage ran; implementation checks pass.
+- **Simulation:** monodomain, intact 134 s, lesion 107 s (38,055 nodes, 8,085 tissue nodes); vm.igb 309 MB per condition.
+- **Physiology:** all criteria pass in both conditions (1,000 conditioning beats; stableApd passes). Last-beat surface CV 0.639 (intact), 0.633 m/s (lesion) with bilayer 0/90 deg fibres, against a strip CV of 0.893 m/s with fibres along x. See FM-33.
+- **Lead fields:** 168 per condition, 5 s on 2 workers after a 10 s set-up. **Ground truth:** 1,220 recordings, share-sum deviation 1.3e-15.
+- **Change points:** Wang's Rmd ran through R/wang_replication.R on every exported dataset (gaps x noise realisations x PF definitions). Not eligible for interpretation: stableFarRegion and lesionTransition fail on the small slab (placements reach only ~6 mm into each side), as in every earlier small-slab run.
+- **Amplitudes (model units):** median far-field clean bipolar PP 8.4 mV (0.25 mm gap), 5.7 mV (1 mm gap); Wang inferior median 1.44 mV (reported only, FM-25).
+- **Not verified here:** full-size cost and memory (estimated in VL-2026-11-04-04), the workstation build.
+
+## VL-2026-11-04-04 - Cost of the Python lead-field route at production spacing (checks/leadfield_cost.py)
+- **Type:** Timing diagnostic. Production geometry (0.25 / 0.1 mm, 5 mm bath, no-flux epicardium, bilayer fibres) at 10 x 15 mm: 507,222 nodes; set-up 9 s; 5.2-5.5 s per lead field (pyamg smoothed aggregation, CG, rtol 1e-10, 1 core); peak memory 2.5 GB including mesh building. 20 x 30 mm exceeded the sandbox's 7 GB.
+- **Estimate for production (3.50 M nodes, 712 lead fields per condition, 2 conditions):** about 40-50 s per lead field per core, about 8-10 core-hours per condition, i.e. under an hour per condition on 24 workers if memory bandwidth allows; set-up memory about 18-25 GB (linear scaling). Estimate only; the production log reports the measured time.
+
+## VL-2026-11-04-05 - Slab surface CV with bilayer fibres at the production mesh
+- **Type:** Execution (30 ms single-beat runs of the small slab at 0.25 / 0.1 mm, wall 1.1 mm, beta 0.027292 /um; speed of x-directed wave on the catheter-facing surface, x in -4..4 mm, as C4). **Result:** measurement, no criterion.
+- **Result:** bilayer (endo 0, epi 90 deg) 0.735 m/s; uniform 0 deg 0.876 m/s (strip, last of 3 beats: 0.9015 m/s). Ratio 0.84. Led to FM-33.
+
+## VL-2026-11-04-06 - C8: Wang's Rmd through R/wang_replication.R (R 4.4.3, mcp 0.3.4, JAGS 4.3.2)
+- **Type:** Execution and numerical check on the synthetic C8 dataset. **Result:** Pass after a correction to the check's reference.
+- **First run:** Wang's Table 3 bipolar slope -0.193141 vs the check's direct fit -0.194089: FAIL. Cause: the check omitted Wang's 99.9th-percentile PP trim of the 'volt' dataset (trim_upper, computed over all electrode kinds of the file). The check's reference now applies the same dataset rules; Wang's code is unchanged.
+- **Rerun:** -0.193140597349686 vs -0.1931405973496856 (difference 4e-16). Tables 1-5 written.
+- **Known, not used by the pipeline:** Wang's chunks figure3, figure4 and figure5 fail in one-slab mode (figure5 calls lme4::fixef on the lm replacement; figure3/4 fail on one-patient data). The pipeline reads only her tables; the same three chunks fail in the end-to-end run (VL-2026-11-04-03).
