@@ -7,7 +7,8 @@ contributing tissue of every electrogram as ground truth. Plan and decisions: pr
 Forward model: openCARP monodomain Vm; electrograms by reciprocity from one lead field per electrode with the
 sigma_i source (FM-23). Lead fields and electrograms come from openCARP's lead-field module (openCARP >= 20):
 one post-processing run per condition, 1 uA spread over each electrode, corner ground (FM-35). Lesion: 5.6 mm ablation strip with isolated viable tissue beyond
-(FM-24). Amplitudes in model units, never calibrated to clinical values (FM-25).
+(FM-24). Amplitudes in model units, never calibrated to clinical values (FM-25). Filtering and the wavelet transform run on a
+segment from 200 ms before the earliest window to 150 ms after the latest; measures are read inside each window (FM-36).
 
 ## Files that define the model
 | File | Holds |

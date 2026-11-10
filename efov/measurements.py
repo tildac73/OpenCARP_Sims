@@ -11,6 +11,9 @@ Acquisition chain (FM-09), identical for every signal:
      (values.noiseSdMv; repeat 0 is clean);
   4. differential recordings (bipoles, omnipoles) from the 30-500 Hz causal Butterworth band-pass
      of the unipoles (the filter is linear, so filtering then differencing equals the reverse).
+Processing segment (FM-36): filtering and the wavelet transform run from filterHistoryMs before the
+earliest window to trailingContextMs after the latest. The band-pass is causal, so only the wavelet
+transform uses the trailing context; every measure is still read inside the placement's window.
 Measures (FM-10, FM-11, FM-27), each inside its placement's own window (FM-28):
   * unipolar PP: max - min over the measurement window;
   * bipolar / omnipolar peak frequency (efov.peakfrequency, both definitions) on the band-passed
@@ -54,17 +57,22 @@ def acquire(config, signals, timeMs):
     return resampled, timeMs[0] + np.arange(resampled.shape[-1]) * 1000.0 / rate
 
 
-def placementIndices(timeMs, config, windows):
-    """raw: slice of timeMs from (earliest window start - filter history) to the latest window end;
-    starts: first sample of each placement's window inside raw; length: samples per window."""
+def placementIndices(timeMs, config, windows, trailingMs=0.0):
+    """raw: slice of timeMs from (earliest window start - filter history) to (latest window end + trailingMs);
+    starts: first sample of each placement's window inside raw; length: samples per window.
+
+    trailingMs = 0 where only the causal band-pass runs (nothing after a window changes its output);
+    fixed.analysis.trailingContextMs where the wavelet transform runs (FM-36).
+    """
     windows = np.atleast_2d(np.asarray(windows, float))
     beatStart = (beatCount(config) - 1) * cycleLengthMs(config)
     history = config["fixed"]["analysis"]["filterHistoryMs"]
     begin, end = beatStart + windows[:, 0], beatStart + windows[:, 1]
-    if begin.min() - history < timeMs[0] - 1e-9 or end.max() > timeMs[-1] + 1e-9:
-        raise ValueError("Electrograms do not contain every window and its filter history")
+    if begin.min() - history < timeMs[0] - 1e-9 or end.max() + trailingMs > timeMs[-1] + 1e-9:
+        raise ValueError(f"Electrograms ({timeMs[0]:.1f}-{timeMs[-1]:.1f} ms) do not contain every window with its filter history and "
+                         f"{trailingMs:g} ms of trailing context ({begin.min() - history:.1f}-{end.max() + trailingMs:.1f} ms)")
     first = int(np.searchsorted(timeMs, begin.min() - history - 1e-9))
-    stop = int(np.searchsorted(timeMs, end.max() + 1e-9))
+    stop = int(np.searchsorted(timeMs, end.max() + trailingMs + 1e-9))
     starts = np.searchsorted(timeMs, begin - 1e-9) - first
     lengths = np.searchsorted(timeMs, end + 1e-9) - first - starts
     if lengths.min() != lengths.max() or lengths[0] < 2:
@@ -90,7 +98,7 @@ def measureCondition(config, condition, egm, windows):
     """Points table (one row per recording, placement and noise realisation) and the window traces."""
     a, v = config["fixed"]["analysis"], config["values"]
     uniAcq, times = acquire(config, egm["uni"].astype(float), egm["timeMs"])
-    raw, starts, length = placementIndices(times, config, windows)
+    raw, starts, length = placementIndices(times, config, windows, a["trailingContextMs"])
     clean = uniAcq[..., raw]
     segmentTimes = times[raw]
     sections, rate = differentialFilter(config), a["acquisitionRateHz"]

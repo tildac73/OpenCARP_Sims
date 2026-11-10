@@ -18,8 +18,11 @@ This implementation (assumptions, fixed.analysis.peakFrequency):
   * 'global' PF = frequency of the largest |W| in the window. Co-primary with 'ensite' (FM-27):
     with white noise the highest trace value is drawn toward high frequencies as the signal falls,
     the global maximum much less so.
-The transform runs over the whole filtered segment (filter history + window) and is read only
-inside the measurement window, so low-frequency wavelets are not cut at the window start.
+The transform runs over the whole filtered segment (filter history + window + trailing context,
+FM-36) and is read only inside the measurement window, so wavelets are cut at neither window edge.
+The transform is not causal: a wavelet at frequency f has time width omega0 / (2 pi f) (31.8 ms at
+30 Hz), and without signal after the window its support is truncated for annotations near the
+window end. Four widths at 30 Hz are about 127 ms; trailingContextMs = 150.
 """
 import numpy as np
 
@@ -53,7 +56,7 @@ def peakFrequency(signals, sampleRateHz, starts, length, settings, block=32):
 
     starts, length: each signal's measurement window inside its segment (first sample, number of
     samples). Signals with window peak-to-peak below settings['minimumPpMv'] get NaN (undetectable).
-    The caller passes the band-passed segment.
+    The caller passes the band-passed segment, which should continue beyond each window (trailing context, FM-36).
     """
     signals = np.atleast_2d(np.asarray(signals, float))
     frequencies = frequenciesHz(settings)

@@ -50,7 +50,7 @@ def processedVm(config, job, windows, nodeCount, block=40000):
     Returns {'uni', 'differential'} (nodes, samples) float32, 'offsets' (first sample of each
     placement's window) and 'length'. Vm is read once (frames x nodes, float32) and filtered in node blocks.
     """
-    vm, times = readVmFrames(job, *analysisTimes(config, windows))
+    vm, times = readVmFrames(job, *analysisTimes(config, windows, trailingContext=False))
     if vm.shape[1] != nodeCount:
         raise ValueError(f"{job}: Vm has {vm.shape[1]} nodes, the model {nodeCount}")
     sections = differentialFilter(config)

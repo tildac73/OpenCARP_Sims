@@ -211,6 +211,8 @@
         "_about": "FM-10, FM-27. EnSite OT Near Field approximation: complex Morlet CWT (L1-normalised), PF trace = frequency of the largest magnitude per sample, samples below magnitudeGateFraction of the window maximum ignored. Two co-primary definitions: 'ensite' = highest remaining trace value (the published description); 'global' = frequency of the largest magnitude in the window (robust to noise-driven high-frequency trace values). PF undetectable when PP < 0.04 mV (Europace 2024). Wavelet, scales and gate are assumptions."
       },
       "resampleMarginMs": 10.0,
+      "trailingContextMs": 150.0,
+      "_trailingContext": "FM-36. Signal kept after the latest window for the wavelet transform only (the band-pass is causal). A Morlet wavelet (omega0 = 6) has time width omega0 / (2 pi f) = 31.8 ms at 30 Hz; four widths = 127 ms, rounded up. A numerical margin, not a clinical setting.",
       "wangReference": {
         "bipolarMedianMv": {
           "inferior": 1.44,

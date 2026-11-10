@@ -181,6 +181,7 @@ def validateConfig(config):
     need(reachX < size[0] / 2 and reachY < size[1] / 2, "Every electrode must lie above the tissue")
     need(max(v["gapsMm"]) + 2 * v["electrodeRadiusMm"] < f["bath"]["thicknessMm"], "Every electrode must lie inside the bath")
     need(a["resampleMarginMs"] >= 5.0, "Keep at least the 5 ms resampling-filter half-length beyond the last window (FM-29)")
+    need(a["trailingContextMs"] >= 0, "trailingContextMs must be non-negative (FM-36)")
     need(set(f["export"]["peakFrequencyDefinitions"].values()) <= {"pfHz", "pfGlobalHz"}, "Unknown peak-frequency column in export")
     need(all(np.any(np.isclose(centreYmm(config), c)) for c in groundTruthCentresYmm(config)), "Ground-truth centres must be catheter placements")
     from .fibres import validateSpec
@@ -201,7 +202,7 @@ STAGE_INPUTS = {
     "conductor": ["conductor"],
     "leadFields": ["conductor", "values.gapsMm", "values.electrodeRadiusMm", "values.electrodeLengthMm", "values.gridSpacingMm",
                    "fixed.electrodes"],
-    "electrograms": ["fixed.analysis.filterHistoryMs", "fixed.analysis.resampleMarginMs"],
+    "electrograms": ["fixed.analysis.filterHistoryMs", "fixed.analysis.resampleMarginMs", "fixed.analysis.trailingContextMs"],
     "measurements": ["values.noiseSdMv", "fixed.analysis", "fixed.acceptance.profile"],
     "export": ["values.region", "fixed.export"],
     "changePoints": [],

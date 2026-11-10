@@ -8,8 +8,9 @@ analysis frames from those traces and checks them against -Z^T S_i Vm formed fro
 with the sigma_i tensors the ground truth uses (CONSISTENCY_TOLERANCE).
 
 Frames read: from (earliest placement window - 2 x filter history) to (latest placement window end +
-resampleMarginMs). The second filter history serves the filter-history check; the margin keeps the
-resampling filter's end effect outside every window (FM-29).
+trailingContextMs + resampleMarginMs). The second filter history serves the filter-history check; the
+trailing context gives the wavelet transform signal after every window (FM-36); the margin keeps the
+resampling filter's end effect outside the analysed segment (FM-29).
 """
 from pathlib import Path
 
@@ -22,12 +23,22 @@ from .leadfield import ContributionModel, leadFieldsAndTraces, loadLeadField
 from .meshbuild import catheterSideNodes
 
 
-def analysisTimes(config, windows):
-    """(start, end) in absolute ms of the Vm frames to read for placement windows (P, 2) (ms after the last stimulus)."""
+def analysisTimes(config, windows, trailingContext=True):
+    """(start, end) in absolute ms of the frames to read for placement windows (P, 2) (ms after the last stimulus).
+
+    trailingContext: include trailingContextMs after the latest window (electrograms, for the wavelet
+    transform; FM-36). The ground truth passes False: it applies only the causal band-pass, which
+    nothing after a window changes, so it does not read those Vm frames.
+    """
     windows = np.atleast_2d(np.asarray(windows, float))
     a = config["fixed"]["analysis"]
     beatStart = (beatCount(config) - 1) * cycleLengthMs(config)
-    return beatStart + windows[:, 0].min() - 2 * a["filterHistoryMs"], beatStart + windows[:, 1].max() + a["resampleMarginMs"]
+    trailing = a["trailingContextMs"] if trailingContext else 0.0
+    end = beatStart + windows[:, 1].max() + trailing + a["resampleMarginMs"]
+    if end > beatCount(config) * cycleLengthMs(config) + 1e-9:
+        raise ValueError(f"The latest window ends {windows[:, 1].max():g} ms after the last stimulus; with {trailing:g} ms of trailing context "
+                         f"and the {a['resampleMarginMs']:g} ms resampling margin it runs past the end of the simulation")
+    return beatStart + windows[:, 0].min() - 2 * a["filterHistoryMs"], end
 
 
 def readVmFrames(job, startMs, endMs):

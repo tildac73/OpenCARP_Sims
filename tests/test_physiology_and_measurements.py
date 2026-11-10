@@ -72,3 +72,31 @@ def test_measurement_rows_in_model_units_with_per_placement_windows():
     assert measurements.filterHistoryCheck(config, acquired, windows)["doubleHistoryAvailable"]
     robustness = measurements.pfNoiseRobustness(table)
     assert {"pfHz_clean", "pfHz_noisy", "pfGlobalHz_clean", "pfGlobalHz_noisy"} <= set(robustness.columns)
+
+
+def test_trailing_context_extends_the_segment_without_changing_filtered_signals():
+    """FM-36: the segment runs trailingContextMs past the latest window; the causal band-pass output inside the windows is unchanged."""
+    import copy
+    import pytest
+    from efov.electrograms import analysisTimes
+    config = cfg.loadConfig(SMALL)
+    placements = len(cfg.centreYmm(config)) * len(config["values"]["gapsMm"])
+    windows = np.tile([5.0, 45.0], (placements, 1))
+    egm = syntheticEgm(config, windows)
+    context = config["fixed"]["analysis"]["trailingContextMs"]
+    acquired, times = measurements.acquire(config, egm["uni"].astype(float), egm["timeMs"])
+    short, starts, length = measurements.placementIndices(times, config, windows)
+    long, longStarts, longLength = measurements.placementIndices(times, config, windows, context)
+    assert long.start == short.start and np.array_equal(starts, longStarts) and length == longLength
+    assert np.isclose(times[long][-1] - times[short][-1], context)
+    without = copy.deepcopy(config); without["fixed"]["analysis"]["trailingContextMs"] = 0.0
+    tableWith, _, cleanWith, _, _ = measurements.measureCondition(config, "lesion", egm, windows)
+    tableWithout, _, cleanWithout, _, _ = measurements.measureCondition(without, "lesion", egm, windows)
+    noiseFree = tableWith.traceIndex[tableWith.noiseRepeat == 0].to_numpy()        # noisy repeats draw noise for a longer segment
+    np.testing.assert_array_equal(cleanWith[noiseFree], cleanWithout[noiseFree])   # same weights, same filtered window traces
+    unipoles = (tableWith.kind == "uni") & (tableWith.noiseRepeat == 0)
+    np.testing.assert_array_equal(tableWith.cleanPpMv[unipoles], tableWithout.cleanPpMv[unipoles])
+    with pytest.raises(ValueError, match="trailing context"):
+        measurements.placementIndices(times, config, windows, 10 * context)
+    with pytest.raises(ValueError, match="past the end of the simulation"):
+        analysisTimes(config, np.tile([5.0, 400.0], (placements, 1)))
