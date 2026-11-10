@@ -113,7 +113,7 @@ def measureCondition(config, condition, egm, windows):
         uni = clean + noise
         diff = sosfilt(sections, uni, axis=-1)
         for kind, label, _, weights in makeRecordings(windowed(uni, starts, length), windowed(diff, starts, length),
-                                                      labels, a["omniAngleStepDeg"]):
+                                                      labels, a["omniAngleStepDeg"], v["bipoleOrientation"]):
             source, cleanSource = (uni, clean) if kind == "uni" else (diff, cleanDiff)
             traces = np.einsum("pe,pet->pt", weights, source)
             cleanAtWeights = np.einsum("pe,pet->pt", weights, cleanSource)

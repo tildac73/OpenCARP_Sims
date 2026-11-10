@@ -44,6 +44,7 @@ def test_reciprocity_weights_and_shares_with_the_sigma_i_source():
         classes = groundtruth.classSummary(model, config, shares, mass, lateral, depth)
         assert abs(sum(classes[f"share_{c}"] for c in groundtruth.CLASSES) - 1) < 1e-10
         assert abs(sum(classes[f"mass_{c}"] for c in groundtruth.CLASSES) - 1) < 1e-10
+        assert -1e-10 <= classes["mass_retained"] <= 1 + 1e-10                         # FM-37: a part of the total
         assert layer.min() == 0 and layer.max() == 3                                         # 1 mm wall, 0.25 mm layers
         shape = groundtruth.shapeDescriptors(model, shares, lateral, depth, [0.0, 0.0], [0.5, 0.9])
         assert shape["p50_volumeMm3"] <= shape["p90_volumeMm3"]
@@ -68,3 +69,21 @@ def test_lead_field_cache_reuses_and_refuses(tmp_path, monkeypatch):
     assert again[1] == 0 and np.abs(again[3] - traces).max() < 1e-4 * np.abs(traces).max()   # from the cache (float32 LF files)
     with pytest.raises(ValueError, match="different mesh"):
         leadfield.leadFieldsAndTraces(config, tissue, ground[:-1], sets, tmp_path / "vm.igb", tmp_path / "cache", tmp_path / "run3")
+
+
+def test_boundary_crossings_known_answers():
+    """FM-37: crossing distances by linear interpolation; NaN when the curve never crosses or starts below the level."""
+    import pandas as pd
+    d = np.array([-2.0, 0.0, 2.0, 4.0, 6.0])
+    falling = np.array([0.9, 0.5, 0.3, 0.1, 0.0])
+    assert groundtruth.firstCrossingMm(d, falling, 0.5) == 0.0
+    assert np.isclose(groundtruth.firstCrossingMm(d, falling, 0.2), 3.0)
+    assert np.isclose(groundtruth.firstCrossingMm(d[::-1], falling[::-1], 0.2), 3.0)      # order of placements does not matter
+    assert np.isnan(groundtruth.firstCrossingMm(d, np.full(5, 0.8), 0.5))
+    assert np.isnan(groundtruth.firstCrossingMm(d, np.full(5, 0.05), 0.1))
+    summary = pd.DataFrame(dict(condition=["intact"] * 5 + ["lesion"], kind="bi", label="E5-E6|E9", gapMm=1.0,
+                                distanceInsideMm=list(d) + [0.0], share_retained=list(falling) + [1.0],
+                                mass_retained=list(falling) + [1.0]))
+    table = groundtruth.boundaryCrossings(summary, [0.5, 0.2])
+    assert len(table) == 4 and set(table.measure) == {"signedShare", "mass"} and (table.placements == 5).all()
+    assert np.isclose(table[(table.measure == "mass") & (table.level == 0.2)].distanceMm.iloc[0], 3.0)

@@ -21,3 +21,24 @@ def test_sweep_variants_from_the_plan():
     plan = sweep.variants({"oneAtATime": ["wallMm", "scar"], "named": {"roof": {"region": "roof"}}}, ROOT / "config" / "model.json")
     assert "baseline" in plan and plan["roof"] == {"region": "roof"}
     assert plan["wallMm=1.0"] == {"wallMm": 1.0} and plan["scar=insulating"] == {"scar": "insulating"}
+
+
+def test_predicted_noise_shift_and_comparison_table(tmp_path):
+    """FM-38: shift predicted if the plateau is noise; the comparison table joins Wang's tables and the ground truth."""
+    import math
+    from types import SimpleNamespace
+    from efov import report
+    assert math.isclose(report.predictedShiftMm("Exponential", -0.25, 9.96), -math.log(2) / 0.25)
+    assert math.isclose(report.predictedShiftMm("Power-law", -0.5, 12.0), 12.0 * (2 ** -2 - 1))
+    assert math.isnan(report.predictedShiftMm("Exponential", 0.1, 5.0))
+    out = tmp_path; (out / "changePoints").mkdir(); (out / "groundTruth").mkdir()
+    dataset = export.datasetName(1.0, 0, "ensite")
+    pd.DataFrame(dict(dataset=[dataset], Location=["Inferior"], Metric=["Voltage"], Electrode=["Bipolar"], cp_mm_mean=[10.0],
+                      cp_mm_lower=[9.0], cp_mm_upper=[11.0], value_at_cp_mean=[0.04])).to_csv(out / "changePoints" / "SuppResults5_change_points_all.csv", index=False)
+    pd.DataFrame(dict(dataset=[dataset] * 2, Location=["Inferior"] * 2, Metric=["Voltage"] * 2, Electrode=["Bipolar"] * 2,
+                      model=["Exponential"] * 2, term=["beta1", "cp"], mean=[-0.25, 10.0])).to_csv(out / "changePoints" / "Table5_bayesian_posteriors_all.csv", index=False)
+    pd.DataFrame(dict(kind=["bi", "bi"], label=["a", "b"], gapMm=[1.0, 1.0], measure=["mass", "mass"], level=[0.1, 0.1],
+                      distanceMm=[3.0, 5.0], placements=[9, 9])).to_csv(out / "groundTruth" / "boundaryCrossings.csv", index=False)
+    table = report.efovComparison(SimpleNamespace(out=out))
+    row = table.iloc[0]
+    assert math.isclose(row.logDropAtCp, 2.5) and math.isclose(row.gt_mass_10pct_mm, 4.0) and (out / "efovComparison.csv").exists()

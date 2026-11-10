@@ -174,6 +174,7 @@ def validateConfig(config):
     need(0 < band[0] < band[1] < a["acquisitionRateHz"] / 2, "Differential band must lie below the acquisition Nyquist frequency")
     pf = a["peakFrequency"]
     need(pf["minimumHz"] >= band[0] and pf["maximumHz"] <= band[1], "Peak-frequency range must lie inside the analysed band")
+    need(v["bipoleOrientation"] in ("selected", "x", "y"), "bipoleOrientation must be selected, x or y (FM-39)")
     need(min(v["gapsMm"]) > 0 and v["electrodeRadiusMm"] > 0 and v["electrodeLengthMm"] > 0, "Invalid electrode size or gap")
     need(v["gridSpacingMm"] > max(v["electrodeLengthMm"], 2 * v["electrodeRadiusMm"]), "Electrodes of the grid would overlap")
     reachY = np.abs(centreYmm(config)).max() + 1.5 * v["gridSpacingMm"] + v["electrodeRadiusMm"]
@@ -182,6 +183,9 @@ def validateConfig(config):
     need(max(v["gapsMm"]) + 2 * v["electrodeRadiusMm"] < f["bath"]["thicknessMm"], "Every electrode must lie inside the bath")
     need(a["resampleMarginMs"] >= 5.0, "Keep at least the 5 ms resampling-filter half-length beyond the last window (FM-29)")
     need(a["trailingContextMs"] >= 0, "trailingContextMs must be non-negative (FM-36)")
+    levels = f["groundTruth"]["retainedShareLevels"]
+    need(all(0 < level < 1 for level in levels) and list(levels) == sorted(levels, reverse=True),
+         "retainedShareLevels must lie in (0, 1), in decreasing order (FM-37)")
     need(set(f["export"]["peakFrequencyDefinitions"].values()) <= {"pfHz", "pfGlobalHz"}, "Unknown peak-frequency column in export")
     need(all(np.any(np.isclose(centreYmm(config), c)) for c in groundTruthCentresYmm(config)), "Ground-truth centres must be catheter placements")
     from .fibres import validateSpec
@@ -203,7 +207,7 @@ STAGE_INPUTS = {
     "leadFields": ["conductor", "values.gapsMm", "values.electrodeRadiusMm", "values.electrodeLengthMm", "values.gridSpacingMm",
                    "fixed.electrodes"],
     "electrograms": ["fixed.analysis.filterHistoryMs", "fixed.analysis.resampleMarginMs", "fixed.analysis.trailingContextMs"],
-    "measurements": ["values.noiseSdMv", "fixed.analysis", "fixed.acceptance.profile"],
+    "measurements": ["values.noiseSdMv", "values.bipoleOrientation", "fixed.analysis", "fixed.acceptance.profile"],
     "export": ["values.region", "fixed.export"],
     "changePoints": [],
     "groundTruth": ["fixed.groundTruth", "fixed.acceptance.groundTruth"],

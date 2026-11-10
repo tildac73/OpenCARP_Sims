@@ -42,6 +42,70 @@ def changePointTable(run):
     return lines
 
 
+KIND_OF_ELECTRODE = {"Unipolar": "uni", "Bipolar": "bi", "Omnipolar": "omni"}
+
+
+def predictedShiftMm(model, beta1, cpMm, noiseRatio=2.0):
+    """Change-point shift predicted when the plateau is set by noise and the noise SD is multiplied by noiseRatio (FM-38).
+
+    Wang's model: ln Y = b0 + b1 x up to the change point, then flat. If the plateau is noise peak-to-peak,
+    multiplying the noise by r raises the plateau by ln r and moves the change point by -ln r / |b1| on the
+    x scale (x = d for the exponential model, ln d for the power law). NaN when the fitted slope does not decay.
+    """
+    if not np.isfinite(beta1) or beta1 >= 0:
+        return np.nan
+    shift = -np.log(noiseRatio) / abs(beta1)
+    return float(shift) if model == "Exponential" else float(cpMm * (np.exp(shift) - 1.0))
+
+
+def efovComparison(run):
+    """One table (FM-38): Wang's change point and decay slope on the clean datasets, beside the boundary-matched ground truth.
+
+    Per Location, Metric, Electrode and gap (EnSite-style PF dataset, noise repeat 0): cp_mm and its interval,
+    value at the change point, the piecewise slope beta1 and the log drop |beta1| x cp it implies (the change
+    point is the distance at which the fitted decay has fallen by this many log units), the shift predicted per
+    doubling of noise if the plateau is noise, and the ground-truth crossing distances (FM-37, intact run,
+    median over the recordings of the kind). Returns the table, or None before the change points exist.
+    """
+    from .export import parseDatasetName
+    folder = run.out / "changePoints"
+    if not (folder / "SuppResults5_change_points_all.csv").exists() or not (folder / "Table5_bayesian_posteriors_all.csv").exists():
+        return None
+    cps, posteriors = pd.read_csv(folder / "SuppResults5_change_points_all.csv"), pd.read_csv(folder / "Table5_bayesian_posteriors_all.csv")
+    for table in (cps, posteriors):
+        parsed = table.dataset.map(parseDatasetName)
+        table["gapMm"], table["noiseRepeat"], table["pfDefinition"] = [q[0] for q in parsed], [q[1] for q in parsed], [q[2] for q in parsed]
+    keys = ["dataset", "Location", "Metric", "Electrode"]
+    slopes = posteriors[posteriors.term.isin(["beta1", "cp"])].pivot_table(index=keys + ["model"], columns="term", values="mean").reset_index()
+    table = cps[(cps.noiseRepeat == 0) & (cps.pfDefinition == "ensite")].merge(slopes, on=keys, how="left")
+    table["logDropAtCp"] = (table.beta1 * table.cp).abs()
+    table["predictedShiftPerNoiseDoublingMm"] = [predictedShiftMm(m, b, c) for m, b, c in zip(table.model, table.beta1, table.cp_mm_mean)]
+    table["kind"] = table.Electrode.map(KIND_OF_ELECTRODE)
+    crossingsPath = run.out / "groundTruth" / "boundaryCrossings.csv"
+    if crossingsPath.exists():
+        crossings = pd.read_csv(crossingsPath)
+        wide = crossings.groupby(["kind", "gapMm", "measure", "level"]).distanceMm.median().reset_index()
+        wide["column"] = "gt_" + wide.measure + "_" + (wide.level * 100).round().astype(int).astype(str) + "pct_mm"
+        wide = wide.pivot_table(index=["kind", "gapMm"], columns="column", values="distanceMm").reset_index()
+        table = table.merge(wide, on=["kind", "gapMm"], how="left")
+    columns = ["Location", "Metric", "Electrode", "gapMm", "model", "cp_mm_mean", "cp_mm_lower", "cp_mm_upper", "value_at_cp_mean",
+               "beta1", "logDropAtCp", "predictedShiftPerNoiseDoublingMm"] + sorted(c for c in table.columns if c.startswith("gt_"))
+    table = table[[c for c in columns if c in table.columns]].sort_values(["Metric", "Electrode", "gapMm"])
+    table.to_csv(run.out / "efovComparison.csv", index=False)
+    return table
+
+
+def comparisonLines(table):
+    if table is None or table.empty:
+        return ["No comparison table (change points or ground truth missing)."]
+    shown = [c for c in ("Metric", "Electrode", "gapMm", "cp_mm_mean", "beta1", "logDropAtCp", "predictedShiftPerNoiseDoublingMm",
+                         "gt_signedShare_50pct_mm", "gt_signedShare_10pct_mm", "gt_mass_10pct_mm") if c in table.columns]
+    lines = ["| " + " | ".join(shown) + " |", "| " + " | ".join("---" for _ in shown) + " |"]
+    for row in table[shown].itertuples(index=False):
+        lines.append("| " + " | ".join(fmt(v) if isinstance(v, float) else str(v) for v in row) + " |")
+    return lines
+
+
 def writeReport(run):
     out, config = run.out, run.config
     accepted = acceptance(run)
@@ -71,6 +135,12 @@ def writeReport(run):
               f"Eligible for interpretation: {fmt(changes['eligibleForInterpretation'])} "
               f"(prerequisites: {', '.join(f'{k} {fmt(v)}' for k, v in changes['prerequisites'].items())}).", ""]
     lines += changePointTable(run) + [""]
+    lines += ["## Change point beside the boundary-matched ground truth (FM-37, FM-38)", "",
+              "Clean datasets, EnSite-style PF. `logDropAtCp` = |beta1| x cp: how far the fitted decay has fallen at the change point. "
+              "`predictedShiftPerNoiseDoublingMm`: the shift expected if the plateau is noise (compare noiseDoubling.csv). "
+              "`gt_*`: distance inside the lesion where the intact recording's retained share first falls to the level (median over "
+              "the recordings of the kind). Full table: `efovComparison.csv`.", ""]
+    lines += comparisonLines(efovComparison(run)) + [""]
     lines += ["## Ground truth", "", f"{gt['recordings']} recordings ({gt['leadFields']} lead fields, the same as the "
               f"electrograms'); share-sum deviation {gt['shareSumMaxDeviation']:.2g}.",
               "Per-recording classes, profiles and shape descriptors: `groundTruth/summary.csv`, `groundTruth/profiles.npz`. "

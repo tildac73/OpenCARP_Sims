@@ -1,8 +1,8 @@
 {
-  "_about": "Methodology one-at-a-time sweep around the inferior-wall reference (FM-17). Each variable takes each of its planned values in config/model.json alone. 'roof' is the second region (FM-08): wall 1.6 mm (Whitaker et al. 2021), uniform fibres (Pashakhanloo et al. 2016). Deferred by the agreed drop order: Latin hypercube sampling, curvature, dense virtual array.",
+  "_about": "Methodology one-at-a-time sweep around the inferior-wall reference (FM-17). Each variable takes each of its planned values in config/model.json alone. 'roof' is the second region (FM-08): wall 1.6 mm (Whitaker et al. 2021), uniform fibres (Pashakhanloo et al. 2016). The HD Grid spacing stays at 4 mm (not swept); bipole orientation is swept on the fixed grid (FM-39). Deferred by the agreed drop order: Latin hypercube sampling, curvature, dense virtual array.",
   "modelConfig": "../model.json",
   "oneAtATime": ["wallMm", "fibres", "epicardialMedium", "scar", "waveAngleDeg", "gapsMm",
-                 "electrodeRadiusMm", "gridSpacingMm", "noiseSdMv", "cvTargetMPerS"],
+                 "electrodeRadiusMm", "bipoleOrientation", "noiseSdMv", "cvTargetMPerS"],
   "named": {
     "roof": {"region": "roof", "wallMm": 1.6, "fibres": {"model": "uniform", "angleDeg": 0.0}}
   }

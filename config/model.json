@@ -38,14 +38,16 @@
       "_source": "Angle of the wave direction from +x; 0 = parallel to the lesion boundary, 90 = travelling toward the lesion (FM-17). Wang mapped during distal CS pacing: wavefronts reach the line at varied angles."
     },
     "gapsMm": {
-      "baseline": [0.25, 1.0], "planned": [[0.5], [2.0], [3.0]], "actsOn": "electrodes (analysis)",
-      "_source": "Electrode surface to tissue distance. Earlier pilot standoffs 0.25 and 1 mm; Methodology sweep 0-3 mm."
+      "baseline": [0.25, 1.0], "planned": [[0.5], [2.0]], "actsOn": "electrodes (analysis)",
+      "_source": "Electrode surface to tissue distance. Baseline 0.25 and 1 mm = the two contact cases of Rodrigo et al. 2026 (PLoS Comput Biol 22:e1014493; cylindrical electrodes 0.5 mm radius, 1 mm long). 3 mm removed (FM-40): its electrode top would lie 1 mm below the no-flux top of the 5 mm bath."
     },
     "electrodeRadiusMm": {"baseline": 0.5, "planned": [0.25, 1.0], "actsOn": "electrodes (analysis)",
                           "_source": "HD Grid 1 mm electrodes (Wang supplement); Methodology diameter sweep 0.5-2 mm."},
     "electrodeLengthMm": {"baseline": 1.0, "planned": [], "actsOn": "electrodes (analysis)"},
-    "gridSpacingMm": {"baseline": 4.0, "planned": [2.0, 3.0, 6.0], "actsOn": "electrodes (analysis)",
-                      "_source": "HD Grid 4 mm centre-to-centre (Wang supplement). 4 x 4 grid only; the dense virtual array is deferred (drop order)."},
+    "gridSpacingMm": {"baseline": 4.0, "planned": [], "actsOn": "electrodes (analysis)",
+                      "_source": "HD Grid 4 mm centre-to-centre (Wang supplement). Fixed at the clinical catheter's spacing; not swept (FM-39, Matilda 10 Nov 2026)."},
+    "bipoleOrientation": {"baseline": "selected", "planned": ["x", "y"], "actsOn": "measurements (analysis)",
+                          "_source": "FM-39. selected = the larger peak-to-peak of the two orthogonal 4 mm pairs of each grid square, as EnSite does with the HD Grid (Siddiqui 2019, EP Lab Digest 19(2)); x = the pair along x (parallel to the lesion boundary and to the baseline wave); y = the pair along y (across the boundary). Orientation changes bipolar amplitude (Hwang et al. 2019, PLoS Comput Biol 15:e1006765)."},
     "noiseSdMv": {"baseline": 0.005, "planned": [0.0025, 0.01, 0.02], "actsOn": "measurements (analysis)",
                   "_source": "Gaussian white noise per electrode at the acquisition rate, in model mV (no calibration, FM-25). Assumption [VERIFY]: no source. The planned values form a doubling series; the pre-registered primary test is the change-point shift per doubling of noise (FM-25)."},
     "cvTargetMPerS": {"baseline": 0.9, "planned": [0.7, 1.25], "actsOn": "tune stage (beta)",
@@ -163,6 +165,8 @@
           "E5-E6-E9"
         ]
       },
+      "retainedShareLevels": [0.5, 0.2, 0.1],
+      "_retained": "FM-37. Share of an intact-run recording that comes from tissue with y >= boundaryYmm (the tissue still active after ablation), as a function of the recording's distance inside the lesion. groundTruth/boundaryCrossings.csv gives the distance where it first falls to each level. Levels are reporting conventions, like shapeLevels.",
       "shapeLevels": [
         0.5,
         0.8,

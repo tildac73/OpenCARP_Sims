@@ -11,7 +11,8 @@ only electrodes, noise or analysis reuses the baseline's openCARP runs, physiolo
 Lead fields are cached under <out>/leadFieldCache/<conductor fingerprint>/ (FM-23): wave-angle, CV,
 electrode, noise and analysis variants reuse the baseline's.
 After the variants, noiseDoubling.csv holds the pre-registered primary test of FM-25: the change in
-every change point between successive noise levels of the doubling series.
+every change point between successive noise levels of the doubling series, beside the shift predicted
+if the plateau were set by noise alone (FM-38).
 A variant that changes the simulation is the only user of its simulation in a one-at-a-time sweep, so its raw
 output is compacted after its report (FM-20); the baseline simulation, shared by the electrode, noise
 and analysis variants, is never compacted.
@@ -80,8 +81,42 @@ def noiseDoublingTable(out, modelConfigPath):
     keys = [k for k in ("gapMm", "pfDefinition", "Location", "Metric", "Electrode") if k in table.columns]
     summary = table.groupby(keys + ["noiseSdMv"]).cp_mm_mean.median().rename("cpMedianMm").reset_index().sort_values(keys + ["noiseSdMv"])
     summary["shiftFromHalfNoiseMm"] = summary.groupby(keys).cpMedianMm.diff()
+    summary = summary.merge(predictedNoiseShift(out, levels, keys), on=keys + ["noiseSdMv"], how="left")
     summary.to_csv(Path(out) / "noiseDoubling.csv", index=False)
     return summary
+
+
+def predictedNoiseShift(out, levels, keys):
+    """FM-38: shift of each change point from the previous noise level predicted if the plateau is noise.
+
+    Uses the median piecewise slope beta1 and change point of the previous level (efov.report.predictedShiftMm),
+    with the actual ratio of the two noise SDs. Assumes the decay segment is unchanged by noise.
+    """
+    import numpy as np
+    import pandas as pd
+    from .export import parseDatasetName
+    from .report import predictedShiftMm
+    parts = []
+    for name, sd in levels.items():
+        folder = Path(out) / "variants" / name / "changePoints"
+        if not (folder / "Table5_bayesian_posteriors_all.csv").exists() or not (folder / "SuppResults5_change_points_all.csv").exists():
+            continue
+        posteriors, cps = pd.read_csv(folder / "Table5_bayesian_posteriors_all.csv"), pd.read_csv(folder / "SuppResults5_change_points_all.csv")
+        wide = posteriors[posteriors.term == "beta1"][["dataset", "Location", "Metric", "Electrode", "model", "mean"]].rename(columns={"mean": "beta1"})
+        wide = wide.merge(cps[["dataset", "Location", "Metric", "Electrode", "cp_mm_mean"]], on=["dataset", "Location", "Metric", "Electrode"])
+        parsed = wide.dataset.map(parseDatasetName)
+        wide = wide.assign(noiseSdMv=sd, gapMm=[q[0] for q in parsed], noiseRepeat=[q[1] for q in parsed], pfDefinition=[q[2] for q in parsed])
+        parts.append(wide[wide.noiseRepeat > 0])
+    if not parts:
+        return pd.DataFrame(columns=keys + ["noiseSdMv", "predictedShiftFromHalfNoiseMm"])
+    table = pd.concat(parts, ignore_index=True)
+    medians = table.groupby(keys + ["model", "noiseSdMv"]).agg(beta1=("beta1", "median"), cp=("cp_mm_mean", "median")).reset_index()
+    medians = medians.sort_values(keys + ["noiseSdMv"])
+    previous = medians.groupby(keys)[["beta1", "cp", "noiseSdMv"]].shift(1)
+    medians["predictedShiftFromHalfNoiseMm"] = [
+        predictedShiftMm(model, b, c, sd / psd) if np.isfinite(psd) else np.nan
+        for model, b, c, sd, psd in zip(medians.model, previous.beta1, previous.cp, medians.noiseSdMv, previous.noiseSdMv)]
+    return medians[keys + ["noiseSdMv", "predictedShiftFromHalfNoiseMm"]]
 
 
 class Sweep:

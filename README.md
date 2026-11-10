@@ -9,6 +9,9 @@ sigma_i source (FM-23). Lead fields and electrograms come from openCARP's lead-f
 one post-processing run per condition, 1 uA spread over each electrode, corner ground (FM-35). Lesion: 5.6 mm ablation strip with isolated viable tissue beyond
 (FM-24). Amplitudes in model units, never calibrated to clinical values (FM-25). Filtering and the wavelet transform run on a
 segment from 200 ms before the earliest window to 150 ms after the latest; measures are read inside each window (FM-36).
+The change points are compared with a boundary-matched ground truth: the share of each intact recording that
+comes from tissue the lesion leaves active, against distance into the lesion (FM-37; `groundTruth/boundaryCrossings.csv`,
+`efovComparison.csv`, FM-38).
 
 ## Files that define the model
 | File | Holds |
@@ -54,5 +57,5 @@ regenerates it; `config/sweeps/test_small.json` is its short test sweep);
 `simulations/<condition>/run.par` resolved openCARP file; `physiology/`, `leadFields/` (which cached lead fields
 the run used; the files are in `leadFieldCache/<conductor fingerprint>/`), `electrograms/`,
 `measurements/` (points with PP and both peak frequencies, amplitudes.json, pfNoiseRobustness.csv), `export/` (Wang-format datasets per gap, noise realisation and PF definition), `changePoints/`
-(Wang's tables per dataset), `groundTruth/` (summary.csv, profiles.npz, fields_*.npz, shares_*.vtk),
+(Wang's tables per dataset), `efovComparison.csv`, `groundTruth/` (summary.csv, boundaryCrossings.csv, profiles.npz, fields_*.npz, shares_*.vtk),
 `report.md`, `acceptance.json`, `figures/`.

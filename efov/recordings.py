@@ -7,7 +7,9 @@ direction can be selected, and the same weights are applied to the clean signals
 
   unipole  E<k>                 the electrode itself (unfiltered)
   bipole   E<c>-E<c+1>|E<c+4>   per placement, the larger peak-to-peak of the x pair and the y pair
-                                sharing corner c (ties choose x): an orientation-selected bipole
+                                sharing corner c (ties choose x): an orientation-selected bipole, as EnSite
+                                does with the HD Grid. Sweep variable bipoleOrientation (FM-39): 'x' or
+                                'y' keeps that pair at every placement instead (fixed orientation)
   omnipole E<v>-E<x>-E<y>       right-angle clique at vertex v; the two orthogonal differences are
                                 rotated in angle steps and the direction of largest peak-to-peak kept
                                 (a voltage-direction search, not the full Masse/Deno activation method)
@@ -81,11 +83,17 @@ def unipole(unipolar, label):
     return unipolar[:, k], weights
 
 
-def bipole(differential, label):
+def bipole(differential, label, orientation="selected"):
+    """Bipole of grid square c: the larger of the x and y pairs ('selected'), or always the x or the y pair."""
     corner = int(label.split("-")[0][1:])
     x, y = corner + 1, corner + 4
     xTrace, yTrace = differential[:, x] - differential[:, corner], differential[:, y] - differential[:, corner]
-    chooseX = np.ptp(xTrace, axis=-1) >= np.ptp(yTrace, axis=-1)
+    if orientation == "selected":
+        chooseX = np.ptp(xTrace, axis=-1) >= np.ptp(yTrace, axis=-1)
+    elif orientation in ("x", "y"):
+        chooseX = np.full(len(xTrace), orientation == "x")
+    else:
+        raise ValueError(f"Bipole orientation must be selected, x or y, not {orientation}")
     basis = np.eye(16)
     weights = np.where(chooseX[:, None], basis[x] - basis[corner], basis[y] - basis[corner])
     return np.where(chooseX[:, None], xTrace, yTrace), weights
@@ -107,13 +115,13 @@ def omnipole(differential, label, angleStepDeg):
     return c * xTrace + s * yTrace, weights
 
 
-def makeRecordings(unipolar, differential, labels, angleStepDeg):
+def makeRecordings(unipolar, differential, labels, angleStepDeg, bipoleOrientation="selected"):
     """[(kind, label, traces, weights)] for the declared labels {'uni': [...], 'bi': [...], 'omni': [...]}."""
     out = []
     for label in labels.get("uni", []):
         out.append(("uni", label, *unipole(unipolar, label)))
     for label in labels.get("bi", []):
-        out.append(("bi", label, *bipole(differential, label)))
+        out.append(("bi", label, *bipole(differential, label, bipoleOrientation)))
     for label in labels.get("omni", []):
         out.append(("omni", label, *omnipole(differential, label, angleStepDeg)))
     return out

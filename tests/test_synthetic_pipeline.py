@@ -132,6 +132,12 @@ def test_analysis_stages_agree_on_a_synthetic_run(syntheticRun):
     assert checks["passed"], checks
     summary = pd.read_csv(gt / "summary.csv")
     assert set(summary.kind) == {"uni", "bi", "omni"} and (gt / "shares_lesion_gap0.25mm.vtk").exists()
+    crossings = pd.read_csv(gt / "boundaryCrossings.csv")                                    # FM-37
+    assert set(crossings.kind) == {"uni", "bi", "omni"} and set(crossings.level) == set(config["fixed"]["groundTruth"]["retainedShareLevels"])
+    intact = summary[summary.condition == "intact"]
+    viableSide = intact[intact.distanceInsideMm.between(-4, -1)].mass_retained.median()
+    lesionSide = intact[intact.distanceInsideMm.between(1, 4)].mass_retained.median()
+    assert viableSide > 0.5 > lesionSide                                                    # retained tissue mostly under the viable side
     # the ground-truth signal is the measured clean signal (same lead fields, same chain)
     clean = np.load(folder / "lesionTraces.npz")["cleanMv"]
     lesionPoints = pd.read_csv(folder / "lesionPoints.csv").set_index("recordingId")

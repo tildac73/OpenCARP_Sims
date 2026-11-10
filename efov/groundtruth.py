@@ -16,6 +16,10 @@ through the same acquisition chain as the electrograms (anti-alias, decimation; 
 bipoles and omnipoles), because the chain is linear and commutes with the field.
 
 Per recording (all recordings at the ground-truth placements, clean signals):
+  * retained share (FM-37): signed share and |c|-mass of tissue with y >= boundary, the tissue that
+    the lesion run leaves active. In the intact run, its fall with the recording's distance inside the
+    lesion is the ground truth matched to the clinical boundary sweep; boundaryCrossings.csv gives the
+    distances where it first reaches fixed.groundTruth.retainedShareLevels;
   * classes (FM-15): near-field / far-field (lateral distance from the anchor <= nearFieldRadiusMm)
     x endocardial / epicardial half (depth < depthSplitFraction x wall); lesion elements reported
     separately. Signed share and |c|-mass fraction (sum_t |c_e(t)|, no cancellation) per class;
@@ -102,6 +106,8 @@ def classSummary(model, config, elementShares, mass, lateral, depth):
         out[f"mass_{name}"] = float(mass[mask].sum() / total)
     lesion = model.tags == 5
     out.update(share_lesionElements=float(elementShares[lesion].sum()), mass_lesionElements=float(mass[lesion].sum() / total))
+    retained = model.centres[:, 1] >= config["fixed"]["tissue"]["boundaryYmm"]     # tissue still active after ablation (FM-37)
+    out.update(share_retained=float(elementShares[retained].sum()), mass_retained=float(mass[retained].sum() / total))
     return out
 
 
@@ -127,6 +133,40 @@ def shapeDescriptors(model, elementShares, lateral, depth, anchor, levels):
                     f"{tag}_eccentricity": float(np.sqrt(max(0.0, 1 - eigenvalues[0] / eigenvalues[1]))) if eigenvalues[1] > 0 else 0.0,
                     f"{tag}_majorAxisAngleDeg": float(np.degrees(np.arctan2(major[1], major[0])) % 180)})
     return out
+
+
+def firstCrossingMm(distanceMm, value, level):
+    """First distance (moving into the lesion) where value falls to level, by linear interpolation; NaN if it never does.
+
+    distanceMm, value: one recording's curve over its placements (any order). Returns NaN too when the
+    curve already lies at or below the level at its first distance (no crossing inside the sampled range).
+    """
+    order = np.argsort(distanceMm)
+    d, v = np.asarray(distanceMm, float)[order], np.asarray(value, float)[order]
+    below = np.flatnonzero(v <= level)
+    if not len(below) or below[0] == 0:
+        return np.nan
+    k = below[0]
+    return float(d[k - 1] + (v[k - 1] - level) * (d[k] - d[k - 1]) / (v[k - 1] - v[k]))
+
+
+def boundaryCrossings(summary, levels):
+    """Ground-truth distances matched to the clinical boundary sweep (FM-37), intact run.
+
+    For each recording (kind, label, gap), retained share (signed share and |c|-mass of tissue with
+    y >= boundary, i.e. the tissue the lesion run leaves active) against the recording's distance inside
+    the lesion; the distance where each curve first falls to each level. Rows also give the median over
+    the labels of a kind, the quantity reported beside Wang's change point.
+    """
+    intact = summary[summary.condition == "intact"]
+    rows = []
+    for (kind, label, gap), group in intact.groupby(["kind", "label", "gapMm"]):
+        for measure, column in (("signedShare", "share_retained"), ("mass", "mass_retained")):
+            for level in levels:
+                rows.append(dict(kind=kind, label=label, gapMm=gap, measure=measure, level=level,
+                                 distanceMm=firstCrossingMm(group.distanceInsideMm, group[column], level),
+                                 placements=len(group)))
+    return pd.DataFrame(rows)
 
 
 def cumulativeLateral(elementShares, lateral, stepMm):
@@ -185,6 +225,7 @@ def runGroundTruth(config, jobs, tissues, electrogramsFolder, measurementsFolder
     pad = lambda values: np.array([np.pad(v, (0, max(map(len, values)) - len(v)), constant_values=np.nan) for v in values])
     np.savez_compressed(folder / "profiles.npz", recordingId=table.recordingId.to_numpy().astype(str), depthShareAndMass=np.asarray(depthRows),
                         lateralCumulativeShare=pad(lateralRows), curveStepMm=g["curveStepMm"], layerThicknessMm=spacingMm(config)[2])
+    boundaryCrossings(table, g["retainedShareLevels"]).to_csv(folder / "boundaryCrossings.csv", index=False)
     checks = dict(recordings=len(table), shareSumMaxDeviation=float((table.shareSum - 1).abs().max()), leadFields="openCARP lead-field module (FM-35)")
     checks["passed"] = bool(checks["recordings"] > 0 and checks["shareSumMaxDeviation"] <= gate["shareSumDeviation"])
     saveJson(folder / "checks.json", checks)

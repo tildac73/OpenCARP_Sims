@@ -114,6 +114,7 @@
       "actsOn": "electrodes (analysis)",
       "_source": "HD Grid 4 mm centre-to-centre (Wang supplement). 4 x 4 grid only; the dense virtual array is deferred (drop order)."
     },
+    "bipoleOrientation": {"baseline": "selected", "planned": ["x", "y"], "actsOn": "measurements (analysis)", "_source": "FM-39; see config/model.json."},
     "noiseSdMv": {
       "baseline": 0.005,
       "planned": [
@@ -249,6 +250,8 @@
           "E5-E6-E9"
         ]
       },
+      "retainedShareLevels": [0.5, 0.2, 0.1],
+      "_retained": "FM-37. Share of an intact-run recording that comes from tissue with y >= boundaryYmm (the tissue still active after ablation), as a function of the recording's distance inside the lesion. groundTruth/boundaryCrossings.csv gives the distance where it first falls to each level. Levels are reporting conventions, like shapeLevels.",
       "shapeLevels": [
         0.5,
         0.8,

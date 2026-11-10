@@ -23,6 +23,19 @@ def test_bipole_selects_the_larger_pair():
     np.testing.assert_allclose(np.ptp(traces, axis=1), [2.0, 3.0])
 
 
+def test_bipole_fixed_orientation_keeps_one_pair():
+    """FM-39: 'x' and 'y' keep the same pair at every placement, whichever is larger."""
+    diff = np.zeros((2, 16, 10))
+    diff[0, 6, 5] = 2.0
+    diff[1, 9, 5] = 3.0
+    for orientation, partner in (("x", 6), ("y", 9)):
+        traces, weights = rec.bipole(diff, "E5-E6|E9", orientation)
+        assert np.all(weights[:, partner] == 1) and np.all(weights[:, 5] == -1) and np.count_nonzero(weights) == 4
+    np.testing.assert_allclose(np.ptp(rec.bipole(diff, "E5-E6|E9", "x")[0], axis=1), [2.0, 0.0])
+    with pytest.raises(ValueError):
+        rec.bipole(diff, "E5-E6|E9", "diagonal")
+
+
 def test_omnipole_finds_the_wavefront_direction():
     t = np.linspace(0, 1, 50)
     wave = np.sin(2 * np.pi * t)
