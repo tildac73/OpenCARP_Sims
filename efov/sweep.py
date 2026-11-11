@@ -12,7 +12,8 @@ Lead fields are cached under <out>/leadFieldCache/<conductor fingerprint>/ (FM-2
 electrode, noise and analysis variants reuse the baseline's.
 After the variants, noiseDoubling.csv holds the pre-registered primary test of FM-25: the change in
 every change point between successive noise levels of the doubling series, beside the shift predicted
-if the plateau were set by noise alone (FM-38).
+if the plateau were set by noise alone (FM-38), and the relative noise floor of each level (noise-only
+bipolar PP / healthy bipolar median, FM-44), the scale on which a change point is comparable with Wang's.
 A variant that changes the simulation is the only user of its simulation in a one-at-a-time sweep, so its raw
 output is compacted after its report (FM-20); the baseline simulation, shared by the electrode, noise
 and analysis variants, is never compacted.
@@ -82,8 +83,31 @@ def noiseDoublingTable(out, modelConfigPath):
     summary = table.groupby(keys + ["noiseSdMv"]).cp_mm_mean.median().rename("cpMedianMm").reset_index().sort_values(keys + ["noiseSdMv"])
     summary["shiftFromHalfNoiseMm"] = summary.groupby(keys).cpMedianMm.diff()
     summary = summary.merge(predictedNoiseShift(out, levels, keys), on=keys + ["noiseSdMv"], how="left")
+    floors = relativeNoiseFloors(out, levels)
+    if not floors.empty:
+        summary = summary.merge(floors, on=["gapMm", "noiseSdMv"], how="left")
     summary.to_csv(Path(out) / "noiseDoubling.csv", index=False)
     return summary
+
+
+def relativeNoiseFloors(out, levels):
+    """FM-44: per noise level and gap, noise-only bipolar PP / healthy bipolar median of that variant (amplitudes.json).
+
+    The change point is to be read against this ratio, not against the noise SD: the amplitudes are not
+    calibrated (FM-25), so only the ratio is comparable with a clinical recording. clinicalReferenceRatio
+    repeats Wang's detection limit / healthy median for orientation (an assumption, see efov.measurements).
+    """
+    import pandas as pd
+    rows = []
+    for name, sd in levels.items():
+        path = Path(out) / "variants" / name / "measurements" / "amplitudes.json"
+        if not path.exists():
+            continue
+        amplitudes = loadJson(path)
+        for row in amplitudes.get("relativeNoiseFloor", []):
+            rows.append(dict(noiseSdMv=sd, gapMm=row["gapMm"], noiseOnlyBipolarPpMv=amplitudes["noiseOnlyBipolarPpMv"],
+                             relativeNoiseFloor=row["relativeNoiseFloor"], clinicalReferenceRatio=amplitudes.get("clinicalReferenceRatio")))
+    return pd.DataFrame(rows, columns=["noiseSdMv", "gapMm", "noiseOnlyBipolarPpMv", "relativeNoiseFloor", "clinicalReferenceRatio"])
 
 
 def predictedNoiseShift(out, levels, keys):
@@ -204,10 +228,12 @@ def variantSummary(folder):
       * modelAccepted, eligibleForInterpretation: acceptance.json, changePoints stage;
       * surfaceCvMPerS: physiology, last-beat surface CV of the lesion condition (reported, not gated);
       * medianFarPpMv: measurements amplitudes, median clean PP in far viable tissue (model units);
-      * cpMm (Voltage / Peak frequency): Wang's change point (posterior mean, mm from the scar boundary) on
-        the clean dataset (noise repeat 0, EnSite-style PF) of each gap;
-      * cpNoisyMm: the same, median over the noisy realisations (repeats >= 1), the quantity the noise
-        experiment and the FM-25 test act on;
+      * relativeNoiseFloor: noise-only bipolar PP / healthy bipolar median (FM-44);
+      * cpNoisyMm (Voltage / Peak frequency): Wang's change point (posterior mean, mm from the scar boundary),
+        median over the noisy realisations (repeats >= 1) of each gap, EnSite-style PF: the quantity
+        comparable with her clinical change point, and the one the noise experiment acts on (FM-45);
+      * cpMm: the same on the noise-free dataset (repeat 0). A reference only: without noise the lesion
+        profile has no plateau, so this fit reflects her 0.01 mV exclusion and the decay form;
       * nearFieldMass, epicardialMass: ground truth, median over lesion recordings of the |c|-mass fractions
         within the 4 mm near-field convention (FM-30) and in the epicardial half (FM-15);
       * p80DepthMm: ground truth, median depth reached by the smallest element set holding 80 % of the mass.
@@ -228,6 +254,8 @@ def variantSummary(folder):
     amplitudes = folder / "measurements" / "amplitudes.json"
     for row in (loadJson(amplitudes).get("modelFarViable", []) if amplitudes.exists() else []):
         rows.append(dict(quantity="medianFarPpMv", kind=row["kind"], gapMm=row["gapMm"], value=row["medianCleanPpMv"]))
+    for row in (loadJson(amplitudes).get("relativeNoiseFloor", []) if amplitudes.exists() else []):
+        rows.append(dict(quantity="relativeNoiseFloor", kind="bi", gapMm=row["gapMm"], value=row["relativeNoiseFloor"]))
     table = folder / "changePoints" / "SuppResults5_change_points_all.csv"
     if table.exists():
         cps = pd.read_csv(table)
@@ -257,7 +285,9 @@ def runSweep(sweepPath, outputFolder, processCount=1, only=None):
 
 
 # ------------------------------------------------------------- comparison of one experiment with the baseline
-HEADLINE = [("cpMm Voltage", "Bipolar"), ("cpNoisyMm Voltage", "Bipolar"), ("cpMm Voltage", "Omnipolar"),
+# cpNoisyMm (median over noisy realisations) is the quantity comparable with Wang's; cpMm (noise-free) is a
+# reference only: without noise the lesion profile has no plateau for her piecewise model to find (FM-45).
+HEADLINE = [("cpNoisyMm Voltage", "Bipolar"), ("cpNoisyMm Voltage", "Omnipolar"), ("cpMm Voltage", "Bipolar"),
             ("cpMm Peak frequency", "Bipolar"), ("cpNoisyMm Peak frequency", "Bipolar"),
             ("medianFarPpMv", "bi"), ("nearFieldMass", "bi"), ("epicardialMass", "bi")]
 

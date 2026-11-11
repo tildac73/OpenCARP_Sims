@@ -125,6 +125,9 @@ def test_analysis_stages_agree_on_a_synthetic_run(syntheticRun):
     folder = root / "measurements"; folder.mkdir()
     points, amplitudes, status = measurements.runMeasurements(config, egms, windows, folder)
     assert status["filterHistory"] and amplitudes["wangBipolarMedianMv"] == 1.44
+    floors = amplitudes["relativeNoiseFloor"]                                                # FM-44
+    assert amplitudes["noiseOnlyBipolarPpMv"] > 0 and {r["gapMm"] for r in floors} == set(config["values"]["gapsMm"])
+    assert all(0 < r["relativeNoiseFloor"] < 1 for r in floors) and np.isclose(amplitudes["clinicalReferenceRatio"], 0.01 / 1.44)
     datasets = export.runExport(config, folder, root / "export")
     assert len(datasets) == len(config["values"]["gapsMm"]) * (config["fixed"]["analysis"]["noise"]["repeats"] + 1) * 2
     gt = root / "groundTruth"; gt.mkdir()
@@ -132,6 +135,7 @@ def test_analysis_stages_agree_on_a_synthetic_run(syntheticRun):
     assert checks["passed"], checks
     summary = pd.read_csv(gt / "summary.csv")
     assert set(summary.kind) == {"uni", "bi", "omni"} and (gt / "shares_lesion_gap0.25mm.vtk").exists()
+    assert checks["signedShareIllConditioned"] == int(summary.signedShareIllConditioned.sum())   # FM-43: flagged, counted, kept
     crossings = pd.read_csv(gt / "boundaryCrossings.csv")                                    # FM-37
     assert set(crossings.kind) == {"uni", "bi", "omni"} and set(crossings.level) == set(config["fixed"]["groundTruth"]["retainedShareLevels"])
     intact = summary[summary.condition == "intact"]

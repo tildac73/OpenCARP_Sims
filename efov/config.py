@@ -186,6 +186,8 @@ def validateConfig(config):
     levels = f["groundTruth"]["retainedShareLevels"]
     need(all(0 < level < 1 for level in levels) and list(levels) == sorted(levels, reverse=True),
          "retainedShareLevels must lie in (0, 1), in decreasing order (FM-37)")
+    need(f["groundTruth"]["maximumShareAbsSum"] >= 1, "maximumShareAbsSum must be at least 1: sum |s_e| is 1 without cancellation (FM-43)")
+    need(a["wangReference"]["detectionLimitMv"] > 0, "wangReference.detectionLimitMv must be positive (FM-44)")
     need(set(f["export"]["peakFrequencyDefinitions"].values()) <= {"pfHz", "pfGlobalHz"}, "Unknown peak-frequency column in export")
     need(all(np.any(np.isclose(centreYmm(config), c)) for c in groundTruthCentresYmm(config)), "Ground-truth centres must be catheter placements")
     from .fibres import validateSpec

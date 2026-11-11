@@ -32,13 +32,40 @@ def test_predicted_noise_shift_and_comparison_table(tmp_path):
     assert math.isclose(report.predictedShiftMm("Power-law", -0.5, 12.0), 12.0 * (2 ** -2 - 1))
     assert math.isnan(report.predictedShiftMm("Exponential", 0.1, 5.0))
     out = tmp_path; (out / "changePoints").mkdir(); (out / "groundTruth").mkdir()
-    dataset = export.datasetName(1.0, 0, "ensite")
-    pd.DataFrame(dict(dataset=[dataset], Location=["Inferior"], Metric=["Voltage"], Electrode=["Bipolar"], cp_mm_mean=[10.0],
-                      cp_mm_lower=[9.0], cp_mm_upper=[11.0], value_at_cp_mean=[0.04])).to_csv(out / "changePoints" / "SuppResults5_change_points_all.csv", index=False)
-    pd.DataFrame(dict(dataset=[dataset] * 2, Location=["Inferior"] * 2, Metric=["Voltage"] * 2, Electrode=["Bipolar"] * 2,
-                      model=["Exponential"] * 2, term=["beta1", "cp"], mean=[-0.25, 10.0])).to_csv(out / "changePoints" / "Table5_bayesian_posteriors_all.csv", index=False)
-    pd.DataFrame(dict(kind=["bi", "bi"], label=["a", "b"], gapMm=[1.0, 1.0], measure=["mass", "mass"], level=[0.1, 0.1],
-                      distanceMm=[3.0, 5.0], placements=[9, 9])).to_csv(out / "groundTruth" / "boundaryCrossings.csv", index=False)
+    # one gap: a noise-free dataset (repeat 0) and three noisy realisations with change points 9, 10 and 12 mm
+    datasets = [export.datasetName(1.0, repeat, "ensite") for repeat in range(4)]
+    cp = [20.0, 9.0, 10.0, 12.0]
+    pd.DataFrame(dict(dataset=datasets, Location="Inferior", Metric="Voltage", Electrode="Bipolar", cp_mm_mean=cp,
+                      cp_mm_lower=[c - 1 for c in cp], cp_mm_upper=[c + 1 for c in cp], value_at_cp_mean=0.04)
+                 ).to_csv(out / "changePoints" / "SuppResults5_change_points_all.csv", index=False)
+    pd.DataFrame(dict(dataset=datasets * 2, Location="Inferior", Metric="Voltage", Electrode="Bipolar", model="Exponential",
+                      term=["beta1"] * 4 + ["cp"] * 4, mean=[-0.25] * 4 + cp)
+                 ).to_csv(out / "changePoints" / "Table5_bayesian_posteriors_all.csv", index=False)
+    pd.DataFrame(dict(kind="bi", label=["a", "b", "a", "b"], gapMm=1.0, measure=["mass", "mass", "signedShare", "signedShare"], level=0.1,
+                      distanceMm=[3.0, 5.0, float("nan"), float("nan")], placements=9, illConditionedPlacements=[0, 0, 2, 3])
+                 ).to_csv(out / "groundTruth" / "boundaryCrossings.csv", index=False)
     table = report.efovComparison(SimpleNamespace(out=out))
+    assert len(table) == 1 and (out / "efovComparison.csv").exists()
     row = table.iloc[0]
-    assert math.isclose(row.logDropAtCp, 2.5) and math.isclose(row.gt_mass_10pct_mm, 4.0) and (out / "efovComparison.csv").exists()
+    # FM-45: the row compared with Wang is the median over the noisy realisations; the noise-free fit is a reference column
+    assert row.cp_mm_noisy_median == 10.0 and row.cp_mm_noisy_min == 9.0 and row.cp_mm_noisy_max == 12.0 and row.noisyRealisations == 3
+    assert row.cp_mm_clean == 20.0 and math.isclose(row.logDropAtCp, 2.5)
+    assert math.isclose(row.predictedShiftPerNoiseDoublingMm, -math.log(2) / 0.25)
+    # FM-43: the |c|-mass crossing is reported; an ill-conditioned signed-share crossing stays missing
+    assert math.isclose(row.gt_mass_10pct_mm, 4.0) and math.isnan(row.gt_signedShare_10pct_mm)
+    shown = report.comparisonLines(table)[0]
+    assert "cp_mm_noisy_median" in shown and "gt_mass_10pct_mm" in shown and "50pct" not in shown and "signedShare" not in shown
+
+
+def test_relative_noise_floor_in_the_noise_doubling_table(tmp_path):
+    """FM-44: noiseDoubling.csv carries noise-only PP / healthy bipolar median for every noise level."""
+    from efov.io import saveJson
+    model = ROOT / "config" / "model.json"
+    for name, sd, medianMv in (("baseline", 0.005, 5.0), (sweep.variantName("noiseSdMv", 0.01), 0.01, 5.0)):
+        folder = tmp_path / "variants" / name
+        (folder / "measurements").mkdir(parents=True)
+        saveJson(folder / "measurements" / "amplitudes.json", dict(
+            noiseOnlyBipolarPpMv=5 * sd, relativeNoiseFloor=[dict(gapMm=1.0, relativeNoiseFloor=5 * sd / medianMv)], clinicalReferenceRatio=0.01 / 1.44))
+    floors = sweep.relativeNoiseFloors(tmp_path, {"baseline": 0.005, sweep.variantName("noiseSdMv", 0.01): 0.01}).set_index("noiseSdMv")
+    assert abs(floors.relativeNoiseFloor[0.005] - 0.005) < 1e-12 and abs(floors.relativeNoiseFloor[0.01] / floors.relativeNoiseFloor[0.005] - 2) < 1e-12
+    assert 0.04 in sweep.loadJson(model)["sweep"]["noiseSdMv"]["planned"]

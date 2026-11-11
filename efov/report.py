@@ -59,13 +59,20 @@ def predictedShiftMm(model, beta1, cpMm, noiseRatio=2.0):
 
 
 def efovComparison(run):
-    """One table (FM-38): Wang's change point and decay slope on the clean datasets, beside the boundary-matched ground truth.
+    """One table (FM-38, FM-45): Wang's change point and decay slope beside the boundary-matched ground truth.
 
-    Per Location, Metric, Electrode and gap (EnSite-style PF dataset, noise repeat 0): cp_mm and its interval,
-    value at the change point, the piecewise slope beta1 and the log drop |beta1| x cp it implies (the change
-    point is the distance at which the fitted decay has fallen by this many log units), the shift predicted per
-    doubling of noise if the plateau is noise, and the ground-truth crossing distances (FM-37, intact run,
-    median over the recordings of the kind). Returns the table, or None before the change points exist.
+    Per Location, Metric, Electrode and gap (EnSite-style PF):
+      * cp_mm_noisy_median (min, max, realisations): Wang's change point over the noisy realisations
+        (repeats >= 1). This is the row comparable with her clinical change point: her piecewise model is a
+        decay followed by a plateau, and in the model the plateau exists only through noise;
+      * cp_mm_clean: the same fit on the noise-free dataset, a reference only (no plateau to find: the fit
+        reflects her 0.01 mV exclusion and the misfit of the decay form);
+      * beta1, logDropAtCp = |beta1| x cp (how far the fitted decay has fallen at the change point) and the
+        shift predicted per doubling of noise if the plateau is noise: medians over the noisy realisations;
+      * gt_mass_<level>pct_mm: distance inside the lesion where the intact recording's retained |c|-mass first
+        falls to the level (FM-37; median over the recordings of the kind). The |c|-mass is the primary
+        ground-truth measure (FM-43); signed-share crossings are in the table too, NaN where ill-conditioned.
+    Returns the table, or None before the change points exist.
     """
     from .export import parseDatasetName
     folder = run.out / "changePoints"
@@ -77,33 +84,63 @@ def efovComparison(run):
         table["gapMm"], table["noiseRepeat"], table["pfDefinition"] = [q[0] for q in parsed], [q[1] for q in parsed], [q[2] for q in parsed]
     keys = ["dataset", "Location", "Metric", "Electrode"]
     slopes = posteriors[posteriors.term.isin(["beta1", "cp"])].pivot_table(index=keys + ["model"], columns="term", values="mean").reset_index()
-    table = cps[(cps.noiseRepeat == 0) & (cps.pfDefinition == "ensite")].merge(slopes, on=keys, how="left")
-    table["logDropAtCp"] = (table.beta1 * table.cp).abs()
-    table["predictedShiftPerNoiseDoublingMm"] = [predictedShiftMm(m, b, c) for m, b, c in zip(table.model, table.beta1, table.cp_mm_mean)]
+    fits = cps[cps.pfDefinition == "ensite"].merge(slopes, on=keys, how="left")
+    fits["logDropAtCp"] = (fits.beta1 * fits.cp).abs()
+    fits["predictedShiftPerNoiseDoublingMm"] = [predictedShiftMm(m, b, c) for m, b, c in zip(fits.model, fits.beta1, fits.cp_mm_mean)]
+    group = ["Location", "Metric", "Electrode", "gapMm"]
+    noisy, clean = fits[fits.noiseRepeat > 0], fits[fits.noiseRepeat == 0]
+    table = noisy.groupby(group).agg(
+        cp_mm_noisy_median=("cp_mm_mean", "median"), cp_mm_noisy_min=("cp_mm_mean", "min"), cp_mm_noisy_max=("cp_mm_mean", "max"),
+        noisyRealisations=("cp_mm_mean", "count"), value_at_cp_noisy_median=("value_at_cp_mean", "median"),
+        model=("model", lambda m: "/".join(sorted(set(m.dropna())))), beta1=("beta1", "median"), logDropAtCp=("logDropAtCp", "median"),
+        predictedShiftPerNoiseDoublingMm=("predictedShiftPerNoiseDoublingMm", "median")).reset_index()
+    reference = clean[group + ["cp_mm_mean", "model"]].rename(columns={"cp_mm_mean": "cp_mm_clean", "model": "model_clean"})
+    table = table.merge(reference, on=group, how="outer")
     table["kind"] = table.Electrode.map(KIND_OF_ELECTRODE)
     crossingsPath = run.out / "groundTruth" / "boundaryCrossings.csv"
     if crossingsPath.exists():
         crossings = pd.read_csv(crossingsPath)
         wide = crossings.groupby(["kind", "gapMm", "measure", "level"]).distanceMm.median().reset_index()
         wide["column"] = "gt_" + wide.measure + "_" + (wide.level * 100).round().astype(int).astype(str) + "pct_mm"
-        wide = wide.pivot_table(index=["kind", "gapMm"], columns="column", values="distanceMm").reset_index()
+        wide = wide.pivot_table(index=["kind", "gapMm"], columns="column", values="distanceMm", dropna=False).reset_index()
         table = table.merge(wide, on=["kind", "gapMm"], how="left")
-    columns = ["Location", "Metric", "Electrode", "gapMm", "model", "cp_mm_mean", "cp_mm_lower", "cp_mm_upper", "value_at_cp_mean",
-               "beta1", "logDropAtCp", "predictedShiftPerNoiseDoublingMm"] + sorted(c for c in table.columns if c.startswith("gt_"))
+    columns = group + ["cp_mm_noisy_median", "cp_mm_noisy_min", "cp_mm_noisy_max", "noisyRealisations", "value_at_cp_noisy_median", "model",
+                       "beta1", "logDropAtCp", "predictedShiftPerNoiseDoublingMm", "cp_mm_clean", "model_clean"]
+    columns += sorted(c for c in table.columns if c.startswith("gt_"))
     table = table[[c for c in columns if c in table.columns]].sort_values(["Metric", "Electrode", "gapMm"])
     table.to_csv(run.out / "efovComparison.csv", index=False)
     return table
 
 
+# The 50 % level is left out of the report table: for a wave parallel to the boundary, mirror symmetry puts
+# the retained share of a symmetric recording at 0.5 at the boundary whatever the model's parameters (FM-43).
+COMPARISON_COLUMNS = ("Metric", "Electrode", "gapMm", "cp_mm_noisy_median", "cp_mm_noisy_min", "cp_mm_noisy_max", "cp_mm_clean",
+                      "beta1", "logDropAtCp", "predictedShiftPerNoiseDoublingMm", "gt_mass_20pct_mm", "gt_mass_10pct_mm")
+
+
 def comparisonLines(table):
     if table is None or table.empty:
         return ["No comparison table (change points or ground truth missing)."]
-    shown = [c for c in ("Metric", "Electrode", "gapMm", "cp_mm_mean", "beta1", "logDropAtCp", "predictedShiftPerNoiseDoublingMm",
-                         "gt_signedShare_50pct_mm", "gt_signedShare_10pct_mm", "gt_mass_10pct_mm") if c in table.columns]
+    shown = [c for c in COMPARISON_COLUMNS if c in table.columns]
     lines = ["| " + " | ".join(shown) + " |", "| " + " | ".join("---" for _ in shown) + " |"]
     for row in table[shown].itertuples(index=False):
         lines.append("| " + " | ".join(fmt(v) if isinstance(v, float) else str(v) for v in row) + " |")
     return lines
+
+
+def noiseFloorLines(amplitudes):
+    """Relative noise floor of this run beside the clinical reference ratio (FM-44)."""
+    if "relativeNoiseFloor" not in amplitudes:
+        return []
+    lines = [f"Noise {amplitudes['noiseSdMv']:g} mV per electrode gives a noise-only bipolar PP of {amplitudes['noiseOnlyBipolarPpMv']:.3g} mV "
+             "(median, band-passed, one measurement window). Relative noise floor = that PP / healthy bipolar median: "
+             + "; ".join(f"gap {r['gapMm']:g} mm: {r['relativeNoiseFloor']:.3g}" for r in amplitudes["relativeNoiseFloor"]) + "."]
+    if amplitudes.get("clinicalReferenceRatio"):
+        lines.append(f"Clinical reference: Wang's detection limit / healthy bipolar median = {amplitudes['wangDetectionLimitMv']:g} / "
+                     f"{amplitudes['wangBipolarMedianMv']:g} = {amplitudes['clinicalReferenceRatio']:.3g} (assumes clinical noise PP is of the "
+                     "order of the detection limit; not measured). A change point is comparable with Wang's only at a matching ratio: "
+                     "with a noise-set plateau it moves by ln 2 / |beta1| per factor of 2 in this ratio (FM-38, FM-44).")
+    return lines + [""]
 
 
 def writeReport(run):
@@ -131,18 +168,23 @@ def writeReport(run):
               "| --- | --- | --- |"] + [f"| {r['kind']} | {r['gapMm']:g} | {r['medianCleanPpMv']:.3g} |" for r in amplitudes["modelFarViable"]]
     lines += ["", f"Wang's clinical median bipolar voltage ({amplitudes['region']}): {amplitudes['wangBipolarMedianMv']} mV. "
               f"{amplitudes['note']}", ""]
+    lines += noiseFloorLines(amplitudes)
     lines += ["## Change points (Wang's code, one slab)", "",
               f"Eligible for interpretation: {fmt(changes['eligibleForInterpretation'])} "
               f"(prerequisites: {', '.join(f'{k} {fmt(v)}' for k, v in changes['prerequisites'].items())}).", ""]
     lines += changePointTable(run) + [""]
-    lines += ["## Change point beside the boundary-matched ground truth (FM-37, FM-38)", "",
-              "Clean datasets, EnSite-style PF. `logDropAtCp` = |beta1| x cp: how far the fitted decay has fallen at the change point. "
+    lines += ["## Change point beside the boundary-matched ground truth (FM-37, FM-38, FM-43, FM-45)", "",
+              "EnSite-style PF. `cp_mm_noisy_*`: Wang's change point over the noisy realisations (median, min, max), the values "
+              "comparable with her clinical change point at this run's relative noise floor (above). `cp_mm_clean`: the noise-free "
+              "fit, a reference only (no plateau exists without noise). `logDropAtCp` = |beta1| x cp. "
               "`predictedShiftPerNoiseDoublingMm`: the shift expected if the plateau is noise (compare noiseDoubling.csv). "
-              "`gt_*`: distance inside the lesion where the intact recording's retained share first falls to the level (median over "
-              "the recordings of the kind). Full table: `efovComparison.csv`.", ""]
+              "`gt_mass_*`: distance inside the lesion where the intact recording's retained |c|-mass first falls to the level "
+              "(median over the recordings of the kind). Unipolar ground-truth distances depend on the position of the reference "
+              "(ground) in the bath and are model-specific. Full table, with signed-share crossings: `efovComparison.csv`.", ""]
     lines += comparisonLines(efovComparison(run)) + [""]
     lines += ["## Ground truth", "", f"{gt['recordings']} recordings ({gt['leadFields']} lead fields, the same as the "
-              f"electrograms'); share-sum deviation {gt['shareSumMaxDeviation']:.2g}.",
+              f"electrograms'); share-sum deviation {gt['shareSumMaxDeviation']:.2g} (an implementation identity, not a validation); "
+              f"{gt.get('signedShareIllConditioned', 0)} recordings flagged as ill-conditioned for the signed share (FM-43).",
               "Per-recording classes, profiles and shape descriptors: `groundTruth/summary.csv`, `groundTruth/profiles.npz`. "
               "Full element fields: `groundTruth/fields_<condition>.npz` and `groundTruth/shares_<condition>_gap<g>mm.vtk` (ParaView).", ""]
     if accepted["assumptions"]:

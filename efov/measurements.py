@@ -158,15 +158,53 @@ def filterHistoryCheck(config, acquired, windows):
                 passed=bool(available and error <= config["fixed"]["acceptance"]["profile"]["maximumFilterHistoryError"]))
 
 
-def amplitudeSummary(points, config):
-    """Model amplitudes (physical mV) far into viable tissue beside Wang's clinical medians; nothing is scaled (FM-25)."""
+NOISE_FLOOR_REALISATIONS = 2000
+NOISE_FLOOR_SEED = 20261111
+
+
+def noiseOnlyBipolarPpMv(config, windowSamples, realisations=NOISE_FLOOR_REALISATIONS):
+    """Median peak-to-peak (mV) of a bipole that records noise alone, through the same chain as the recordings (FM-44).
+
+    Two electrodes with independent Gaussian white noise (values.noiseSdMv at the acquisition rate), the causal
+    band-pass with filterHistoryMs of history, their difference, and max - min over windowSamples (the
+    measurement window, which is where PP is read once the peak frequency is undetectable). This is the level
+    at which a noisy bipolar profile stops falling. Monte Carlo with a fixed seed; 0 when the noise is 0.
+    """
+    a, sd = config["fixed"]["analysis"], float(config["values"]["noiseSdMv"])
+    if sd == 0:
+        return 0.0
+    history = int(round(a["filterHistoryMs"] * a["acquisitionRateHz"] / 1000.0))
+    noise = np.random.default_rng(NOISE_FLOOR_SEED).normal(0.0, sd, (realisations, 2, history + int(windowSamples)))
+    filtered = sosfilt(differentialFilter(config), noise, axis=-1)[..., history:]
+    return float(np.median(np.ptp(filtered[:, 1] - filtered[:, 0], axis=-1)))
+
+
+def amplitudeSummary(points, config, windowSamples):
+    """Model amplitudes (physical mV) far into viable tissue beside Wang's clinical medians; nothing is scaled (FM-25).
+
+    relativeNoiseFloor (FM-44), per gap: noise-only bipolar PP / median clean bipolar PP far into viable
+    tissue. The noise and the detection thresholds are absolute (mV) and the model's amplitudes are not
+    calibrated, so this ratio, not the noise SD, is what positions a noise-set plateau on the decay, and hence
+    Wang's change point. clinicalReferenceRatio = her detection limit / her healthy bipolar median: a reference
+    only, on the stated assumption that clinical noise PP is of the order of that limit (no measured value).
+    """
     far = config["fixed"]["acceptance"]["profile"]["farRegionMm"]
     region = config["values"]["region"]
+    reference = config["fixed"]["analysis"]["wangReference"]
     rows = []
     for (kind, gap), group in points[(points.noiseRepeat == 0) & (points.condition == "intact") & (points.distanceInsideMm <= -far)].groupby(["kind", "gapMm"]):
         rows.append(dict(kind=kind, gapMm=float(gap), medianCleanPpMv=float(group.cleanPpMv.median()), recordings=int(len(group))))
-    return dict(modelFarViable=rows, wangBipolarMedianMv=config["fixed"]["analysis"]["wangReference"]["bipolarMedianMv"].get(region),
-                region=region, note="Reported for comparison only; the model's amplitudes are not calibrated to these values (FM-25).")
+    noisePp = noiseOnlyBipolarPpMv(config, windowSamples)
+    relative = [dict(gapMm=r["gapMm"], relativeNoiseFloor=noisePp / r["medianCleanPpMv"])
+                for r in rows if r["kind"] == "bi" and r["medianCleanPpMv"] > 0]
+    wangMedian = reference["bipolarMedianMv"].get(region)
+    return dict(modelFarViable=rows, wangBipolarMedianMv=wangMedian, region=region,
+                noiseSdMv=float(config["values"]["noiseSdMv"]), noiseOnlyBipolarPpMv=noisePp, relativeNoiseFloor=relative,
+                wangDetectionLimitMv=reference["detectionLimitMv"],
+                clinicalReferenceRatio=reference["detectionLimitMv"] / wangMedian if wangMedian else None,
+                note="Reported for comparison only; the model's amplitudes are not calibrated to these values (FM-25). "
+                     "relativeNoiseFloor = noise-only bipolar PP / healthy bipolar median (model); clinicalReferenceRatio = "
+                     "Wang's detection limit / her healthy bipolar median, assuming clinical noise PP is of that order (FM-44).")
 
 
 def pfNoiseRobustness(points):
@@ -206,10 +244,11 @@ def profileChecks(points, config):
 def runMeasurements(config, egmFolder, windows, folder):
     folder = Path(folder)
     egms = {c: dict(np.load(Path(egmFolder) / f"{c}.npz")) for c in ("intact", "lesion")}
-    tables, filterChecks = [], {}
+    tables, filterChecks, windowSamples = [], {}, None
     for condition, egm in egms.items():
         table, measured, clean, traceInfo, acquired = measureCondition(config, condition, egm, windows)
         filterChecks[condition] = filterHistoryCheck(config, acquired, windows)
+        windowSamples = measured.shape[1]
         table.to_csv(folder / f"{condition}Points.csv", index=False)
         np.savez_compressed(folder / f"{condition}Traces.npz", measuredMv=measured, cleanMv=clean, **traceInfo)
         tables.append(table)
@@ -217,7 +256,7 @@ def runMeasurements(config, egmFolder, windows, folder):
     checks = profileChecks(points, config)
     checks.to_csv(folder / "profileChecks.csv", index=False)
     pfNoiseRobustness(points).to_csv(folder / "pfNoiseRobustness.csv", index=False)
-    amplitudes = amplitudeSummary(points, config)
+    amplitudes = amplitudeSummary(points, config, windowSamples)
     saveJson(folder / "amplitudes.json", amplitudes)
     saveJson(folder / "filterHistoryCheck.json", filterChecks)
     status = dict(filterHistory=all(c["passed"] for c in filterChecks.values()),

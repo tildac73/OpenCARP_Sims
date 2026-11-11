@@ -219,7 +219,8 @@
           "inferior": 1.44,
           "roof": 0.97
         },
-        "_about": "Wang Table 2 median healthy-tissue bipolar voltage per region. Reported beside the model's physical amplitudes only; never applied to the signals (FM-25)."
+        "detectionLimitMv": 0.01,
+        "_about": "Wang Table 2 median healthy-tissue bipolar voltage per region, and the limit of detection of her analysis (DETECTION_LIMIT in reference/EFOV_analysis_pipeline.Rmd: points at or below 0.01 mV are excluded). Reported beside the model's physical amplitudes only; never applied to the signals (FM-25). FM-44: detectionLimitMv / bipolarMedianMv is reported as a clinical reference for the relative noise floor, on the ASSUMPTION [VERIFY] that clinical noise peak-to-peak is of the order of that limit; no measured clinical noise is available (Junction 1)."
       }
     },
     "export": {
@@ -251,6 +252,8 @@
         ]
       },
       "retainedShareLevels": [0.5, 0.2, 0.1],
+      "maximumShareAbsSum": 2.0,
+      "_maximumShareAbsSum": "FM-43. A recording whose sum |s_e| exceeds this is flagged signedShareIllConditioned: its signal is nearly null, so its signed shares are large terms of opposite sign. Reporting convention (1 = no cancellation; 1.04-1.14 for unipoles and wave-aligned bipoles, above 9 for a bipole parallel to the wavefront, on a 10 x 16 mm test box; VL-2026-11-11-01). The |c|-mass is unaffected.",
       "_retained": "FM-37. Share of an intact-run recording that comes from tissue with y >= boundaryYmm (the tissue still active after ablation), as a function of the recording's distance inside the lesion. groundTruth/boundaryCrossings.csv gives the distance where it first falls to each level. Levels are reporting conventions, like shapeLevels.",
       "shapeLevels": [
         0.5,

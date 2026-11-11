@@ -48,8 +48,8 @@
                       "_source": "HD Grid 4 mm centre-to-centre (Wang supplement). Fixed at the clinical catheter's spacing; not swept (FM-39, Matilda 10 Nov 2026)."},
     "bipoleOrientation": {"baseline": "selected", "planned": ["x", "y"], "actsOn": "measurements (analysis)",
                           "_source": "FM-39. selected = the larger peak-to-peak of the two orthogonal 4 mm pairs of each grid square, as EnSite does with the HD Grid (Siddiqui 2019, EP Lab Digest 19(2)); x = the pair along x (parallel to the lesion boundary and to the baseline wave); y = the pair along y (across the boundary). Orientation changes bipolar amplitude (Hwang et al. 2019, PLoS Comput Biol 15:e1006765)."},
-    "noiseSdMv": {"baseline": 0.005, "planned": [0.0025, 0.01, 0.02], "actsOn": "measurements (analysis)",
-                  "_source": "Gaussian white noise per electrode at the acquisition rate, in model mV (no calibration, FM-25). Assumption [VERIFY]: no source. The planned values form a doubling series; the pre-registered primary test is the change-point shift per doubling of noise (FM-25)."},
+    "noiseSdMv": {"baseline": 0.005, "planned": [0.0025, 0.01, 0.02, 0.04], "actsOn": "measurements (analysis)",
+                  "_source": "Gaussian white noise per electrode at the acquisition rate, in model mV (no calibration, FM-25). Assumption [VERIFY]: no source. The planned values form a doubling series; the pre-registered primary test is the change-point shift per doubling of noise (FM-25). FM-44: 0.04 mV added so the series reaches higher relative noise floors (noise peak-to-peak / healthy bipolar median, measurements/amplitudes.json): the model's amplitudes are not calibrated, so the level that matches a clinical signal-to-noise ratio is not known in advance and may lie above 0.02 mV."},
     "cvTargetMPerS": {"baseline": 0.9, "planned": [0.7, 1.25], "actsOn": "tune stage (beta)",
                       "_source": "van Schie et al. 2021 LA median 0.90 m/s; 0.70 and 1.25 m/s bracket reported central values (DL-2026-10-28-03)."},
     "ionicModel": {"baseline": "Courtemanche", "planned": [], "actsOn": "model.par imp_region[0].im",
@@ -134,7 +134,8 @@
           "inferior": 1.44,
           "roof": 0.97
         },
-        "_about": "Wang Table 2 median healthy-tissue bipolar voltage per region. Reported beside the model's physical amplitudes only; never applied to the signals (FM-25)."
+        "detectionLimitMv": 0.01,
+        "_about": "Wang Table 2 median healthy-tissue bipolar voltage per region, and the limit of detection of her analysis (DETECTION_LIMIT in reference/EFOV_analysis_pipeline.Rmd: points at or below 0.01 mV are excluded). Reported beside the model's physical amplitudes only; never applied to the signals (FM-25). FM-44: detectionLimitMv / bipolarMedianMv is reported as a clinical reference for the relative noise floor, on the ASSUMPTION [VERIFY] that clinical noise peak-to-peak is of the order of that limit; no measured clinical noise is available (Junction 1)."
       }
     },
     "export": {
@@ -166,6 +167,8 @@
         ]
       },
       "retainedShareLevels": [0.5, 0.2, 0.1],
+      "maximumShareAbsSum": 2.0,
+      "_maximumShareAbsSum": "FM-43. A recording whose sum |s_e| exceeds this is flagged signedShareIllConditioned: its signal is nearly null, so its signed shares are large terms of opposite sign. Reporting convention (1 = no cancellation; 1.04-1.14 for unipoles and wave-aligned bipoles, above 9 for a bipole parallel to the wavefront, on a 10 x 16 mm test box; VL-2026-11-11-01). The |c|-mass is unaffected.",
       "_retained": "FM-37. Share of an intact-run recording that comes from tissue with y >= boundaryYmm (the tissue still active after ablation), as a function of the recording's distance inside the lesion. groundTruth/boundaryCrossings.csv gives the distance where it first falls to each level. Levels are reporting conventions, like shapeLevels.",
       "shapeLevels": [
         0.5,

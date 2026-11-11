@@ -83,7 +83,43 @@ def test_boundary_crossings_known_answers():
     assert np.isnan(groundtruth.firstCrossingMm(d, np.full(5, 0.05), 0.1))
     summary = pd.DataFrame(dict(condition=["intact"] * 5 + ["lesion"], kind="bi", label="E5-E6|E9", gapMm=1.0,
                                 distanceInsideMm=list(d) + [0.0], share_retained=list(falling) + [1.0],
-                                mass_retained=list(falling) + [1.0]))
-    table = groundtruth.boundaryCrossings(summary, [0.5, 0.2])
+                                mass_retained=list(falling) + [1.0], shareAbsSum=[1.1, 1.1, 1.2, 1.1, 1.1, 1.0]))
+    table = groundtruth.boundaryCrossings(summary, [0.5, 0.2], maximumShareAbsSum=2.0)
     assert len(table) == 4 and set(table.measure) == {"signedShare", "mass"} and (table.placements == 5).all()
     assert np.isclose(table[(table.measure == "mass") & (table.level == 0.2)].distanceMm.iloc[0], 3.0)
+    assert (table.illConditionedPlacements == 0).all() and table.distanceMm.notna().all()
+    # FM-43: one nearly null placement (sum |s_e| = 70) withholds the signed-share crossings, not the |c|-mass ones
+    summary.loc[2, "shareAbsSum"] = 70.0
+    table = groundtruth.boundaryCrossings(summary, [0.5, 0.2], maximumShareAbsSum=2.0)
+    assert (table.illConditionedPlacements == 1).all()
+    assert table[table.measure == "signedShare"].distanceMm.isna().all() and table[table.measure == "mass"].distanceMm.notna().all()
+
+
+def test_signed_share_is_ill_conditioned_for_a_bipole_parallel_to_the_wavefront():
+    """FM-43: planar wave along x on a box that is symmetric in y; recordings centred on the boundary y = 0.
+
+    A bipole along the wave (x) records a large signal: little cancellation (sum |s_e| near 1), and by mirror
+    symmetry half of its |c|-mass lies on either side of the boundary, whatever the tissue parameters.
+    A bipole across the wave (y) records almost nothing: its signed shares are large terms of opposite sign
+    (sum |s_e| far above the reporting limit), while its |c|-mass split stays at one half.
+    """
+    config = cfg.loadConfig(SMALL, {"wallMm": 1.0})
+    positions, elements, tags = boxWithBath([8, 10], 1.0, 1.0, 0.5)
+    fibres = np.where(tags[:, None] == 0, 0.0, [1.0, 0.0, 0.0])
+    tissue = dict(positions=positions, elements=elements, tags=tags, fibres=fibres, tissueNodes=np.unique(elements[tags != 0]))
+    p = positions[tissue["tissueNodes"]]
+    t = np.arange(0, 40, 0.5)
+    vm = -80 + 100 / (1 + np.exp(-(t[None, :] - 12 - (p[:, :1] + 4) / 0.9) / 0.5))
+    ground = meshbuild.groundNodes(positions, elements, tags, 0.5)
+    bath = meshbuild.catheterSideNodes(positions, elements, tags, 1.0)
+    centres = np.array([[-1.0, 0.0, 1.0], [1.0, 0.0, 1.0], [0.0, -2.0, 1.0], [0.0, 2.0, 1.0]])
+    model = leadfield.ContributionModel(config, tissue)
+    c = [model.coefficients(referenceLeadField(config, tissue, ground, nodes)[tissue["tissueNodes"]])
+         for nodes in electrodeNodeSets(positions, bath, centres, 0.5, 1.0)]
+    retained = model.centres[:, 1] >= 0.0
+    limit = config["fixed"]["groundTruth"]["maximumShareAbsSum"]
+    along, alongMass, _, _ = groundtruth.shares(model, c[1] - c[0], vm)
+    across, acrossMass, _, _ = groundtruth.shares(model, c[3] - c[2], vm)
+    assert np.abs(along).sum() < limit < np.abs(across).sum()
+    assert abs(alongMass[retained].sum() / alongMass.sum() - 0.5) < 0.03 and abs(along[retained].sum() - 0.5) < 0.03
+    assert abs(acrossMass[retained].sum() / acrossMass.sum() - 0.5) < 0.03

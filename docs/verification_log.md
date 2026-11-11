@@ -360,3 +360,27 @@ numerical verification and physiological validation. Newest last.
 - **Synthetic pipeline (test_small slab, oracle lead fields):** boundaryCrossings.csv written for every kind and level; median retained |c|-mass above 0.5 for intact recordings 1-4 mm on the viable side and below 0.5 for those 1-4 mm inside the lesion. Further from the boundary the median was not monotonic on this small slab (around 0.5 at 8-10 mm inside), attributed to the slab's edges; not checked on the production slab.
 - **Full suite:** 43 passed, 2 skipped (the opt-in end-to-end test; the openCARP 20 comparison).
 - **Not verified:** the column names of Wang's Table5_bayesian_posteriors on a real run (taken from her Rmd: Location, Metric, Electrode, model, term, mean, lower, upper); nothing run on openCARP output.
+
+## VL-2026-11-11-01 - Review check: retained share on a symmetric box (cloud session; no openCARP)
+- **Type:** Numerical check with the repository's own functions (groundtruth.shares, ContributionModel) and the test oracle. Box: tissue 10 x 16 x 1 mm, 0.25 mm mesh, 1.5 mm bath, corner ground; analytic planar wave along +x (0.9 m/s); uniform and bilayer fibres; electrodes 0.3 mm radius, 0.6 mm long, 0.5 mm above the tissue; recordings at distances -2 to +4 mm from a virtual boundary at y = 0. Not the production geometry: sizes are illustrative.
+- **Result (uniform fibres; bilayer within 0.03):**
+
+  | Recording | Retained signed share at -1 / 0 / +1 / +4 mm | Retained mass at 0 / +4 mm | sum abs(s_e) |
+  | --- | --- | --- | --- |
+  | Unipole | 0.82 / 0.74 / 0.67 / 0.60 | 0.72 / 0.54 | 1.04-1.06 |
+  | Bipole along the wave (x) | 0.72 / 0.49 / 0.27 / 0.08 | 0.49 / 0.14 | 1.14 |
+  | Bipole across the wave (y) | -31.6 / +2901 / +32.3 / +1.18 | 0.50 / 0.12 | 9.4 to 13,200 |
+
+- **Reading:** (1) symmetric recordings sit at one half at the boundary by mirror symmetry; (2) the signed share of a nearly null signal is not usable, its |c|-mass is; (3) the unipolar curve is offset toward the ground corner on this small box. Led to FM-43.
+- **Noise floor:** 5 uV per electrode gives a band-passed bipolar SD of 4.86 uV (the log's 4.9 uV) and a noise-only bipolar PP of 24.5 uV (median) over 60 ms and 26.1 uV over 100 ms (4,000 realisations). Led to FM-44.
+
+## VL-2026-11-11-02 - FM-43 to FM-47: software verification (cloud session; no openCARP, no R)
+- **Before the changes:** commit 7f62674, `python -m pytest tests -q`: 43 passed, 2 skipped (as VL-2026-11-10-02).
+- **New and changed tests:**
+  - tests/test_closed_form.py: source operator against -V h^T sigma_i g for four field pairs (bilayer fibres, relative 1e-9); uniform bar of blood: lead-field drop over 5 mm and level 3 mm from the ground equal dx / (g_bath A) to 1e-6; potential non-negative.
+  - tests/test_groundtruth.py: an ill-conditioned placement withholds signed-share crossings and leaves |c|-mass crossings; on a symmetric box the wave-aligned bipole has sum abs(s_e) below the limit and the cross-wave bipole above it, with retained mass 0.5 +- 0.03 for both.
+  - tests/test_export_and_sweep.py: the comparison table takes the median, minimum and maximum over noisy realisations and keeps the noise-free change point as a reference; the report table has no 50 % or signed-share column; relative noise floors are joined per noise level and gap.
+  - tests/test_physiology_and_measurements.py: noise-only bipolar PP is 0 without noise, proportional to the noise SD, and 4 to 6 band-passed bipolar SDs for a 60 ms window.
+  - tests/test_synthetic_pipeline.py: amplitudes.json carries the noise floor per gap and the clinical reference ratio; the ground-truth checks count the flagged recordings.
+- **Full suite after the changes:** 48 passed, 2 skipped (the opt-in end-to-end test; the openCARP 20 comparison). Cloud session, Python 3 with numpy, scipy, pandas, matplotlib, openpyxl.
+- **Not verified:** anything on openCARP (W0 on openCARP 20 remains the gate, FM-47) or in R; the distribution of sum abs(s_e) and the relative noise floor on the production run; the new report section on real change-point tables (column names of Wang's tables are taken from her Rmd, as in VL-2026-11-10-02).

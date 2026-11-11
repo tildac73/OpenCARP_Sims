@@ -19,7 +19,15 @@ Per recording (all recordings at the ground-truth placements, clean signals):
   * retained share (FM-37): signed share and |c|-mass of tissue with y >= boundary, the tissue that
     the lesion run leaves active. In the intact run, its fall with the recording's distance inside the
     lesion is the ground truth matched to the clinical boundary sweep; boundaryCrossings.csv gives the
-    distances where it first reaches fixed.groundTruth.retainedShareLevels;
+    distances where it first reaches fixed.groundTruth.retainedShareLevels. The |c|-mass is the
+    primary measure (FM-43). The signed share divides by the signal energy, so it is ill-conditioned
+    when the recorded signal is nearly null (e.g. a bipole parallel to the wavefront): recordings with
+    sum |s_e| above fixed.groundTruth.maximumShareAbsSum are flagged (signedShareIllConditioned) and
+    their signed-share crossings are not reported. Two further properties of these curves follow from
+    the model and are not results: for a wave parallel to the boundary, mirror symmetry puts the
+    retained share of a symmetric recording at 0.5 at the boundary, so the 0.5 level carries no
+    information there; unipolar curves depend on where the reference (ground) sits, here on the
+    retained side of the boundary;
   * classes (FM-15): near-field / far-field (lateral distance from the anchor <= nearFieldRadiusMm)
     x endocardial / epicardial half (depth < depthSplitFraction x wall); lesion elements reported
     separately. Signed share and |c|-mass fraction (sum_t |c_e(t)|, no cancellation) per class;
@@ -30,7 +38,9 @@ Per recording (all recordings at the ground-truth placements, clean signals):
     depth, |s|-weighted centroid offset, in-plane eccentricity and major-axis angle.
 Full element fields (s_e on every tissue element) for fixed.groundTruth.fieldRecordings, as npz and
 legacy VTK files for ParaView. Each placement uses its own measurement window (FM-28).
-Check (stops the run if it fails): shares sum to 1.
+Check (stops the run if it fails): shares sum to 1. This is an algebraic identity of the definition
+above, so it detects a broken implementation (mismatched element indexing); it is not a validation
+of the forward model or of the ground truth.
 """
 from pathlib import Path
 
@@ -150,22 +160,28 @@ def firstCrossingMm(distanceMm, value, level):
     return float(d[k - 1] + (v[k - 1] - level) * (d[k] - d[k - 1]) / (v[k - 1] - v[k]))
 
 
-def boundaryCrossings(summary, levels):
+def boundaryCrossings(summary, levels, maximumShareAbsSum=np.inf):
     """Ground-truth distances matched to the clinical boundary sweep (FM-37), intact run.
 
     For each recording (kind, label, gap), retained share (signed share and |c|-mass of tissue with
     y >= boundary, i.e. the tissue the lesion run leaves active) against the recording's distance inside
-    the lesion; the distance where each curve first falls to each level. Rows also give the median over
-    the labels of a kind, the quantity reported beside Wang's change point.
+    the lesion; the distance where each curve first falls to each level.
+
+    The |c|-mass curve is the primary measure (FM-43). A signed-share curve is reported only when none
+    of its placements is ill-conditioned (sum |s_e| > maximumShareAbsSum: the signal is nearly null and
+    the shares are large terms of opposite sign); otherwise its distance is NaN. illConditionedPlacements
+    counts those placements, so the reason for a missing value is recorded, not hidden.
     """
     intact = summary[summary.condition == "intact"]
     rows = []
     for (kind, label, gap), group in intact.groupby(["kind", "label", "gapMm"]):
+        illConditioned = int((group.shareAbsSum > maximumShareAbsSum).sum()) if "shareAbsSum" in group else 0
         for measure, column in (("signedShare", "share_retained"), ("mass", "mass_retained")):
             for level in levels:
+                usable = measure == "mass" or illConditioned == 0
                 rows.append(dict(kind=kind, label=label, gapMm=gap, measure=measure, level=level,
-                                 distanceMm=firstCrossingMm(group.distanceInsideMm, group[column], level),
-                                 placements=len(group)))
+                                 distanceMm=firstCrossingMm(group.distanceInsideMm, group[column], level) if usable else np.nan,
+                                 placements=len(group), illConditionedPlacements=illConditioned))
     return pd.DataFrame(rows)
 
 
@@ -214,7 +230,9 @@ def runGroundTruth(config, jobs, tissues, electrogramsFolder, measurementsFolder
                 rows.append(dict(recordingId=record["recordingId"], condition=condition, kind=record["kind"], label=record["label"],
                                  gapMm=record["gapMm"], centreYmm=record["centreYmm"], anchorXmm=anchor[0], anchorYmm=anchor[1],
                                  distanceInsideMm=record["distanceInsideMm"], shareSum=total,
-                                 shareAbsSum=float(np.abs(elementShares).sum()), signalPpMv=float(np.ptp(phi)),
+                                 shareAbsSum=float(np.abs(elementShares).sum()),
+                                 signedShareIllConditioned=bool(np.abs(elementShares).sum() > g["maximumShareAbsSum"]),
+                                 signalPpMv=float(np.ptp(phi)),
                                  **classSummary(model, config, elementShares, mass, lateral, depth),
                                  **shapeDescriptors(model, elementShares, lateral, depth, anchor, g["shapeLevels"])))
                 if (record["kind"], record["label"]) in fieldLabels:
@@ -225,8 +243,9 @@ def runGroundTruth(config, jobs, tissues, electrogramsFolder, measurementsFolder
     pad = lambda values: np.array([np.pad(v, (0, max(map(len, values)) - len(v)), constant_values=np.nan) for v in values])
     np.savez_compressed(folder / "profiles.npz", recordingId=table.recordingId.to_numpy().astype(str), depthShareAndMass=np.asarray(depthRows),
                         lateralCumulativeShare=pad(lateralRows), curveStepMm=g["curveStepMm"], layerThicknessMm=spacingMm(config)[2])
-    boundaryCrossings(table, g["retainedShareLevels"]).to_csv(folder / "boundaryCrossings.csv", index=False)
-    checks = dict(recordings=len(table), shareSumMaxDeviation=float((table.shareSum - 1).abs().max()), leadFields="openCARP lead-field module (FM-35)")
+    boundaryCrossings(table, g["retainedShareLevels"], g["maximumShareAbsSum"]).to_csv(folder / "boundaryCrossings.csv", index=False)
+    checks = dict(recordings=len(table), shareSumMaxDeviation=float((table.shareSum - 1).abs().max()), leadFields="openCARP lead-field module (FM-35)",
+                  signedShareIllConditioned=int(table.signedShareIllConditioned.sum()))
     checks["passed"] = bool(checks["recordings"] > 0 and checks["shareSumMaxDeviation"] <= gate["shareSumDeviation"])
     saveJson(folder / "checks.json", checks)
     return checks

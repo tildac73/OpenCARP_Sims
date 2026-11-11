@@ -100,3 +100,21 @@ def test_trailing_context_extends_the_segment_without_changing_filtered_signals(
         measurements.placementIndices(times, config, windows, 10 * context)
     with pytest.raises(ValueError, match="past the end of the simulation"):
         analysisTimes(config, np.tile([5.0, 400.0], (placements, 1)))
+
+
+def test_noise_only_bipolar_peak_to_peak():
+    """FM-44: the noise floor of a bipole through the acquisition chain, in the units of the noise.
+
+    Zero without noise; proportional to the noise SD (same seed); and between 4 and 6 SDs of the band-passed
+    bipole for a 60 ms window (120 samples), whose SD is sqrt(2 x 0.472) x the electrode SD (noise-power
+    gain of the 30-500 Hz band-pass at 2 kHz, decision log FM-36).
+    """
+    from efov import config as cfg
+    from helpers import SMALL
+    base = cfg.loadConfig(SMALL)
+    assert measurements.noiseOnlyBipolarPpMv(cfg.loadConfig(SMALL, {"noiseSdMv": 0.0}), 120) == 0.0
+    floor = measurements.noiseOnlyBipolarPpMv(base, 120)
+    doubled = measurements.noiseOnlyBipolarPpMv(cfg.loadConfig(SMALL, {"noiseSdMv": 2 * base["values"]["noiseSdMv"]}), 120)
+    assert np.isclose(doubled, 2 * floor, rtol=1e-12)
+    bipoleSd = np.sqrt(2 * 0.472) * base["values"]["noiseSdMv"]
+    assert 4 * bipoleSd < floor < 6 * bipoleSd

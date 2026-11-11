@@ -367,6 +367,7 @@ Code style for every module: plain functions, units in names, no scientific cons
   - in-plane 0.25 vs 0.125 mm;
   - transmural 0.1 vs 0.05 mm.
   - Tolerances already confirmed (DL-2026-10-28-05; DL-2026-11-01-01): CV within 1 %; PP within 5 %; share-class fractions within 0.02 absolute; change-point shift < 0.5 mm on supported fits only.
+  - Also reported, without a tolerance (FM-46, 11 Nov 2026): clean peak frequency (both definitions) per 1 mm distance bin, and the boundary-matched |c|-mass crossing distances (FM-37, FM-43). Peak frequency depends on how well the depolarisation front is resolved (a few elements at 0.25 mm in-plane), and neither quantity was covered by the tolerances above. No tolerance is set after the fact: the differences are reported as the discretisation error band of these quantities.
   - Pre-declared outcome: whatever W3 shows is reported as the model's discretisation error band. Failing W3 does not trigger a finer production mesh: a 0.125 mm in-plane production mesh (≈ 15 M nodes) is outside the compute budget.
 
 After W2 passes, sweeps start from `config/sweeps/oat_baseline.json`. No other workstation run is needed to finalise the model.
