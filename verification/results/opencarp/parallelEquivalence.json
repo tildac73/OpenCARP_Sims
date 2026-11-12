@@ -1,0 +1,52 @@
+{
+  "supports": "Simulations are run in parallel with MPI (openCARP / PETSc domain decomposition); parallel results equal the serial result.",
+  "kind": "simulation",
+  "method": "Intact 16 x 16 mm slab at the production mesh spacing, 30 ms, identical inputs; Vm at every tissue node and output frame and first activation times compared with the first process count listed. wallSeconds is the whole run (mesher, mesh rewrite, carputils and openCARP set-up, solve) and each process count meshes its own copy; physicsSeconds is openCARP's own 'Timings of individual physics' total. Speed-up and efficiency use physicsSeconds. On this small problem they are indicative only.",
+  "values": {
+    "tissueNodes": 84500,
+    "outputFrames": 151,
+    "rows": [
+      {
+        "processes": 1,
+        "wallSeconds": 68.2,
+        "physicsSeconds": 30.439999999999998,
+        "largestVmDifferenceMv": 0.0,
+        "largestActivationDifferenceMs": 0.0,
+        "sameNodesActivated": true,
+        "speedUp": 1.0,
+        "parallelEfficiency": 1.0
+      },
+      {
+        "processes": 2,
+        "wallSeconds": 57.9,
+        "physicsSeconds": 20.6,
+        "largestVmDifferenceMv": 7.62939453125e-06,
+        "largestActivationDifferenceMs": 1.0000000010279564e-06,
+        "sameNodesActivated": true,
+        "speedUp": 1.4776699029126212,
+        "parallelEfficiency": 0.7388349514563106
+      }
+    ],
+    "project_tolerances": {
+      "activationMs": 0.02,
+      "vmMv": 0.1,
+      "source": "docs/decision_log.md DL-2026-10-28-05"
+    }
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "6ef579538c6a33cdf09c025af915c1d89db5e739",
+    "versions": {
+      "python": "3.12.16",
+      "platform": "Linux-6.18.44-fc-v378-x86_64-with-glibc2.39",
+      "numpy": "2.5.4",
+      "scipy": "1.18.1",
+      "pandas": "3.1.1",
+      "openCARPPath": "/opt/mamba/envs/carp/bin/openCARP",
+      "benchPath": "/opt/mamba/envs/carp/bin/bench",
+      "carputils": "0.0.0"
+    },
+    "writtenAt": "2026-11-12T10:55:18+00:00",
+    "command": "verification/opencarp_checks.py --out runs/verification/opencarp --np 2 --only parallelEquivalence"
+  }
+}

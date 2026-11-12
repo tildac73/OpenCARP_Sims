@@ -1,0 +1,254 @@
+{
+  "supports": "Mesh spacing 0.25 mm in-plane and 0.1 mm through the wall; beta tuned at that spacing.",
+  "kind": "simulation",
+  "method": "Tuning strip (20 x 1 x 0.5 mm, fibres along x, 3 beats, last beat measured) at the production beta, with only the mesh spacing changed. 'Across fibres' sets the longitudinal conductivities to the transverse values. CV differences are relative to the finest level and to the Richardson extrapolation of the three finest levels (refinement ratio 2 in-plane).",
+  "values": {
+    "productionSpacingMm": [
+      0.25,
+      0.25,
+      0.1
+    ],
+    "betaPerUm": 0.027292021021150175,
+    "conductivitiesAlongSPerM": {
+      "g_il": 0.344,
+      "g_el": 0.117
+    },
+    "conductivitiesAcrossSPerM": {
+      "g_il": 0.06,
+      "g_el": 0.08
+    },
+    "inPlaneAlongFibres": {
+      "rows": [
+        {
+          "level": 0.5,
+          "cvMPerS": 0.83613043032699,
+          "stripNodes": 738,
+          "wallSeconds": 9.1,
+          "physicsSeconds": 7.55,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.94035339355469,
+            "amplitudeMv": 84.11186218261719,
+            "cvMPerS": 0.8359389810183414,
+            "apd90Ms": 301.5553040288389,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": -10.1116090935184,
+          "cvVersusExtrapolatedPercent": -10.296092223035668
+        },
+        {
+          "level": 0.25,
+          "cvMPerS": 0.9015032024999794,
+          "stripNodes": 2430,
+          "wallSeconds": 21.6,
+          "physicsSeconds": 19.88,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.96379089355469,
+            "amplitudeMv": 82.13874053955078,
+            "cvMPerS": 0.9021895261870432,
+            "apd90Ms": 300.86732774972927,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": -3.083694444570653,
+          "cvVersusExtrapolatedPercent": -3.2826013686996975
+        },
+        {
+          "level": 0.125,
+          "cvMPerS": 0.9244496922665433,
+          "stripNodes": 8694,
+          "wallSeconds": 77.6,
+          "physicsSeconds": 75.61,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.96562957763672,
+            "amplitudeMv": 83.15461730957031,
+            "cvMPerS": 0.9257657573351857,
+            "apd90Ms": 299.9990943133831,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": -0.616826875521847,
+          "cvVersusExtrapolatedPercent": -0.8207966942544477
+        },
+        {
+          "level": 0.0625,
+          "cvMPerS": 0.9301873377585391,
+          "stripNodes": 32742,
+          "wallSeconds": 335.0,
+          "physicsSeconds": 332.39,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.9657974243164,
+            "amplitudeMv": 83.41807556152344,
+            "cvMPerS": 0.9307440854974969,
+            "apd90Ms": 299.76380890756855,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": 0.0,
+          "cvVersusExtrapolatedPercent": -0.2052357681084775
+        }
+      ],
+      "observedOrderFinestThree": 1.9997427374563668,
+      "richardsonExtrapolatedCvMPerS": 0.9321003410530411
+    },
+    "inPlaneAcrossFibres": {
+      "rows": [
+        {
+          "level": 0.5,
+          "cvMPerS": 0.44441106244015055,
+          "stripNodes": 738,
+          "wallSeconds": 8.1,
+          "physicsSeconds": 6.640000000000001,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.71395874023438,
+            "amplitudeMv": 90.0364761352539,
+            "cvMPerS": 0.44447948206201104,
+            "apd90Ms": 300.91005455553534,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": -22.50947015984495,
+          "cvVersusExtrapolatedPercent": -23.135316224117865
+        },
+        {
+          "level": 0.25,
+          "cvMPerS": 0.5299003279504986,
+          "stripNodes": 2430,
+          "wallSeconds": 22.7,
+          "physicsSeconds": 21.05,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.83479309082031,
+            "amplitudeMv": 81.1205825805664,
+            "cvMPerS": 0.5299502720493041,
+            "apd90Ms": 302.95321488082413,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": -7.602981460692222,
+          "cvVersusExtrapolatedPercent": -8.34921858828265
+        },
+        {
+          "level": 0.125,
+          "cvMPerS": 0.5631594873535224,
+          "stripNodes": 8694,
+          "wallSeconds": 70.3,
+          "physicsSeconds": 68.28999999999999,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.85282897949219,
+            "amplitudeMv": 82.65264892578125,
+            "cvMPerS": 0.563342154038776,
+            "apd90Ms": 301.0954316914083,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": -1.8036886392504177,
+          "cvVersusExtrapolatedPercent": -2.5967632913145096
+        },
+        {
+          "level": 0.0625,
+          "cvMPerS": 0.5735037085910591,
+          "stripNodes": 32742,
+          "wallSeconds": 319.0,
+          "physicsSeconds": 316.03000000000003,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.85614776611328,
+            "amplitudeMv": 83.28094482421875,
+            "cvMPerS": 0.5737746194215844,
+            "apd90Ms": 300.52537840604793,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": 0.0,
+          "cvVersusExtrapolatedPercent": -0.8076419990467126
+        }
+      ],
+      "observedOrderFinestThree": 1.684926669894016,
+      "richardsonExtrapolatedCvMPerS": 0.5781732788180592
+    },
+    "transmuralAlongFibres": {
+      "rows": [
+        {
+          "level": 0.25,
+          "cvMPerS": 0.8987466555360889,
+          "stripNodes": 1215,
+          "wallSeconds": 11.2,
+          "physicsSeconds": 9.6,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.96288299560547,
+            "amplitudeMv": 82.05854034423828,
+            "cvMPerS": 0.9001489635773942,
+            "apd90Ms": 300.98814588785183,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": -0.5178807510410831,
+          "cvVersusExtrapolatedPercent": -3.3523780780536048
+        },
+        {
+          "level": 0.1,
+          "cvMPerS": 0.9015032024999794,
+          "stripNodes": 2430,
+          "wallSeconds": 22.1,
+          "physicsSeconds": 20.44,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.96379089355469,
+            "amplitudeMv": 82.13874053955078,
+            "cvMPerS": 0.9021895261870432,
+            "apd90Ms": 300.86732774972927,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": -0.21275902169952868,
+          "cvVersusExtrapolatedPercent": -3.055950038922526
+        },
+        {
+          "level": 0.05,
+          "cvMPerS": 0.9034253213755238,
+          "stripNodes": 4455,
+          "wallSeconds": 43.6,
+          "physicsSeconds": 41.83,
+          "lastBeat": {
+            "beat": 3,
+            "captured": true,
+            "restingPotentialMv": -78.96418762207031,
+            "amplitudeMv": 82.21794128417969,
+            "cvMPerS": 0.9037669830925583,
+            "apd90Ms": 300.78622324466716,
+            "repolarisationComplete": true
+          },
+          "cvVersusFinestPercent": 0.0,
+          "cvVersusExtrapolatedPercent": -2.8492530601595365
+        }
+      ],
+      "observedOrderFinestThree": 0.10103719504130113,
+      "richardsonExtrapolatedCvMPerS": 0.9299211275595853,
+      "extrapolationNote": "Observed order outside 0.5-3: the three levels are not in the asymptotic range of a first- or second-order scheme, so the extrapolated value is not a converged estimate."
+    }
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "6ef579538c6a33cdf09c025af915c1d89db5e739",
+    "versions": {
+      "python": "3.12.16",
+      "platform": "Linux-6.18.44-fc-v378-x86_64-with-glibc2.39",
+      "numpy": "2.5.4",
+      "scipy": "1.18.1",
+      "pandas": "3.1.1",
+      "openCARPPath": "/opt/mamba/envs/carp/bin/openCARP",
+      "benchPath": "/opt/mamba/envs/carp/bin/bench",
+      "carputils": "0.0.0"
+    },
+    "writtenAt": "2026-11-12T10:59:30+00:00",
+    "command": "verification/opencarp_checks.py --out runs/verification/opencarp --np 2 --only stimulusThreshold temporalConvergence spatialConvergence"
+  }
+}

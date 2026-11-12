@@ -1,0 +1,129 @@
+{
+  "supports": "The CV target (0.90 m/s) is set along fibres on a strip; the slab's surface CV depends on fibre model and wall thickness and is reported.",
+  "kind": "simulation",
+  "method": "Intact 16 x 16 mm slab at the production mesh spacing and beta, wave along +x, first beat only (30 ms). Plane fit to first activation on the central 8 x 8 mm of each surface. First-beat values from the conditioned state; the production physiology stage reports the last-beat value of the full slab.",
+  "values": {
+    "stripTargetMPerS": 0.9,
+    "baselineWallMm": 1.9,
+    "rows": [
+      {
+        "case": "bilayer_wall1p9",
+        "wallMm": 1.9,
+        "fibreModel": "bilayer",
+        "wallSeconds": 61.3,
+        "physicsSeconds": 22.25,
+        "catheterSurfaceSpeedMPerS": 0.7913978711508839,
+        "catheterSurfaceDirectionErrorDeg": 0.0,
+        "catheterSurfacePlaneResidual95Ms": 0.007039329471188793,
+        "farSurfaceSpeedMPerS": 0.7863745179598993,
+        "farMinusCatheterSurfaceActivationMsMedian": 1.333978,
+        "farMinusCatheterSurfaceActivationMsRange": [
+          1.2348890000000008,
+          1.3407400000000003
+        ],
+        "allCentralNodesActivated": true
+      },
+      {
+        "case": "uniform_wall1p9",
+        "wallMm": 1.9,
+        "fibreModel": "uniform",
+        "wallSeconds": 59.0,
+        "physicsSeconds": 20.509999999999998,
+        "catheterSurfaceSpeedMPerS": 0.8745027419232626,
+        "catheterSurfaceDirectionErrorDeg": 0.0,
+        "catheterSurfacePlaneResidual95Ms": 0.002762445545018366,
+        "farSurfaceSpeedMPerS": 0.87450276051235,
+        "farMinusCatheterSurfaceActivationMsMedian": 0.005152999999999963,
+        "farMinusCatheterSurfaceActivationMsRange": [
+          -0.005197000000000784,
+          0.005197000000000784
+        ],
+        "allCentralNodesActivated": true
+      },
+      {
+        "case": "rotation_wall1p9",
+        "wallMm": 1.9,
+        "fibreModel": "linearRotation",
+        "wallSeconds": 59.2,
+        "physicsSeconds": 20.919999999999998,
+        "catheterSurfaceSpeedMPerS": 0.7694577924317906,
+        "catheterSurfaceDirectionErrorDeg": 0.14575309036319006,
+        "catheterSurfacePlaneResidual95Ms": 0.022423693082563607,
+        "farSurfaceSpeedMPerS": 0.7614592304364093,
+        "farMinusCatheterSurfaceActivationMsMedian": 1.148283000000001,
+        "farMinusCatheterSurfaceActivationMsRange": [
+          1.0176799999999995,
+          1.2150800000000004
+        ],
+        "allCentralNodesActivated": true
+      },
+      {
+        "case": "bilayer_wall1p1",
+        "wallMm": 1.1,
+        "fibreModel": "bilayer",
+        "wallSeconds": 46.5,
+        "physicsSeconds": 12.129999999999999,
+        "catheterSurfaceSpeedMPerS": 0.7334088623751981,
+        "catheterSurfaceDirectionErrorDeg": 0.0,
+        "catheterSurfacePlaneResidual95Ms": 0.007111697185766985,
+        "farSurfaceSpeedMPerS": 0.7333182823568437,
+        "farMinusCatheterSurfaceActivationMsMedian": 0.5213970000000003,
+        "farMinusCatheterSurfaceActivationMsRange": [
+          0.511101,
+          0.524222
+        ],
+        "allCentralNodesActivated": true
+      },
+      {
+        "case": "uniform_wall1p1",
+        "wallMm": 1.1,
+        "fibreModel": "uniform",
+        "wallSeconds": 46.4,
+        "physicsSeconds": 11.610000000000001,
+        "catheterSurfaceSpeedMPerS": 0.8745027419232626,
+        "catheterSurfaceDirectionErrorDeg": 0.0,
+        "catheterSurfacePlaneResidual95Ms": 0.002762445545018366,
+        "farSurfaceSpeedMPerS": 0.87450276051235,
+        "farMinusCatheterSurfaceActivationMsMedian": 0.005152999999999963,
+        "farMinusCatheterSurfaceActivationMsRange": [
+          -0.005197000000000784,
+          0.005197000000000784
+        ],
+        "allCentralNodesActivated": true
+      },
+      {
+        "case": "bilayer_wall3p0",
+        "wallMm": 3.0,
+        "fibreModel": "bilayer",
+        "wallSeconds": 76.9,
+        "physicsSeconds": 34.36,
+        "catheterSurfaceSpeedMPerS": 0.8336581499173575,
+        "catheterSurfaceDirectionErrorDeg": 0.0,
+        "catheterSurfacePlaneResidual95Ms": 0.010602860705992256,
+        "farSurfaceSpeedMPerS": 0.8062034192574978,
+        "farMinusCatheterSurfaceActivationMsMedian": 2.328448,
+        "farMinusCatheterSurfaceActivationMsRange": [
+          1.912617,
+          2.3622999999999994
+        ],
+        "allCentralNodesActivated": true
+      }
+    ]
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "6ef579538c6a33cdf09c025af915c1d89db5e739",
+    "versions": {
+      "python": "3.12.16",
+      "platform": "Linux-6.18.44-fc-v378-x86_64-with-glibc2.39",
+      "numpy": "2.5.4",
+      "scipy": "1.18.1",
+      "pandas": "3.1.1",
+      "openCARPPath": "/opt/mamba/envs/carp/bin/openCARP",
+      "benchPath": "/opt/mamba/envs/carp/bin/bench",
+      "carputils": "0.0.0"
+    },
+    "writtenAt": "2026-11-12T10:52:29+00:00",
+    "command": "verification/opencarp_checks.py --out runs/verification/opencarp --np 2 --only slabVelocity"
+  }
+}
