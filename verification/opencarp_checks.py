@@ -313,8 +313,13 @@ def checkSlabVelocity(root, processCount):
     production = cfg.loadConfig()
     bilayer = production["sweep"]["fibres"]["baseline"]
     uniform, rotation = production["sweep"]["fibres"]["planned"]
-    cases = [("bilayer_wall1p1", 1.1, bilayer), ("uniform_wall1p1", 1.1, uniform), ("rotation_wall1p1", 1.1, rotation),
-             ("uniform_wall1p6_roof", 1.6, uniform), ("bilayer_wall1p9", 1.9, bilayer), ("bilayer_wall3p0", 3.0, bilayer)]
+    # Every fibre model at the baseline wall (1.9 mm, FM-48); the bilayer and uniform models at the former baseline
+    # 1.1 mm (the earlier verification-log values VL-2026-11-04-05 were measured there); the thickest planned wall.
+    # The roof case (uniform fibres, 1.6 mm) was removed with the roof scenario (FM-49).
+    baselineWall = float(production["sweep"]["wallMm"]["baseline"])
+    tag = f"wall{baselineWall:g}".replace(".", "p")
+    cases = [(f"bilayer_{tag}", baselineWall, bilayer), (f"uniform_{tag}", baselineWall, uniform), (f"rotation_{tag}", baselineWall, rotation),
+             ("bilayer_wall1p1", 1.1, bilayer), ("uniform_wall1p1", 1.1, uniform), ("bilayer_wall3p0", 3.0, bilayer)]
     reference = slabVariant(root, "reference")
     state = simulation.conditionCell(reference, root / "reference" / "conditioning")
     rows = []
@@ -328,7 +333,7 @@ def checkSlabVelocity(root, processCount):
         method=f"Intact {SMALL_SLAB_MM[0]:g} x {SMALL_SLAB_MM[1]:g} mm slab at the production mesh spacing and beta, wave along +x, first beat only "
                f"({SMALL_SLAB_DURATION_MS:g} ms). Plane fit to first activation on the central 8 x 8 mm of each surface. "
                "First-beat values from the conditioned state; the production physiology stage reports the last-beat value of the full slab.",
-        values=dict(stripTargetMPerS=production["values"]["cvTargetMPerS"], rows=rows))
+        values=dict(stripTargetMPerS=production["values"]["cvTargetMPerS"], baselineWallMm=baselineWall, rows=rows))
 
 
 def checkParallelEquivalence(root, processCounts):
