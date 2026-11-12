@@ -1,0 +1,4 @@
+*** GIT tag:            c877c38
+*** GIT hash:           c877c38dd2851ae04db17de93be6997ba1c42dc6
+*** GIT repo:           https://github.com/conda-forge/opencarp-feedstock
+*** dependency commits:

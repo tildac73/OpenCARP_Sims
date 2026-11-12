@@ -1,0 +1,99 @@
+{
+  "supports": "Solver time step 20 us (ionic and parabolic), Crank-Nicolson, Vm output every 0.2 ms.",
+  "kind": "simulation",
+  "method": "Production-mesh tuning strip at the production beta with only dt changed (the single-cell conditioning uses the same dt). CV and APD90 of the last of 3 beats, relative to the smallest time step. wallSeconds = whole run including meshing and set-up (not the conditioning); physicsSeconds = openCARP's own physics timing. Observed order and Richardson extrapolation from the three smallest time steps.",
+  "values": {
+    "rows": [
+      {
+        "timeStepUs": 40.0,
+        "cvMPerS": 0.8900583202044922,
+        "wallSeconds": 11.9,
+        "physicsSeconds": 10.27,
+        "lastBeat": {
+          "beat": 3,
+          "captured": true,
+          "restingPotentialMv": -78.99974822998047,
+          "amplitudeMv": 83.53977966308594,
+          "cvMPerS": 0.8905745614326308,
+          "apd90Ms": 298.4004741907121,
+          "repolarisationComplete": true
+        },
+        "cvVersusFinestPercent": -2.230669479328138,
+        "apd90MinusFinestMs": -3.913800866901852,
+        "cvVersusExtrapolatedPercent": -2.563217290252948
+      },
+      {
+        "timeStepUs": 20.0,
+        "cvMPerS": 0.9015032024999794,
+        "wallSeconds": 20.4,
+        "physicsSeconds": 18.81,
+        "lastBeat": {
+          "beat": 3,
+          "captured": true,
+          "restingPotentialMv": -78.96379089355469,
+          "amplitudeMv": 82.13874053955078,
+          "cvMPerS": 0.9021895261870432,
+          "apd90Ms": 300.86732774972927,
+          "repolarisationComplete": true
+        },
+        "cvVersusFinestPercent": -0.9734951408414252,
+        "apd90MinusFinestMs": -1.4469473078846704,
+        "cvVersusExtrapolatedPercent": -1.310319042969767
+      },
+      {
+        "timeStepUs": 10.0,
+        "cvMPerS": 0.9073742940504269,
+        "wallSeconds": 34.6,
+        "physicsSeconds": 32.980000000000004,
+        "lastBeat": {
+          "beat": 3,
+          "captured": true,
+          "restingPotentialMv": -78.96351623535156,
+          "amplitudeMv": 81.4817886352539,
+          "cvMPerS": 0.9087955956739415,
+          "apd90Ms": 301.8536962211132,
+          "repolarisationComplete": true
+        },
+        "cvVersusFinestPercent": -0.3285793220881701,
+        "apd90MinusFinestMs": -0.46057883650075837,
+        "cvVersusExtrapolatedPercent": -0.6675968092867486
+      },
+      {
+        "timeStepUs": 5.0,
+        "cvMPerS": 0.9103655670591941,
+        "wallSeconds": 68.9,
+        "physicsSeconds": 67.33,
+        "lastBeat": {
+          "beat": 3,
+          "captured": true,
+          "restingPotentialMv": -78.96200561523438,
+          "amplitudeMv": 81.14289855957031,
+          "cvMPerS": 0.9107412394426316,
+          "apd90Ms": 302.31427505761394,
+          "repolarisationComplete": true
+        },
+        "cvVersusFinestPercent": 0.0,
+        "apd90MinusFinestMs": 0.0,
+        "cvVersusExtrapolatedPercent": -0.340135100806994
+      }
+    ],
+    "observedOrderFinestThree": 0.9728691644573545,
+    "richardsonExtrapolatedCvMPerS": 0.9134726080353796
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "f4713318175b8eb787afd115c7071ab22ae3cd90",
+    "versions": {
+      "python": "3.12.16",
+      "platform": "Linux-6.18.44-fc-v378-x86_64-with-glibc2.39",
+      "numpy": "2.5.4",
+      "scipy": "1.18.1",
+      "pandas": "3.1.1",
+      "openCARPPath": "/opt/mamba/envs/carp/bin/openCARP",
+      "benchPath": "/opt/mamba/envs/carp/bin/bench",
+      "carputils": "0.0.0"
+    },
+    "writtenAt": "2026-11-12T05:06:35+00:00",
+    "command": "verification/opencarp_checks.py --out runs/verification/opencarp --np 2 --only temporalConvergence"
+  }
+}
