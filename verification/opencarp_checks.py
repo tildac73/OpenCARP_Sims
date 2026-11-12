@@ -223,13 +223,21 @@ def checkTemporalConvergence(root, processCount, timeStepsUs=(40.0, 20.0, 10.0, 
     for row in rows:
         row["cvVersusFinestPercent"] = float(100 * relativeDifference(row["cvMPerS"], finest["cvMPerS"]))
         row["apd90MinusFinestMs"] = float(row["lastBeat"].get("apd90Ms", np.nan) - finest["lastBeat"].get("apd90Ms", np.nan))
+    values = dict(rows=rows)
+    if len(rows) >= 3:                                                       # observed order in dt and the dt -> 0 value
+        order, extrapolated = richardsonSpacings([r["cvMPerS"] for r in rows[-3:]], [r["timeStepUs"] for r in rows[-3:]])
+        values.update(observedOrderFinestThree=order, richardsonExtrapolatedCvMPerS=extrapolated)
+        if np.isfinite(extrapolated):
+            for row in rows:
+                row["cvVersusExtrapolatedPercent"] = float(100 * relativeDifference(row["cvMPerS"], extrapolated))
     return dict(
         supports="Solver time step 20 us (ionic and parabolic), Crank-Nicolson, Vm output every 0.2 ms.",
         kind="simulation",
         method="Production-mesh tuning strip at the production beta with only dt changed (the single-cell conditioning uses the same dt). "
                "CV and APD90 of the last of 3 beats, relative to the smallest time step. wallSeconds = whole run including meshing "
-               "and set-up (not the conditioning); physicsSeconds = openCARP's own physics timing.",
-        values=dict(rows=rows))
+               "and set-up (not the conditioning); physicsSeconds = openCARP's own physics timing. "
+               "Observed order and Richardson extrapolation from the three smallest time steps.",
+        values=values)
 
 
 def checkStimulusThreshold(root, processCount, iterations=7):
