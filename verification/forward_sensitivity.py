@@ -9,7 +9,7 @@ no-flux condition, grounds a 1 mm cube at one bath corner and leaves the epicard
 these was tested for convergence. This check measures how much the recorded signal and the spatial
 distribution of its contributing tissue change when each is varied alone:
 
-    bath thickness 2.5 / 5 / 10 mm;  ground at the opposite top corner;  blood below the epicardium;
+    bath thickness 2.5 / 5 / 10 / 20 mm;  ground at the opposite top corner;  blood below the epicardium;
     slab extended by 4 mm on every lateral side.
 
 Method. A REDUCED model, not the production one: coarser mesh (0.5 mm in-plane, 0.25 mm transmural, 1.0 mm
@@ -32,7 +32,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from scipy import sparse
 from scipy.sparse.linalg import LinearOperator, cg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -165,6 +164,7 @@ def checkForward(root, gapMm):
     cases = [("reference", reference, {}, "configuredCorner"),
              ("bath2p5mm", {**reference, "bath.thicknessMm": 2.5}, {}, "configuredCorner"),
              ("bath10mm", {**reference, "bath.thicknessMm": 10.0}, {}, "configuredCorner"),
+             ("bath20mm", {**reference, "bath.thicknessMm": 20.0}, {}, "configuredCorner"),
              ("groundOppositeCorner", reference, {}, "oppositeCorner"),
              ("bloodBelowEpicardium", reference, {"epicardialMedium": "blood"}, "configuredCorner"),
              ("slabPlus4mmEachSide", {**reference, "tissue.sizeMm": [32.0, 36.0]}, {}, "configuredCorner")]

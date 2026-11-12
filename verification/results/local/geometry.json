@@ -1,0 +1,77 @@
+{
+  "supports": "Slab dimensions, mesh resolution, catheter travel and the number of recordings.",
+  "kind": "derivation",
+  "method": "Counts from the regular block mesh (5 tetrahedra per hexahedral cell, as in the pilot mesh); margins are the smallest distance between an electrode whose distance from the boundary lies in Wang's region of interest (-10 to +15 mm) and each slab edge.",
+  "values": {
+    "slabSizeMm": [
+      40.0,
+      60.0,
+      1.9
+    ],
+    "spacingMm": [
+      0.25,
+      0.25,
+      0.1
+    ],
+    "bathThicknessMm": 5.0,
+    "elementsThroughWall": 19,
+    "nodeLayersThroughWall": 20,
+    "tissueNodes": 776020,
+    "tissueHexahedralCells": 729600,
+    "tissueTetrahedraExpected": 3648000,
+    "meshNodesWithBath": 3953670,
+    "catheterCentresYmm": [
+      -16.0,
+      16.0
+    ],
+    "catheterStepMm": 0.5,
+    "electrodeDistanceFromBoundaryMm": [
+      -22.0,
+      22.0
+    ],
+    "wangRegionOfInterestMm": [
+      -10.0,
+      15.0
+    ],
+    "wangLargestEfovMm": 13.2,
+    "marginRoiElectrodesToLesionSideEdgeMm": 15.0,
+    "marginRoiElectrodesToViableSideEdgeMm": 20.0,
+    "marginElectrodesToXEdgesMm": 13.5,
+    "smallestMarginOverLargestEfov": 1.0227272727272727,
+    "isolatedTissueBeyondLesionMm": 24.4,
+    "lesionWidthMm": 5.6,
+    "lesionWidthInElements": 22.4,
+    "lesionWidthIsMeshMultiple": false,
+    "placementsPerCondition": 130,
+    "gapsMm": [
+      0.25,
+      1.0
+    ],
+    "distinctElectrodesPerCondition": 712,
+    "recordingsPerPlacement": {
+      "uni": 16,
+      "bi": 9,
+      "omni": 36
+    },
+    "recordingsPerConditionAndRealisation": 7930,
+    "noiseRealisations": 3,
+    "groundTruthPlacements": 34,
+    "wangMappingPoints": 12395
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "cbda2031773793bee467e7be71bd39f1d22c1db1+uncommitted",
+    "versions": {
+      "python": "3.11.8",
+      "platform": "macOS-15.0-arm64-arm-64bit",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1",
+      "pandas": "2.2.2",
+      "openCARPPath": "not found",
+      "benchPath": "not found",
+      "carputils": "not installed"
+    },
+    "writtenAt": "2026-11-12T16:58:56+08:00",
+    "command": "verification/local_checks.py --out runs/verification/local"
+  }
+}

@@ -1,0 +1,134 @@
+{
+  "supports": "Baseline noise 5 uV per electrode and the doubling series, in relation to Wang's 0.01 mV exclusion limit and the 0.04 mV peak-frequency gate.",
+  "kind": "numerical",
+  "method": "Two electrodes with independent Gaussian white noise at the acquisition rate through the production band-pass with its history; peak-to-peak of their difference over the window; 4,000 realisations, fixed seed. Riccio et al. 2021 range is quoted from docs/decision_log.md (FM-36), not re-derived here.",
+  "values": {
+    "exclusionLimitMv": 0.01,
+    "peakFrequencyGateMv": 0.04,
+    "noisePowerGain": 0.47238554970427,
+    "rows": [
+      {
+        "windowMs": 60.0,
+        "noiseSdMv": 0.0025,
+        "bipolarNoiseSdMv": 0.0024299834096765715,
+        "noiseOnlyPpMedianMv": 0.01217107056827668,
+        "noiseOnlyPp5thMv": 0.009958406200059963,
+        "noiseOnlyPp95thMv": 0.014939452572337012,
+        "fractionAboveExclusionLimit": 0.9465,
+        "fractionAbovePeakFrequencyGate": 0.0
+      },
+      {
+        "windowMs": 60.0,
+        "noiseSdMv": 0.005,
+        "bipolarNoiseSdMv": 0.004859966819353143,
+        "noiseOnlyPpMedianMv": 0.02434214113655336,
+        "noiseOnlyPp5thMv": 0.019916812400119926,
+        "noiseOnlyPp95thMv": 0.029878905144674024,
+        "fractionAboveExclusionLimit": 1.0,
+        "fractionAbovePeakFrequencyGate": 0.0
+      },
+      {
+        "windowMs": 60.0,
+        "noiseSdMv": 0.01,
+        "bipolarNoiseSdMv": 0.009719933638706286,
+        "noiseOnlyPpMedianMv": 0.04868428227310672,
+        "noiseOnlyPp5thMv": 0.03983362480023985,
+        "noiseOnlyPp95thMv": 0.05975781028934805,
+        "fractionAboveExclusionLimit": 1.0,
+        "fractionAbovePeakFrequencyGate": 0.9465
+      },
+      {
+        "windowMs": 60.0,
+        "noiseSdMv": 0.02,
+        "bipolarNoiseSdMv": 0.01943986727741257,
+        "noiseOnlyPpMedianMv": 0.09736856454621344,
+        "noiseOnlyPp5thMv": 0.0796672496004797,
+        "noiseOnlyPp95thMv": 0.1195156205786961,
+        "fractionAboveExclusionLimit": 1.0,
+        "fractionAbovePeakFrequencyGate": 1.0
+      },
+      {
+        "windowMs": 60.0,
+        "noiseSdMv": 0.04,
+        "bipolarNoiseSdMv": 0.03887973455482514,
+        "noiseOnlyPpMedianMv": 0.19473712909242688,
+        "noiseOnlyPp5thMv": 0.1593344992009594,
+        "noiseOnlyPp95thMv": 0.2390312411573922,
+        "fractionAboveExclusionLimit": 1.0,
+        "fractionAbovePeakFrequencyGate": 1.0
+      },
+      {
+        "windowMs": 60.5,
+        "noiseSdMv": 0.0025,
+        "bipolarNoiseSdMv": 0.0024299834096765715,
+        "noiseOnlyPpMedianMv": 0.012219033576374006,
+        "noiseOnlyPp5thMv": 0.009977333015692343,
+        "noiseOnlyPp95thMv": 0.015122834291706085,
+        "fractionAboveExclusionLimit": 0.94825,
+        "fractionAbovePeakFrequencyGate": 0.0
+      },
+      {
+        "windowMs": 60.5,
+        "noiseSdMv": 0.005,
+        "bipolarNoiseSdMv": 0.004859966819353143,
+        "noiseOnlyPpMedianMv": 0.024438067152748013,
+        "noiseOnlyPp5thMv": 0.019954666031384686,
+        "noiseOnlyPp95thMv": 0.03024566858341217,
+        "fractionAboveExclusionLimit": 1.0,
+        "fractionAbovePeakFrequencyGate": 0.0
+      },
+      {
+        "windowMs": 60.5,
+        "noiseSdMv": 0.01,
+        "bipolarNoiseSdMv": 0.009719933638706286,
+        "noiseOnlyPpMedianMv": 0.048876134305496026,
+        "noiseOnlyPp5thMv": 0.03990933206276937,
+        "noiseOnlyPp95thMv": 0.06049133716682434,
+        "fractionAboveExclusionLimit": 1.0,
+        "fractionAbovePeakFrequencyGate": 0.94825
+      },
+      {
+        "windowMs": 60.5,
+        "noiseSdMv": 0.02,
+        "bipolarNoiseSdMv": 0.01943986727741257,
+        "noiseOnlyPpMedianMv": 0.09775226861099205,
+        "noiseOnlyPp5thMv": 0.07981866412553874,
+        "noiseOnlyPp95thMv": 0.12098267433364868,
+        "fractionAboveExclusionLimit": 1.0,
+        "fractionAbovePeakFrequencyGate": 1.0
+      },
+      {
+        "windowMs": 60.5,
+        "noiseSdMv": 0.04,
+        "bipolarNoiseSdMv": 0.03887973455482514,
+        "noiseOnlyPpMedianMv": 0.1955045372219841,
+        "noiseOnlyPp5thMv": 0.1596373282510775,
+        "noiseOnlyPp95thMv": 0.24196534866729735,
+        "fractionAboveExclusionLimit": 1.0,
+        "fractionAbovePeakFrequencyGate": 1.0
+      }
+    ],
+    "noiseSdAtWhichMedianNoisePpEqualsExclusionLimitMv": 0.0020459883217228,
+    "noiseSdAtWhichMedianNoisePpEqualsPeakFrequencyGateMv": 0.0081839532868912,
+    "clinicalBipolarNoiseRangeUvRiccio2021": [
+      1.2,
+      11.0
+    ]
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "cbda2031773793bee467e7be71bd39f1d22c1db1+uncommitted",
+    "versions": {
+      "python": "3.11.8",
+      "platform": "macOS-15.0-arm64-arm-64bit",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1",
+      "pandas": "2.2.2",
+      "openCARPPath": "not found",
+      "benchPath": "not found",
+      "carputils": "not installed"
+    },
+    "writtenAt": "2026-11-12T16:58:56+08:00",
+    "command": "verification/local_checks.py --out runs/verification/local"
+  }
+}

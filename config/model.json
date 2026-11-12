@@ -6,12 +6,12 @@
 
   "sweep": {
     "region": {
-      "baseline": "inferior", "planned": ["roof"], "actsOn": "label exported to Wang's inf0_roof1 column",
-      "_about": "Regions are parameter sets (FM-08): the 'roof' variant in config/sweeps sets wallMm 1.6 and uniform fibres."
+      "baseline": "inferior", "planned": [], "actsOn": "label exported to Wang's inf0_roof1 column",
+      "_about": "FM-49: one generic slab; no regional scenario is run. Wang's script needs a region code for every row, so every dataset is exported under code 0 ('inferior'). The label is a dataset name only and makes no anatomical claim."
     },
     "wallMm": {
-      "baseline": 1.1, "planned": [1.0, 1.5, 2.0, 2.5, 3.0], "actsOn": "geometry",
-      "_source": "Inferior posterior wall median 1.14 mm (Whitaker et al. 2021, CCTA, n = 193), rounded to the 0.1 mm transmural mesh (FM-08). Must be a multiple of fixed.tissue.spacingTransmuralMm."
+      "baseline": 1.9, "planned": [1.0, 1.5, 2.0, 2.5, 3.0], "actsOn": "geometry",
+      "_source": "FM-48 (Matilda, 12 Nov 2026): mean left atrial wall thickness 1.89 +- 0.48 mm over 12 sites in 60 patients (Beinart et al. 2011, J Cardiovasc Electrophysiol 22:1232-1236, CT; value as given in the Methodology, primary paper not re-read here [VERIFY]), rounded to the 0.1 mm transmural mesh. Replaces the inferior-wall value 1.1 mm of FM-08 (Whitaker et al. 2021 median 1.14 mm), which the planned 1.0 mm variant now brackets. Must be a multiple of fixed.tissue.spacingTransmuralMm."
     },
     "fibres": {
       "baseline": {"model": "bilayer", "endocardialAngleDeg": 0.0, "epicardialAngleDeg": 90.0, "transitionDepthFraction": 0.5, "transitionWidthMm": 0.0},

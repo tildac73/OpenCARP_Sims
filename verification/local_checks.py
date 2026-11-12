@@ -90,7 +90,11 @@ def checkGeometry(config):
     v, f = config["values"], config["fixed"]
     bath = f["bath"]["thicknessMm"]
     tissueNodes = int(np.prod(np.round(size / spacing).astype(int) + 1))
-    tissueElements = int(6 * np.prod(np.round(size / spacing).astype(int)))
+    # openCARP's mesher splits each hexahedral cell into 5 tetrahedra: the pilot mesh (40 x 60 x 4 mm at 0.5 mm)
+    # had 384,000 tissue tetrahedra = 5 x 80 x 120 x 8 (Methodology, pilot run). The production run record
+    # (runRecord.json nodeSets.elements) holds the actual count.
+    tissueCells = int(np.prod(np.round(size / spacing).astype(int)))
+    tissueElements = 5 * tissueCells
     layout = geometry.electrodeLayout(config)
     centres = layout["centres"]
     boundary = f["tissue"]["boundaryYmm"]
@@ -109,12 +113,12 @@ def checkGeometry(config):
     return dict(
         supports="Slab dimensions, mesh resolution, catheter travel and the number of recordings.",
         kind="derivation",
-        method="Counts from the regular block mesh (6 tetrahedra per cell); margins are the smallest distance between an electrode "
+        method="Counts from the regular block mesh (5 tetrahedra per hexahedral cell, as in the pilot mesh); margins are the smallest distance between an electrode "
                "whose distance from the boundary lies in Wang's region of interest (-10 to +15 mm) and each slab edge.",
         values=dict(
             slabSizeMm=size.tolist(), spacingMm=spacing.tolist(), bathThicknessMm=bath,
             elementsThroughWall=int(round(size[2] / spacing[2])), nodeLayersThroughWall=int(round(size[2] / spacing[2])) + 1,
-            tissueNodes=tissueNodes, tissueTetrahedra=tissueElements, meshNodesWithBath=cfg.meshNodeCount(config),
+            tissueNodes=tissueNodes, tissueHexahedralCells=tissueCells, tissueTetrahedraExpected=tissueElements, meshNodesWithBath=cfg.meshNodeCount(config),
             catheterCentresYmm=[float(cfg.centreYmm(config).min()), float(cfg.centreYmm(config).max())],
             catheterStepMm=float(np.diff(cfg.centreYmm(config))[0]),
             electrodeDistanceFromBoundaryMm=[float(distance.min()), float(distance.max())],

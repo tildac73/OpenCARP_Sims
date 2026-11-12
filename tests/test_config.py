@@ -9,7 +9,7 @@ from helpers import MODEL, SMALL
 
 def test_model_config_is_valid_and_matches_the_plan():
     c = cfg.loadConfig(MODEL)
-    assert c["values"]["wallMm"] == 1.1 and c["values"]["fibres"]["model"] == "bilayer"
+    assert c["values"]["wallMm"] == 1.9 and c["values"]["fibres"]["model"] == "bilayer"
     assert c["values"]["scar"] == "ablation" and c["parOverrides"] == {}
     np.testing.assert_allclose(cfg.spacingMm(c), [0.25, 0.25, 0.1])
     assert cfg.beatCount(c) == 4 and cfg.cycleLengthMs(c) == 500 and cfg.sampleStepMs(c) == 0.2

@@ -1,0 +1,189 @@
+{
+  "supports": "Morlet (omega0 = 6) peak frequency, 30-500 Hz in 1 Hz steps; 150 ms of trailing signal for the wavelet transform.",
+  "kind": "numerical",
+  "method": "efov.peakfrequency.peakFrequency on synthetic signals with a known frequency, read in a 60 ms window after 200 ms of history. Edge test: 1.5 ms Gaussian-derivative deflection through the production band-pass.",
+  "values": {
+    "omega0": 6.0,
+    "frequencyStepHz": 1.0,
+    "gateFraction": 0.1,
+    "temporalWidthAtLowestFrequencyMs": 31.830988618379067,
+    "fourWidthsMs": 127.32395447351627,
+    "temporalWidthAt300HzMs": 3.1830988618379066,
+    "relativeBandwidthSigmaFOverF": 0.16666666666666666,
+    "configuredTrailingContextMs": 150.0,
+    "tones": [
+      {
+        "trueHz": 50.0,
+        "highestTraceHz": 50.0,
+        "globalHz": 50.0
+      },
+      {
+        "trueHz": 100.0,
+        "highestTraceHz": 100.0,
+        "globalHz": 100.0
+      },
+      {
+        "trueHz": 250.0,
+        "highestTraceHz": 250.0,
+        "globalHz": 250.0
+      },
+      {
+        "trueHz": 450.0,
+        "highestTraceHz": 450.0,
+        "globalHz": 450.0
+      }
+    ],
+    "bursts": [
+      {
+        "trueHz": 100.0,
+        "cycles": 3,
+        "highestTraceHz": 109.0,
+        "globalHz": 109.0,
+        "highestTraceErrorHz": 9.0,
+        "globalErrorHz": 9.0
+      },
+      {
+        "trueHz": 100.0,
+        "cycles": 6,
+        "highestTraceHz": 103.0,
+        "globalHz": 103.0,
+        "highestTraceErrorHz": 3.0,
+        "globalErrorHz": 3.0
+      },
+      {
+        "trueHz": 100.0,
+        "cycles": 12,
+        "highestTraceHz": 101.0,
+        "globalHz": 101.0,
+        "highestTraceErrorHz": 1.0,
+        "globalErrorHz": 1.0
+      },
+      {
+        "trueHz": 250.0,
+        "cycles": 3,
+        "highestTraceHz": 274.0,
+        "globalHz": 274.0,
+        "highestTraceErrorHz": 24.0,
+        "globalErrorHz": 24.0
+      },
+      {
+        "trueHz": 250.0,
+        "cycles": 6,
+        "highestTraceHz": 256.0,
+        "globalHz": 256.0,
+        "highestTraceErrorHz": 6.0,
+        "globalErrorHz": 6.0
+      },
+      {
+        "trueHz": 250.0,
+        "cycles": 12,
+        "highestTraceHz": 252.0,
+        "globalHz": 252.0,
+        "highestTraceErrorHz": 2.0,
+        "globalErrorHz": 2.0
+      },
+      {
+        "trueHz": 450.0,
+        "cycles": 3,
+        "highestTraceHz": 493.0,
+        "globalHz": 493.0,
+        "highestTraceErrorHz": 43.0,
+        "globalErrorHz": 43.0
+      },
+      {
+        "trueHz": 450.0,
+        "cycles": 6,
+        "highestTraceHz": 461.0,
+        "globalHz": 461.0,
+        "highestTraceErrorHz": 11.0,
+        "globalErrorHz": 11.0
+      },
+      {
+        "trueHz": 450.0,
+        "cycles": 12,
+        "highestTraceHz": 453.0,
+        "globalHz": 453.0,
+        "highestTraceErrorHz": 3.0,
+        "globalErrorHz": 3.0
+      }
+    ],
+    "windowEndBias": [
+      {
+        "deflectionBeforeWindowEndMs": 2.0,
+        "highestTraceHz_trailing0ms": 215.0,
+        "globalHz_trailing0ms": 214.0,
+        "highestTraceHz_trailing25ms": 152.0,
+        "globalHz_trailing25ms": 152.0,
+        "highestTraceHz_trailing50ms": 152.0,
+        "globalHz_trailing50ms": 152.0,
+        "highestTraceHz_trailing100ms": 152.0,
+        "globalHz_trailing100ms": 152.0,
+        "highestTraceHz_trailing150ms": 152.0,
+        "globalHz_trailing150ms": 152.0,
+        "highestTraceHz_trailing300ms": 152.0,
+        "globalHz_trailing300ms": 152.0
+      },
+      {
+        "deflectionBeforeWindowEndMs": 5.0,
+        "highestTraceHz_trailing0ms": 164.0,
+        "globalHz_trailing0ms": 163.0,
+        "highestTraceHz_trailing25ms": 152.0,
+        "globalHz_trailing25ms": 152.0,
+        "highestTraceHz_trailing50ms": 152.0,
+        "globalHz_trailing50ms": 152.0,
+        "highestTraceHz_trailing100ms": 152.0,
+        "globalHz_trailing100ms": 152.0,
+        "highestTraceHz_trailing150ms": 152.0,
+        "globalHz_trailing150ms": 152.0,
+        "highestTraceHz_trailing300ms": 152.0,
+        "globalHz_trailing300ms": 152.0
+      },
+      {
+        "deflectionBeforeWindowEndMs": 10.0,
+        "highestTraceHz_trailing0ms": 150.0,
+        "globalHz_trailing0ms": 149.0,
+        "highestTraceHz_trailing25ms": 152.0,
+        "globalHz_trailing25ms": 152.0,
+        "highestTraceHz_trailing50ms": 152.0,
+        "globalHz_trailing50ms": 152.0,
+        "highestTraceHz_trailing100ms": 152.0,
+        "globalHz_trailing100ms": 152.0,
+        "highestTraceHz_trailing150ms": 152.0,
+        "globalHz_trailing150ms": 152.0,
+        "highestTraceHz_trailing300ms": 152.0,
+        "globalHz_trailing300ms": 152.0
+      },
+      {
+        "deflectionBeforeWindowEndMs": 30.0,
+        "highestTraceHz_trailing0ms": 152.0,
+        "globalHz_trailing0ms": 152.0,
+        "highestTraceHz_trailing25ms": 152.0,
+        "globalHz_trailing25ms": 152.0,
+        "highestTraceHz_trailing50ms": 152.0,
+        "globalHz_trailing50ms": 152.0,
+        "highestTraceHz_trailing100ms": 152.0,
+        "globalHz_trailing100ms": 152.0,
+        "highestTraceHz_trailing150ms": 152.0,
+        "globalHz_trailing150ms": 152.0,
+        "highestTraceHz_trailing300ms": 152.0,
+        "globalHz_trailing300ms": 152.0
+      }
+    ]
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "cbda2031773793bee467e7be71bd39f1d22c1db1+uncommitted",
+    "versions": {
+      "python": "3.11.8",
+      "platform": "macOS-15.0-arm64-arm-64bit",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1",
+      "pandas": "2.2.2",
+      "openCARPPath": "not found",
+      "benchPath": "not found",
+      "carputils": "not installed"
+    },
+    "writtenAt": "2026-11-12T16:58:57+08:00",
+    "command": "verification/local_checks.py --out runs/verification/local"
+  }
+}

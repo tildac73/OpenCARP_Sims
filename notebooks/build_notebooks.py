@@ -90,11 +90,11 @@ def build():
 One notebook, run top to bottom (plan `claude/final_model_plan_2026-11-03.md`; decisions FM-01 to FM-33 in
 `docs/decision_log.md`).
 
-* **Part 1 - base model.** The inferior-wall reference: conditioning, beta, the two openCARP runs (intact and
+* **Part 1 - base model.** The reference slab: conditioning, beta, the two openCARP runs (intact and
   lesion), physiology checks, measurement windows, lead fields, electrograms, measurements, Wang's change
   points, the ground truth, the report and its figures.
-* **Part 2 - experiments.** Each sweep variable takes each planned value alone (one at a time), plus the named
-  'roof' region. Each section runs its variants and compares them with the base model.
+* **Part 2 - experiments.** Each sweep variable takes each planned value alone (one at a time), plus any named
+  variant of the sweep file. Each section runs its variants and compares them with the base model.
 * **Part 3 - summary.** The pre-registered primary test (change-point shift per doubling of noise, FM-25) and
   one table of every variant.
 
@@ -230,11 +230,6 @@ display(status)
 table = sweep.summary()
 table.to_csv(sweep.out / "sweepSummary.csv", index=False)
 table'''),
-        md("""## 3.3 Regional comparison (optional)
-Pool the inferior baseline and the roof variant for Wang's regional analysis:"""),
-        code('''# import subprocess
-# subprocess.run([sys.executable, "-m", "efov", "wang-combine", str(sweep.out / "variants" / "baseline"),
-#                 str(sweep.out / "variants" / "roof"), "--out", str(sweep.out / "wang_regions")], cwd=REPOSITORY)'''),
     ]
     nb = new_notebook(cells=cells)
     nb.metadata["kernelspec"] = dict(name="python3", display_name="Python 3", language="python")

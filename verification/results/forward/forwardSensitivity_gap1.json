@@ -1,0 +1,512 @@
+{
+  "supports": "5 mm blood bath with no-flux outer walls, 1 mm grounded corner cube, insulated epicardium, 40 x 60 mm slab.",
+  "kind": "numerical",
+  "method": "Reduced model (0.5 / 0.25 mm mesh, 1.0 mm wall, 24 x 28 mm slab, analytic planar wave at 0.9 m/s along +x, electrode gap 1 mm); production P1 operators, conductivities, fibres, electrode definition, band-pass and contribution definitions; one setting changed per case. Mass radius = lateral distance from the recording anchor containing the stated fraction of the |c|-mass. Lateral lattice step 0.5 mm limits the radius resolution.",
+  "values": {
+    "gapMm": 1.0,
+    "rows": [
+      {
+        "case": "reference",
+        "recording": "unipole E5",
+        "peakToPeakMv": 5.191922465033484,
+        "peakToPeakVersusReferencePercent": 0.0,
+        "traceRelativeL2VersusReference": 0.0,
+        "traceRelativeL2AfterMeanRemoval": 0.0,
+        "shareAbsSum": 1.0340155392540678,
+        "massRadius50Mm": 9.770011514834566,
+        "massRadius80Mm": 14.562902354956583,
+        "massRadius90Mm": 16.341090844861,
+        "massRadius50MmMinusReference": 0.0,
+        "massRadius80MmMinusReference": 0.0,
+        "massRadius90MmMinusReference": 0.0
+      },
+      {
+        "case": "reference",
+        "recording": "bipole E5-E6 (along the wave)",
+        "peakToPeakMv": 5.974805057414051,
+        "peakToPeakVersusReferencePercent": 0.0,
+        "traceRelativeL2VersusReference": 0.0,
+        "traceRelativeL2AfterMeanRemoval": 0.0,
+        "shareAbsSum": 1.145468428575163,
+        "massRadius50Mm": 4.72526454285895,
+        "massRadius80Mm": 9.196636613458205,
+        "massRadius90Mm": 11.573812034070711,
+        "massRadius50MmMinusReference": 0.0,
+        "massRadius80MmMinusReference": 0.0,
+        "massRadius90MmMinusReference": 0.0
+      },
+      {
+        "case": "reference",
+        "recording": "bipole E5-E9 (across the wave)",
+        "peakToPeakMv": 0.00018863288469665707,
+        "peakToPeakVersusReferencePercent": 0.0,
+        "traceRelativeL2VersusReference": 0.0,
+        "traceRelativeL2AfterMeanRemoval": 0.0,
+        "shareAbsSum": 13064.326337090719,
+        "massRadius50Mm": 5.5971532943095275,
+        "massRadius80Mm": 9.805929328727593,
+        "massRadius90Mm": 12.168735554690963,
+        "massRadius50MmMinusReference": 0.0,
+        "massRadius80MmMinusReference": 0.0,
+        "massRadius90MmMinusReference": 0.0
+      },
+      {
+        "case": "bath2p5mm",
+        "recording": "unipole E5",
+        "peakToPeakMv": 9.068642643230147,
+        "peakToPeakVersusReferencePercent": 74.66829877190129,
+        "traceRelativeL2VersusReference": 0.99105954840254,
+        "traceRelativeL2AfterMeanRemoval": 0.9782375823493582,
+        "shareAbsSum": 1.020380525522134,
+        "massRadius50Mm": 10.768153277140886,
+        "massRadius80Mm": 15.310331479102599,
+        "massRadius90Mm": 17.052309227784956,
+        "massRadius50MmMinusReference": 0.9981417623063198,
+        "massRadius80MmMinusReference": 0.7474291241460165,
+        "massRadius90MmMinusReference": 0.7112183829239562
+      },
+      {
+        "case": "bath2p5mm",
+        "recording": "bipole E5-E6 (along the wave)",
+        "peakToPeakMv": 8.301084624072267,
+        "peakToPeakVersusReferencePercent": 38.93481953476572,
+        "traceRelativeL2VersusReference": 0.49476673364709683,
+        "traceRelativeL2AfterMeanRemoval": 0.494766728122722,
+        "shareAbsSum": 1.1864259485362496,
+        "massRadius50Mm": 5.310661446562,
+        "massRadius80Mm": 10.010151097760712,
+        "massRadius90Mm": 12.158458989526592,
+        "massRadius50MmMinusReference": 0.5853969037030504,
+        "massRadius80MmMinusReference": 0.8135144843025071,
+        "massRadius90MmMinusReference": 0.5846469554558809
+      },
+      {
+        "case": "bath2p5mm",
+        "recording": "bipole E5-E9 (across the wave)",
+        "peakToPeakMv": 0.00030614512765271605,
+        "peakToPeakVersusReferencePercent": 62.29679578140996,
+        "traceRelativeL2VersusReference": 0.5464377158106815,
+        "traceRelativeL2AfterMeanRemoval": 0.5464377196384105,
+        "shareAbsSum": 11689.714497573023,
+        "massRadius50Mm": 6.281172263200556,
+        "massRadius80Mm": 10.359928812496735,
+        "massRadius90Mm": 12.58781653028038,
+        "massRadius50MmMinusReference": 0.6840189688910288,
+        "massRadius80MmMinusReference": 0.5539994837691413,
+        "massRadius90MmMinusReference": 0.4190809755894165
+      },
+      {
+        "case": "bath10mm",
+        "recording": "unipole E5",
+        "peakToPeakMv": 4.32781178758348,
+        "peakToPeakVersusReferencePercent": -16.643366369001257,
+        "traceRelativeL2VersusReference": 0.4514661952505318,
+        "traceRelativeL2AfterMeanRemoval": 0.44137649349648406,
+        "shareAbsSum": 1.045571742909261,
+        "massRadius50Mm": 7.579783967897766,
+        "massRadius80Mm": 12.950024131251649,
+        "massRadius90Mm": 15.143583624756724,
+        "massRadius50MmMinusReference": -2.1902275469368,
+        "massRadius80MmMinusReference": -1.612878223704934,
+        "massRadius90MmMinusReference": -1.197507220104276
+      },
+      {
+        "case": "bath10mm",
+        "recording": "bipole E5-E6 (along the wave)",
+        "peakToPeakMv": 5.6654665882841755,
+        "peakToPeakVersusReferencePercent": -5.177381791662339,
+        "traceRelativeL2VersusReference": 0.11664610369538374,
+        "traceRelativeL2AfterMeanRemoval": 0.11664609420624099,
+        "shareAbsSum": 1.0696478513874346,
+        "massRadius50Mm": 4.310234912391667,
+        "massRadius80Mm": 8.067101400131277,
+        "massRadius90Mm": 10.357666242933298,
+        "massRadius50MmMinusReference": -0.41502963046728336,
+        "massRadius80MmMinusReference": -1.1295352133269283,
+        "massRadius90MmMinusReference": -1.2161457911374125
+      },
+      {
+        "case": "bath10mm",
+        "recording": "bipole E5-E9 (across the wave)",
+        "peakToPeakMv": 0.00014696160743757233,
+        "peakToPeakVersusReferencePercent": -22.09120500176671,
+        "traceRelativeL2VersusReference": 0.2734184920346992,
+        "traceRelativeL2AfterMeanRemoval": 0.2734184868515247,
+        "shareAbsSum": 16200.00499009018,
+        "massRadius50Mm": 5.179587338775165,
+        "massRadius80Mm": 8.94863816454772,
+        "massRadius90Mm": 11.337162343373231,
+        "massRadius50MmMinusReference": -0.4175659555343625,
+        "massRadius80MmMinusReference": -0.8572911641798733,
+        "massRadius90MmMinusReference": -0.8315732113177319
+      },
+      {
+        "case": "bath20mm",
+        "recording": "unipole E5",
+        "peakToPeakMv": 4.184839606857173,
+        "peakToPeakVersusReferencePercent": -19.397108969920186,
+        "traceRelativeL2VersusReference": 0.6235115418789616,
+        "traceRelativeL2AfterMeanRemoval": 0.6072550430449636,
+        "shareAbsSum": 1.0137988273799012,
+        "massRadius50Mm": 6.2474994997999,
+        "massRadius80Mm": 10.791344911548329,
+        "massRadius90Mm": 13.297673668728677,
+        "massRadius50MmMinusReference": -3.5225120150346667,
+        "massRadius80MmMinusReference": -3.7715574434082537,
+        "massRadius90MmMinusReference": -3.0434171761323228
+      },
+      {
+        "case": "bath20mm",
+        "recording": "bipole E5-E6 (along the wave)",
+        "peakToPeakMv": 5.650526987095137,
+        "peakToPeakVersusReferencePercent": -5.42742511601314,
+        "traceRelativeL2VersusReference": 0.13574166910074742,
+        "traceRelativeL2AfterMeanRemoval": 0.13574165242725222,
+        "shareAbsSum": 1.038605782207841,
+        "massRadius50Mm": 4.295710069359895,
+        "massRadius80Mm": 7.878967254659712,
+        "massRadius90Mm": 10.028864591767105,
+        "massRadius50MmMinusReference": -0.4295544734990546,
+        "massRadius80MmMinusReference": -1.3176693587984927,
+        "massRadius90MmMinusReference": -1.5449474423036058
+      },
+      {
+        "case": "bath20mm",
+        "recording": "bipole E5-E9 (across the wave)",
+        "peakToPeakMv": 0.00014467620270592073,
+        "peakToPeakVersusReferencePercent": -23.302767203832797,
+        "traceRelativeL2VersusReference": 0.3136408057099849,
+        "traceRelativeL2AfterMeanRemoval": 0.3136407972321562,
+        "shareAbsSum": 16645.47300173527,
+        "massRadius50Mm": 5.138701197773616,
+        "massRadius80Mm": 8.79097548625862,
+        "massRadius90Mm": 11.127808634228035,
+        "massRadius50MmMinusReference": -0.4584520965359111,
+        "massRadius80MmMinusReference": -1.014953842468973,
+        "massRadius90MmMinusReference": -1.040926920462928
+      },
+      {
+        "case": "groundOppositeCorner",
+        "recording": "unipole E5",
+        "peakToPeakMv": 5.2167148605591525,
+        "peakToPeakVersusReferencePercent": 0.4775186011085619,
+        "traceRelativeL2VersusReference": 1.1163226070972232,
+        "traceRelativeL2AfterMeanRemoval": 1.0734154164251917,
+        "shareAbsSum": 1.0399296416506203,
+        "massRadius50Mm": 7.831227553838542,
+        "massRadius80Mm": 11.377746921073609,
+        "massRadius90Mm": 12.80746852426349,
+        "massRadius50MmMinusReference": -1.938783960996024,
+        "massRadius80MmMinusReference": -3.185155433882974,
+        "massRadius90MmMinusReference": -3.5336223205975106
+      },
+      {
+        "case": "groundOppositeCorner",
+        "recording": "bipole E5-E6 (along the wave)",
+        "peakToPeakMv": 5.974805630319319,
+        "peakToPeakVersusReferencePercent": 9.588685534467345e-06,
+        "traceRelativeL2VersusReference": 8.65824482464411e-07,
+        "traceRelativeL2AfterMeanRemoval": 8.658244839284624e-07,
+        "shareAbsSum": 1.1454684749986934,
+        "massRadius50Mm": 4.72526454285895,
+        "massRadius80Mm": 9.196636613458205,
+        "massRadius90Mm": 11.573812034070711,
+        "massRadius50MmMinusReference": 0.0,
+        "massRadius80MmMinusReference": 0.0,
+        "massRadius90MmMinusReference": 0.0
+      },
+      {
+        "case": "groundOppositeCorner",
+        "recording": "bipole E5-E9 (across the wave)",
+        "peakToPeakMv": 0.00018939233109455363,
+        "peakToPeakVersusReferencePercent": 0.40260551553237267,
+        "traceRelativeL2VersusReference": 0.014530334123014329,
+        "traceRelativeL2AfterMeanRemoval": 0.014530334252371758,
+        "shareAbsSum": 13149.69021159986,
+        "massRadius50Mm": 5.5971532943095275,
+        "massRadius80Mm": 9.805929328727593,
+        "massRadius90Mm": 12.168735554690963,
+        "massRadius50MmMinusReference": 0.0,
+        "massRadius80MmMinusReference": 0.0,
+        "massRadius90MmMinusReference": 0.0
+      },
+      {
+        "case": "bloodBelowEpicardium",
+        "recording": "unipole E5",
+        "peakToPeakMv": 3.2936577213979126,
+        "peakToPeakVersusReferencePercent": -36.56188543684904,
+        "traceRelativeL2VersusReference": 0.44119472654249736,
+        "traceRelativeL2AfterMeanRemoval": 0.4388175129439595,
+        "shareAbsSum": 1.0430833435943354,
+        "massRadius50Mm": 9.155770038614994,
+        "massRadius80Mm": 14.298710606205022,
+        "massRadius90Mm": 16.177240957592243,
+        "massRadius50MmMinusReference": -0.614241476219572,
+        "massRadius80MmMinusReference": -0.2641917487515606,
+        "massRadius90MmMinusReference": -0.16384988726875704
+      },
+      {
+        "case": "bloodBelowEpicardium",
+        "recording": "bipole E5-E6 (along the wave)",
+        "peakToPeakMv": 4.179782098799587,
+        "peakToPeakVersusReferencePercent": -30.04320544964134,
+        "traceRelativeL2VersusReference": 0.3340836304217972,
+        "traceRelativeL2AfterMeanRemoval": 0.33408362952162135,
+        "shareAbsSum": 1.1225248810305666,
+        "massRadius50Mm": 4.275657844121768,
+        "massRadius80Mm": 8.465001476668506,
+        "massRadius90Mm": 11.014904675030103,
+        "massRadius50MmMinusReference": -0.44960669873718206,
+        "massRadius80MmMinusReference": -0.7316351367896985,
+        "massRadius90MmMinusReference": -0.5589073590406084
+      },
+      {
+        "case": "bloodBelowEpicardium",
+        "recording": "bipole E5-E9 (across the wave)",
+        "peakToPeakMv": 0.00010521373374181359,
+        "peakToPeakVersusReferencePercent": -44.22301609233771,
+        "traceRelativeL2VersusReference": 0.4903745105318008,
+        "traceRelativeL2AfterMeanRemoval": 0.4903745092823989,
+        "shareAbsSum": 17218.869901815775,
+        "massRadius50Mm": 4.957633003762985,
+        "massRadius80Mm": 8.983491804415475,
+        "massRadius90Mm": 11.495923190418418,
+        "massRadius50MmMinusReference": -0.6395202905465425,
+        "massRadius80MmMinusReference": -0.822437524312118,
+        "massRadius90MmMinusReference": -0.672812364272545
+      },
+      {
+        "case": "slabPlus4mmEachSide",
+        "recording": "unipole E5",
+        "peakToPeakMv": 5.365691008915101,
+        "peakToPeakVersusReferencePercent": 3.346901750785225,
+        "traceRelativeL2VersusReference": 0.44011868586496683,
+        "traceRelativeL2AfterMeanRemoval": 0.4437626255150095,
+        "shareAbsSum": 1.0375691679736432,
+        "massRadius50Mm": 12.691655723348314,
+        "massRadius80Mm": 18.650150803679846,
+        "massRadius90Mm": 20.8783679917756,
+        "massRadius50MmMinusReference": 2.9216442085137473,
+        "massRadius80MmMinusReference": 4.087248448723264,
+        "massRadius90MmMinusReference": 4.537277146914601
+      },
+      {
+        "case": "slabPlus4mmEachSide",
+        "recording": "bipole E5-E6 (along the wave)",
+        "peakToPeakMv": 6.006857679012267,
+        "peakToPeakVersusReferencePercent": 0.5364630526052405,
+        "traceRelativeL2VersusReference": 0.02933171621189855,
+        "traceRelativeL2AfterMeanRemoval": 0.029331714919967285,
+        "shareAbsSum": 1.1765870711677533,
+        "massRadius50Mm": 5.369182898728632,
+        "massRadius80Mm": 11.427078585535325,
+        "massRadius90Mm": 14.839242736743678,
+        "massRadius50MmMinusReference": 0.6439183558696824,
+        "massRadius80MmMinusReference": 2.23044197207712,
+        "massRadius90MmMinusReference": 3.265430702672967
+      },
+      {
+        "case": "slabPlus4mmEachSide",
+        "recording": "bipole E5-E9 (across the wave)",
+        "peakToPeakMv": 7.598209404671024e-05,
+        "peakToPeakVersusReferencePercent": -59.719592811774035,
+        "traceRelativeL2VersusReference": 0.6582456535942429,
+        "traceRelativeL2AfterMeanRemoval": 0.6582456409424439,
+        "shareAbsSum": 30861.841881915807,
+        "massRadius50Mm": 6.29111476608081,
+        "massRadius80Mm": 12.032508051108879,
+        "massRadius90Mm": 15.287351798136916,
+        "massRadius50MmMinusReference": 0.6939614717712823,
+        "massRadius80MmMinusReference": 2.2265787223812854,
+        "massRadius90MmMinusReference": 3.1186162434459526
+      }
+    ],
+    "sizes": {
+      "reference": {
+        "nodes": 132825,
+        "tissueNodes": 13965,
+        "groundNodes": 45,
+        "electrodeNodes": [
+          21,
+          21,
+          21
+        ],
+        "solves": [
+          {
+            "iterations": 856,
+            "relativeResidual": 9.811890823027829e-11
+          },
+          {
+            "iterations": 856,
+            "relativeResidual": 1.0004860332570974e-10
+          },
+          {
+            "iterations": 857,
+            "relativeResidual": 9.448138861387902e-11
+          }
+        ]
+      },
+      "bath2p5mm": {
+        "nodes": 59295,
+        "tissueNodes": 13965,
+        "groundNodes": 45,
+        "electrodeNodes": [
+          21,
+          21,
+          21
+        ],
+        "solves": [
+          {
+            "iterations": 730,
+            "relativeResidual": 9.128749171853476e-11
+          },
+          {
+            "iterations": 731,
+            "relativeResidual": 9.260126499921806e-11
+          },
+          {
+            "iterations": 727,
+            "relativeResidual": 9.677292436080658e-11
+          }
+        ]
+      },
+      "bath10mm": {
+        "nodes": 388485,
+        "tissueNodes": 13965,
+        "groundNodes": 45,
+        "electrodeNodes": [
+          21,
+          21,
+          21
+        ],
+        "solves": [
+          {
+            "iterations": 1108,
+            "relativeResidual": 9.674883235654734e-11
+          },
+          {
+            "iterations": 1110,
+            "relativeResidual": 9.620348796931034e-11
+          },
+          {
+            "iterations": 1109,
+            "relativeResidual": 9.696165257262915e-11
+          }
+        ]
+      },
+      "bath20mm": {
+        "nodes": 1502205,
+        "tissueNodes": 13965,
+        "groundNodes": 45,
+        "electrodeNodes": [
+          21,
+          21,
+          21
+        ],
+        "solves": [
+          {
+            "iterations": 1619,
+            "relativeResidual": 9.859071144027011e-11
+          },
+          {
+            "iterations": 1618,
+            "relativeResidual": 1.0178744887622049e-10
+          },
+          {
+            "iterations": 1620,
+            "relativeResidual": 1.0219121200335873e-10
+          }
+        ]
+      },
+      "groundOppositeCorner": {
+        "nodes": 132825,
+        "tissueNodes": 13965,
+        "groundNodes": 45,
+        "electrodeNodes": [
+          21,
+          21,
+          21
+        ],
+        "solves": [
+          {
+            "iterations": 855,
+            "relativeResidual": 9.96347788239575e-11
+          },
+          {
+            "iterations": 857,
+            "relativeResidual": 9.490718491559906e-11
+          },
+          {
+            "iterations": 857,
+            "relativeResidual": 9.576056090346312e-11
+          }
+        ]
+      },
+      "bloodBelowEpicardium": {
+        "nodes": 239085,
+        "tissueNodes": 13965,
+        "groundNodes": 45,
+        "electrodeNodes": [
+          21,
+          21,
+          21
+        ],
+        "solves": [
+          {
+            "iterations": 900,
+            "relativeResidual": 9.574779962264535e-11
+          },
+          {
+            "iterations": 906,
+            "relativeResidual": 9.72633078889981e-11
+          },
+          {
+            "iterations": 903,
+            "relativeResidual": 9.684528610004985e-11
+          }
+        ]
+      },
+      "slabPlus4mmEachSide": {
+        "nodes": 197625,
+        "tissueNodes": 23725,
+        "groundNodes": 45,
+        "electrodeNodes": [
+          21,
+          21,
+          21
+        ],
+        "solves": [
+          {
+            "iterations": 1050,
+            "relativeResidual": 9.852726389551268e-11
+          },
+          {
+            "iterations": 1050,
+            "relativeResidual": 9.599524102309278e-11
+          },
+          {
+            "iterations": 1049,
+            "relativeResidual": 9.600568556246013e-11
+          }
+        ]
+      }
+    },
+    "waveSpeedMPerS": 0.9
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "6b4686c4e4e7b52b36020741afc135a131bec423+uncommitted",
+    "versions": {
+      "python": "3.11.8",
+      "platform": "macOS-15.0-arm64-arm-64bit",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1",
+      "pandas": "2.2.2",
+      "openCARPPath": "not found",
+      "benchPath": "not found",
+      "carputils": "not installed"
+    },
+    "writtenAt": "2026-11-12T12:55:01+08:00",
+    "command": "verification/forward_sensitivity.py --out runs/verification/forward"
+  }
+}

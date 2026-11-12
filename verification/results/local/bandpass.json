@@ -1,0 +1,50 @@
+{
+  "supports": "30-500 Hz causal Butterworth band-pass (order parameter 2); 200 ms of filter history before each window.",
+  "kind": "numerical",
+  "method": "Frequency, impulse and step responses of the second-order sections that efov.measurements.differentialFilter returns.",
+  "values": {
+    "orderParameter": 2,
+    "polesInCascade": 4,
+    "bandHz": [
+      30.0,
+      500.0
+    ],
+    "minus3dBHz": [
+      30.029296875,
+      499.969482421875
+    ],
+    "passBandGainMin": 0.7071067811865471,
+    "passBandGainMax": 0.9999999999999998,
+    "gainAt100Hz": 0.9997712567538538,
+    "gainAt250Hz": 0.9950992006649297,
+    "groupDelayMs": {
+      "50Hz": 3.8341547609650033,
+      "100Hz": 1.1183250034736194,
+      "200Hz": 0.6138190818716138,
+      "300Hz": 0.6347659994415444,
+      "400Hz": 0.7426733710465427
+    },
+    "noisePowerGain": 0.47238554970427,
+    "noiseAmplitudeGain": 0.6873030988612447,
+    "bipolarNoiseSdPerElectrodeSd": 0.9719933638706285,
+    "impulseEnergyOutsideHistory": 0.0,
+    "stepResponseBelow0p1PercentAfterMs": 47.0,
+    "filterHistoryMs": 200.0
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "cbda2031773793bee467e7be71bd39f1d22c1db1+uncommitted",
+    "versions": {
+      "python": "3.11.8",
+      "platform": "macOS-15.0-arm64-arm-64bit",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1",
+      "pandas": "2.2.2",
+      "openCARPPath": "not found",
+      "benchPath": "not found",
+      "carputils": "not installed"
+    },
+    "writtenAt": "2026-11-12T16:58:56+08:00",
+    "command": "verification/local_checks.py --out runs/verification/local"
+  }
+}
