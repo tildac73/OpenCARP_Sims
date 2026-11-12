@@ -1,0 +1,62 @@
+{
+  "supports": "Measurement window rule (15 ms lead, 30 ms trail, 5 ms after the stimulus); 4 beats of 500 ms hold the window and its context.",
+  "kind": "derivation",
+  "method": "Plane wave along +x from the stimulus band at the slab edge at a constant speed; window rule of fixed.analysis.window. Predictions only: the production run derives each window from the simulated activation times.",
+  "values": {
+    "rows": [
+      {
+        "case": "strip target (uniform fibres)",
+        "speedMPerS": 0.9,
+        "firstActivationUnderGridMs": 15.0,
+        "lastActivationUnderGridMs": 29.444444444444443,
+        "waveReachesFarEdgeMs": 44.44444444444444,
+        "windowStartMs": 7.0,
+        "windowEndMs": 59.44444444444444,
+        "windowLengthMs": 52.44444444444444,
+        "windowStartsAtStimulusFloor": true,
+        "stimulusEndToWindowStartMs": 5.0,
+        "farEdgeTerminationInsideWindow": true,
+        "activationSpanUnderGridMs": 14.444444444444443
+      },
+      {
+        "case": "bilayer slab, measured on the small slab",
+        "speedMPerS": 0.735,
+        "firstActivationUnderGridMs": 18.367346938775512,
+        "lastActivationUnderGridMs": 36.054421768707485,
+        "waveReachesFarEdgeMs": 54.421768707483,
+        "windowStartMs": 7.0,
+        "windowEndMs": 66.05442176870748,
+        "windowLengthMs": 59.054421768707485,
+        "windowStartsAtStimulusFloor": true,
+        "stimulusEndToWindowStartMs": 5.0,
+        "farEdgeTerminationInsideWindow": true,
+        "activationSpanUnderGridMs": 17.687074829931973
+      }
+    ],
+    "footprintHalfExtentXmm": 6.5,
+    "acquisitionStepMs": 0.5,
+    "cycleLengthMs": 500.0,
+    "beats": 4,
+    "signalNeededAfterWindowMs": 160.0,
+    "filterHistoryMs": 200.0,
+    "lastBeatSlackAfterLongestWindowMs": 273.94557823129253,
+    "solverStepsPerCondition": 100000,
+    "outputFramesPerCondition": 10001
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "d0181a1cb9cbca87f9a461f788376043cfc6f6f0",
+    "versions": {
+      "python": "3.11.8",
+      "platform": "macOS-15.0-arm64-arm-64bit",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1",
+      "pandas": "2.2.2",
+      "openCARPPath": "not found",
+      "benchPath": "not found",
+      "carputils": "not installed"
+    },
+    "writtenAt": "2026-11-12T12:27:32+08:00",
+    "command": "verification/local_checks.py --out runs/verification/local"
+  }
+}

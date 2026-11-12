@@ -1,0 +1,47 @@
+{
+  "supports": "5 kHz simulation output is resampled to the 2 kHz acquisition rate without distorting the 30-500 Hz band or aliasing.",
+  "kind": "numerical",
+  "method": "Sinusoids through efov.measurements.acquire (scipy.signal.resample_poly, default Kaiser-window FIR); output amplitude measured on the central half of the record. Alias band: input frequencies that fold into 30-500 Hz at 2 kHz.",
+  "values": {
+    "inputRateHz": 5000.0,
+    "outputRateHz": 2000.0,
+    "up": 2,
+    "down": 5,
+    "outputNyquistHz": 1000.0,
+    "inputNyquistHz": 2500.0,
+    "solverStepsPerOutputFrame": 10.0,
+    "passBandHz": [
+      30.0,
+      500.0
+    ],
+    "passBandGainMin": 0.9998967832285728,
+    "passBandGainMax": 1.0014791264063485,
+    "passBandLargestErrorPercent": 0.14791264063485077,
+    "passBandWorstFrequencyHz": 480.0,
+    "aliasBandHz": [
+      1500.0,
+      2500.0
+    ],
+    "aliasLargestGain": 0.0006050655289756119,
+    "aliasSmallestRejectionDb": 64.3639517687225,
+    "aliasWorstFrequencyHz": 1525.0,
+    "firHalfLengthMs": 5.0,
+    "configuredResampleMarginMs": 10.0
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "d0181a1cb9cbca87f9a461f788376043cfc6f6f0",
+    "versions": {
+      "python": "3.11.8",
+      "platform": "macOS-15.0-arm64-arm-64bit",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1",
+      "pandas": "2.2.2",
+      "openCARPPath": "not found",
+      "benchPath": "not found",
+      "carputils": "not installed"
+    },
+    "writtenAt": "2026-11-12T12:27:32+08:00",
+    "command": "verification/local_checks.py --out runs/verification/local"
+  }
+}

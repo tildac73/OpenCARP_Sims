@@ -1,0 +1,187 @@
+{
+  "supports": "Electrodes are finite volumes resolved by the mesh at every gap and radius used.",
+  "kind": "numerical",
+  "method": "efov.geometry.electrodeNodeSets on the production lattice around one electrode (cylinder axis along x). Discrete volume = node count x lattice cell volume, an approximation of the lumped-mass volume openCARP uses.",
+  "values": {
+    "spacingMm": [
+      0.25,
+      0.25,
+      0.1
+    ],
+    "electrodeLengthMm": 1.0,
+    "rows": [
+      {
+        "radiusMm": 0.25,
+        "gapMm": 0.25,
+        "nodes": 35,
+        "lowestNodeAboveTissueMm": 0.30000000000000004,
+        "highestNodeAboveTissueMm": 0.7,
+        "nodeLayers": 5,
+        "discreteVolumeMm3": 0.21875,
+        "cylinderVolumeMm3": 0.19634954084936207,
+        "discreteOverCylinderVolume": 1.1140846016432675,
+        "gapInTransmuralElements": 2.5,
+        "gapInInPlaneElements": 1.0
+      },
+      {
+        "radiusMm": 0.25,
+        "gapMm": 0.5,
+        "nodes": 30,
+        "lowestNodeAboveTissueMm": 0.5,
+        "highestNodeAboveTissueMm": 1.0,
+        "nodeLayers": 6,
+        "discreteVolumeMm3": 0.1875,
+        "cylinderVolumeMm3": 0.19634954084936207,
+        "discreteOverCylinderVolume": 0.954929658551372,
+        "gapInTransmuralElements": 5.0,
+        "gapInInPlaneElements": 2.0
+      },
+      {
+        "radiusMm": 0.25,
+        "gapMm": 1.0,
+        "nodes": 30,
+        "lowestNodeAboveTissueMm": 1.0,
+        "highestNodeAboveTissueMm": 1.4999999999999998,
+        "nodeLayers": 6,
+        "discreteVolumeMm3": 0.1875,
+        "cylinderVolumeMm3": 0.19634954084936207,
+        "discreteOverCylinderVolume": 0.954929658551372,
+        "gapInTransmuralElements": 10.0,
+        "gapInInPlaneElements": 4.0
+      },
+      {
+        "radiusMm": 0.25,
+        "gapMm": 2.0,
+        "nodes": 30,
+        "lowestNodeAboveTissueMm": 1.9999999999999998,
+        "highestNodeAboveTissueMm": 2.5,
+        "nodeLayers": 6,
+        "discreteVolumeMm3": 0.1875,
+        "cylinderVolumeMm3": 0.19634954084936207,
+        "discreteOverCylinderVolume": 0.954929658551372,
+        "gapInTransmuralElements": 20.0,
+        "gapInInPlaneElements": 8.0
+      },
+      {
+        "radiusMm": 0.5,
+        "gapMm": 0.25,
+        "nodes": 130,
+        "lowestNodeAboveTissueMm": 0.30000000000000004,
+        "highestNodeAboveTissueMm": 1.2000000000000002,
+        "nodeLayers": 10,
+        "discreteVolumeMm3": 0.8125,
+        "cylinderVolumeMm3": 0.7853981633974483,
+        "discreteOverCylinderVolume": 1.0345071300973196,
+        "gapInTransmuralElements": 2.5,
+        "gapInInPlaneElements": 1.0
+      },
+      {
+        "radiusMm": 0.5,
+        "gapMm": 0.5,
+        "nodes": 155,
+        "lowestNodeAboveTissueMm": 0.5,
+        "highestNodeAboveTissueMm": 1.4999999999999998,
+        "nodeLayers": 11,
+        "discreteVolumeMm3": 0.96875,
+        "cylinderVolumeMm3": 0.7853981633974483,
+        "discreteOverCylinderVolume": 1.233450808962189,
+        "gapInTransmuralElements": 5.0,
+        "gapInInPlaneElements": 2.0
+      },
+      {
+        "radiusMm": 0.5,
+        "gapMm": 1.0,
+        "nodes": 155,
+        "lowestNodeAboveTissueMm": 1.0,
+        "highestNodeAboveTissueMm": 1.9999999999999998,
+        "nodeLayers": 11,
+        "discreteVolumeMm3": 0.96875,
+        "cylinderVolumeMm3": 0.7853981633974483,
+        "discreteOverCylinderVolume": 1.233450808962189,
+        "gapInTransmuralElements": 10.0,
+        "gapInInPlaneElements": 4.0
+      },
+      {
+        "radiusMm": 0.5,
+        "gapMm": 2.0,
+        "nodes": 155,
+        "lowestNodeAboveTissueMm": 1.9999999999999998,
+        "highestNodeAboveTissueMm": 3.0,
+        "nodeLayers": 11,
+        "discreteVolumeMm3": 0.96875,
+        "cylinderVolumeMm3": 0.7853981633974483,
+        "discreteOverCylinderVolume": 1.233450808962189,
+        "gapInTransmuralElements": 20.0,
+        "gapInInPlaneElements": 8.0
+      },
+      {
+        "radiusMm": 1.0,
+        "gapMm": 0.25,
+        "nodes": 620,
+        "lowestNodeAboveTissueMm": 0.30000000000000004,
+        "highestNodeAboveTissueMm": 2.2,
+        "nodeLayers": 20,
+        "discreteVolumeMm3": 3.875,
+        "cylinderVolumeMm3": 3.141592653589793,
+        "discreteOverCylinderVolume": 1.233450808962189,
+        "gapInTransmuralElements": 2.5,
+        "gapInInPlaneElements": 1.0
+      },
+      {
+        "radiusMm": 1.0,
+        "gapMm": 0.5,
+        "nodes": 605,
+        "lowestNodeAboveTissueMm": 0.5,
+        "highestNodeAboveTissueMm": 2.5,
+        "nodeLayers": 21,
+        "discreteVolumeMm3": 3.78125,
+        "cylinderVolumeMm3": 3.141592653589793,
+        "discreteOverCylinderVolume": 1.2036092571324586,
+        "gapInTransmuralElements": 5.0,
+        "gapInInPlaneElements": 2.0
+      },
+      {
+        "radiusMm": 1.0,
+        "gapMm": 1.0,
+        "nodes": 605,
+        "lowestNodeAboveTissueMm": 1.0,
+        "highestNodeAboveTissueMm": 3.0,
+        "nodeLayers": 21,
+        "discreteVolumeMm3": 3.78125,
+        "cylinderVolumeMm3": 3.141592653589793,
+        "discreteOverCylinderVolume": 1.2036092571324586,
+        "gapInTransmuralElements": 10.0,
+        "gapInInPlaneElements": 4.0
+      },
+      {
+        "radiusMm": 1.0,
+        "gapMm": 2.0,
+        "nodes": 605,
+        "lowestNodeAboveTissueMm": 1.9999999999999998,
+        "highestNodeAboveTissueMm": 4.0,
+        "nodeLayers": 21,
+        "discreteVolumeMm3": 3.78125,
+        "cylinderVolumeMm3": 3.141592653589793,
+        "discreteOverCylinderVolume": 1.2036092571324586,
+        "gapInTransmuralElements": 20.0,
+        "gapInInPlaneElements": 8.0
+      }
+    ]
+  },
+  "status": "completed",
+  "provenance": {
+    "gitRevision": "d0181a1cb9cbca87f9a461f788376043cfc6f6f0",
+    "versions": {
+      "python": "3.11.8",
+      "platform": "macOS-15.0-arm64-arm-64bit",
+      "numpy": "1.26.4",
+      "scipy": "1.14.1",
+      "pandas": "2.2.2",
+      "openCARPPath": "not found",
+      "benchPath": "not found",
+      "carputils": "not installed"
+    },
+    "writtenAt": "2026-11-12T12:27:32+08:00",
+    "command": "verification/local_checks.py --out runs/verification/local"
+  }
+}
