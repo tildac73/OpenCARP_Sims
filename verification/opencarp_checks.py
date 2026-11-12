@@ -180,6 +180,9 @@ def convergenceSeries(root, processCount, label, levels, changesFor, parOverride
         # Spacings are passed because the transmural levels do not have a constant refinement ratio.
         order, extrapolated = richardsonSpacings([r["cvMPerS"] for r in rows[-3:]], [r["level"] for r in rows[-3:]])
         result.update(observedOrderFinestThree=order, richardsonExtrapolatedCvMPerS=extrapolated)
+        if np.isfinite(order) and not 0.5 <= order <= 3.0:
+            result["extrapolationNote"] = ("Observed order outside 0.5-3: the three levels are not in the asymptotic range of a "
+                                           "first- or second-order scheme, so the extrapolated value is not a converged estimate.")
         if np.isfinite(extrapolated):
             for row in rows:
                 row["cvVersusExtrapolatedPercent"] = float(100 * relativeDifference(row["cvMPerS"], extrapolated))
