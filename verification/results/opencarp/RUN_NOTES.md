@@ -35,10 +35,11 @@ Unit tests before the runs (`python3 -m pytest tests -q`, at revision 6b4686c): 
 - `slabVelocity`, `parallelEquivalence` and `conditioning` were simulated after the merge, on the 1.9 mm
   baseline. `parallelEquivalence` therefore uses the 1.9 mm bilayer slab (84,500 tissue nodes).
 - `efov/` and `config/model.par` are identical before and after the merge.
-- The JSON files record revision `6ef5795` (local commit: merge of e0abb58 plus the harness fixes below).
-  `git push` was refused in this container (HTTP 403: the Claude GitHub App has no write access), so the
-  files were uploaded through the GitHub connector and the local commit hashes do not exist on GitHub.
-  The uploaded `verification/common.py` and `verification/opencarp_checks.py` are the exact files that ran.
+- The JSON files record revision `6ef5795` (local commit in the cloud container: merge of e0abb58 plus the
+  harness fixes below). Neither `git push` nor the GitHub connector had write access to the repository from
+  the container (HTTP 403), so these files were handed over as a patch / git bundle on top of e0abb58 and
+  the revision `6ef5795` exists on GitHub only if the bundle (not the patch) was used. The
+  `verification/common.py` and `verification/opencarp_checks.py` delivered with them are the exact files that ran.
 
 ## Code fixes (all in `verification/`), and why
 
