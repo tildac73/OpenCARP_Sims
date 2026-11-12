@@ -6,8 +6,8 @@
 
   "sweep": {
     "region": {
-      "baseline": "inferior", "planned": ["roof"], "actsOn": "label exported to Wang's inf0_roof1 column",
-      "_about": "Regions are parameter sets (FM-08): the 'roof' variant in config/sweeps sets wallMm 1.6 and uniform fibres."
+      "baseline": "inferior", "planned": [], "actsOn": "label exported to Wang's inf0_roof1 column",
+      "_about": "FM-49: one generic slab; no regional scenario is run. Wang's script needs a region code for every row, so every dataset is exported under code 0 ('inferior'). The label is a dataset name only and makes no anatomical claim."
     },
     "wallMm": {
       "baseline": 1.9, "planned": [1.0, 1.5, 2.0, 2.5, 3.0], "actsOn": "geometry",
