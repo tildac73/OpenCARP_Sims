@@ -148,3 +148,27 @@ def richardson(coarse, medium, fine, ratio=2.0):
         return float("nan"), float("nan")
     order = math.log(abs(first / second)) / math.log(ratio)
     return float(order), float(fine + second / (ratio ** order - 1))
+
+
+def richardsonSpacings(values, spacings):
+    """Observed order p and extrapolated value from three levels with given spacings (coarse to fine).
+
+    Solves f_i = f* + C h_i^p for (f*, C, p). With a constant refinement ratio this equals richardson();
+    it is needed where the ratio is not constant (transmural levels 0.25, 0.1, 0.05 mm: ratios 2.5 and 2).
+    Returns (nan, nan) when the three values are not monotonic or no order in (0.01, 20) fits.
+    """
+    from scipy.optimize import brentq
+    (f1, f2, f3), (h1, h2, h3) = (float(v) for v in values), (float(h) for h in spacings)
+    first, second = f2 - f1, f3 - f2
+    if first == 0 or second == 0 or first * second < 0:
+        return float("nan"), float("nan")
+    target = first / second
+
+    def mismatch(p):
+        return (h1 ** p - h2 ** p) / (h2 ** p - h3 ** p) - target
+    try:
+        order = brentq(mismatch, 0.01, 20.0)
+    except ValueError:
+        return float("nan"), float("nan")
+    return float(order), float(f3 + second * h3 ** order / (h2 ** order - h3 ** order))
+

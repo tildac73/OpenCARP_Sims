@@ -31,13 +31,12 @@ Strip and small-slab results do not establish full-size cost.
 """
 import argparse
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import REPOSITORY, cfg, openCarpBuildInfo, relativeDifference, richardson, runChecks, variantConfig  # noqa: E402
+from common import REPOSITORY, cfg, openCarpBuildInfo, relativeDifference, richardsonSpacings, runChecks, variantConfig  # noqa: E402
 
 from efov import physiology, simulation  # noqa: E402
 from efov.io import igbHeader, igbTimes, readActivations, readIgb  # noqa: E402
@@ -53,12 +52,30 @@ def stripVariant(root, name, fixedChanges=None, sweepOverrides=None, parOverride
     return variantConfig(Path(root) / name / "config", fixedChanges, sweepOverrides, parOverrides)
 
 
+def physicsSeconds(log):
+    """Seconds openCARP reports under 'Timings of individual physics' (Init + Compute + Output of every physics).
+
+    This is the solve itself. The wall time of a run (efov.simulation.runCondition) also holds the mesher,
+    the mesh rewrite with fibres, the carputils start-up and openCARP's set-up, so the two are reported separately.
+    """
+    import re
+    text = Path(log).read_text(errors="replace")
+    block = text[text.rfind("Timings of individual physics"):] if "Timings of individual physics" in text else ""
+    values = [float(v) for v in re.findall(r"^\s*(?:Init|Compute|Output):\s*([0-9.eE+-]+) sec", block, flags=re.M)]
+    return float(sum(values)) if values else float("nan")
+
+
 def runStrip(config, folder, processCount, state=None):
-    """Condition a cell (unless a state is given), run the tuning strip, return (job folder, wall seconds)."""
+    """Condition a cell (unless a state is given), run the tuning strip; return (job folder, timing).
+
+    timing: wallSeconds = the whole runCondition call when the run was made (meshing, carputils and openCARP
+    set-up included; conditioning excluded), physicsSeconds = openCARP's own physics timing from the run log.
+    """
     folder = Path(folder)
     state = state or simulation.conditionCell(config, folder / "conditioning")
     timing = simulation.runCondition(config, "strip", state, folder / "simulations", processCount, kind="strip")
-    return folder / "simulations" / "strip", timing.get("wallSeconds")
+    seconds = dict(wallSeconds=timing.get("wallSeconds"), physicsSeconds=physicsSeconds(folder / "simulations" / "strip.log"))
+    return folder / "simulations" / "strip", seconds
 
 
 def stripBeatTable(config, job):
@@ -103,9 +120,10 @@ def slabVariant(root, name, sweepOverrides=None, parOverrides=None):
 
 def runSlab(config, folder, processCount, state):
     folder = Path(folder)
-    started = time.time()
-    simulation.runCondition(config, "intact", state, folder / "simulations", processCount, durationMs=SMALL_SLAB_DURATION_MS)
-    return folder / "simulations" / "intact", time.time() - started
+    timing = simulation.runCondition(config, "intact", state, folder / "simulations", processCount, durationMs=SMALL_SLAB_DURATION_MS)
+    # The recorded timing of the run itself, so a reused run does not report the (near-zero) time of the reuse.
+    seconds = dict(wallSeconds=timing.get("wallSeconds"), physicsSeconds=physicsSeconds(folder / "simulations" / "intact.log"))
+    return folder / "simulations" / "intact", seconds
 
 
 def firstActivationMs(job, nodeCount):
@@ -152,14 +170,15 @@ def convergenceSeries(root, processCount, label, levels, changesFor, parOverride
         config = stripVariant(root, name, changesFor(level), sweepFor(level) if sweepFor else None, parOverrides)
         job, seconds = runStrip(config, Path(root) / name, processCount)
         nodes = igbHeader(job / "vm.igb")[1]
-        rows.append(dict(level=float(level), cvMPerS=stripCv(config, job), stripNodes=int(nodes), wallSeconds=seconds,
+        rows.append(dict(level=float(level), cvMPerS=stripCv(config, job), stripNodes=int(nodes), **seconds,
                          lastBeat=stripBeatTable(config, job)[-1]))
     finest = rows[-1]["cvMPerS"]
     for row in rows:
         row["cvVersusFinestPercent"] = float(100 * relativeDifference(row["cvMPerS"], finest))
     result = dict(rows=rows)
     if len(rows) >= 3:
-        order, extrapolated = richardson(*(r["cvMPerS"] for r in rows[-3:]))
+        # Spacings are passed because the transmural levels do not have a constant refinement ratio.
+        order, extrapolated = richardsonSpacings([r["cvMPerS"] for r in rows[-3:]], [r["level"] for r in rows[-3:]])
         result.update(observedOrderFinestThree=order, richardsonExtrapolatedCvMPerS=extrapolated)
         if np.isfinite(extrapolated):
             for row in rows:
@@ -199,7 +218,7 @@ def checkTemporalConvergence(root, processCount, timeStepsUs=(40.0, 20.0, 10.0, 
         name = f"dtUs{dt:g}".replace(".", "p")
         config = stripVariant(root, name, None, None, {"dt": float(dt)})
         job, seconds = runStrip(config, Path(root) / name, processCount)
-        rows.append(dict(timeStepUs=float(dt), cvMPerS=stripCv(config, job), wallSeconds=seconds, lastBeat=stripBeatTable(config, job)[-1]))
+        rows.append(dict(timeStepUs=float(dt), cvMPerS=stripCv(config, job), **seconds, lastBeat=stripBeatTable(config, job)[-1]))
     finest = rows[-1]
     for row in rows:
         row["cvVersusFinestPercent"] = float(100 * relativeDifference(row["cvMPerS"], finest["cvMPerS"]))
@@ -208,7 +227,8 @@ def checkTemporalConvergence(root, processCount, timeStepsUs=(40.0, 20.0, 10.0, 
         supports="Solver time step 20 us (ionic and parabolic), Crank-Nicolson, Vm output every 0.2 ms.",
         kind="simulation",
         method="Production-mesh tuning strip at the production beta with only dt changed (the single-cell conditioning uses the same dt). "
-               "CV and APD90 of the last of 3 beats, relative to the smallest time step.",
+               "CV and APD90 of the last of 3 beats, relative to the smallest time step. wallSeconds = whole run including meshing "
+               "and set-up (not the conditioning); physicsSeconds = openCARP's own physics timing.",
         values=dict(rows=rows))
 
 
@@ -290,7 +310,7 @@ def checkSlabVelocity(root, processCount):
     for name, wall, fibres in cases:
         config = slabVariant(root, name, {"wallMm": wall, "fibres": fibres})
         job, seconds = runSlab(config, root / name, processCount, state)
-        rows.append(dict(case=name, wallMm=wall, fibreModel=fibres["model"], wallSeconds=seconds, **surfaceWave(job)))
+        rows.append(dict(case=name, wallMm=wall, fibreModel=fibres["model"], **seconds, **surfaceWave(job)))
     return dict(
         supports="The CV target (0.90 m/s) is set along fibres on a strip; the slab's surface CV depends on fibre model and wall thickness and is reported.",
         kind="simulation",
@@ -308,7 +328,7 @@ def checkParallelEquivalence(root, processCounts):
     for count in processCounts:
         config = slabVariant(root, f"np{count}")
         jobs[count], seconds = runSlab(config, root / f"np{count}", count, state)
-        rows.append(dict(processes=int(count), wallSeconds=float(seconds)))
+        rows.append(dict(processes=int(count), **seconds))
     base = jobs[processCounts[0]]
     baseVm = readIgb(base / "vm.igb")
     baseActivation = firstActivationMs(base, baseVm.shape[1])
@@ -318,14 +338,16 @@ def checkParallelEquivalence(root, processCounts):
         row.update(largestVmDifferenceMv=float(np.max(np.abs(vm - baseVm))),
                    largestActivationDifferenceMs=float(np.nanmax(np.abs(activation - baseActivation))),
                    sameNodesActivated=bool(np.array_equal(np.isfinite(activation), np.isfinite(baseActivation))),
-                   speedUp=float(rows[0]["wallSeconds"] / row["wallSeconds"]))
+                   speedUp=float(rows[0]["physicsSeconds"] / row["physicsSeconds"]))
         row["parallelEfficiency"] = float(row["speedUp"] * processCounts[0] / count)
     return dict(
         supports="Simulations are run in parallel with MPI (openCARP / PETSc domain decomposition); parallel results equal the serial result.",
         kind="simulation",
         method=f"Intact {SMALL_SLAB_MM[0]:g} x {SMALL_SLAB_MM[1]:g} mm slab at the production mesh spacing, {SMALL_SLAB_DURATION_MS:g} ms, identical inputs; "
                "Vm at every tissue node and output frame and first activation times compared with the first process count listed. "
-               "Wall time includes meshing on the first run, so speed-up on this small problem is indicative only.",
+               "wallSeconds is the whole run (mesher, mesh rewrite, carputils and openCARP set-up, solve) and each process count "
+               "meshes its own copy; physicsSeconds is openCARP's own 'Timings of individual physics' total. Speed-up and efficiency "
+               "use physicsSeconds. On this small problem they are indicative only.",
         values=dict(tissueNodes=int(baseVm.shape[1]), outputFrames=int(baseVm.shape[0]), rows=rows,
                     project_tolerances=dict(activationMs=0.02, vmMv=0.1, source="docs/decision_log.md DL-2026-10-28-05")))
 
