@@ -313,8 +313,8 @@ def checkSlabVelocity(root, processCount):
     production = cfg.loadConfig()
     bilayer = production["sweep"]["fibres"]["baseline"]
     uniform, rotation = production["sweep"]["fibres"]["planned"]
-    # Every fibre model at the baseline wall (1.9 mm, FM-48); the bilayer and uniform models at the former baseline
-    # 1.1 mm (the earlier verification-log values VL-2026-11-04-05 were measured there); the thickest planned wall.
+    # Every fibre model at the configured baseline wall (1.1 mm since FM-50; the results in verification/results/opencarp
+    # were run while it was 1.9 mm, FM-48), the bilayer and uniform models at 1.1 mm (VL-2026-11-04-05), the thickest planned wall.
     # The roof case (uniform fibres, 1.6 mm) was removed with the roof scenario (FM-49).
     baselineWall = float(production["sweep"]["wallMm"]["baseline"])
     tag = f"wall{baselineWall:g}".replace(".", "p")

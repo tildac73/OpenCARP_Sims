@@ -186,9 +186,9 @@ def checkElectrodes(config):
 
 
 # ----------------------------------------------------------------- activation and window timing (prediction)
-def checkTiming(config, measuredBilayerCvMPerS=0.7914):
+def checkTiming(config, measuredBilayerCvMPerS=0.7334):
     """Predicted timing of the reference wave. measuredBilayerCvMPerS: first-beat catheter-surface CV of the bilayer
-    slab at the production mesh with the 1.9 mm baseline wall (verification/results/opencarp/slabVelocity.json)."""
+    slab at the production mesh with the 1.1 mm baseline wall (verification/results/opencarp/slabVelocity.json, case bilayer_wall1p1)."""
     v, f = config["values"], config["fixed"]
     size = cfg.slabSizeMm(config)
     rule = f["analysis"]["window"]
